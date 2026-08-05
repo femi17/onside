@@ -38,7 +38,7 @@ async function PerfData() {
     supabase
       .from("deliveries")
       .select(
-        "id, strategy_id, result, model_prob, market_prob, edge, tier, market_key, market_label, delivered_at, strategies(name), fixtures(leagues(name, flag_url, tier))"
+        "id, strategy_id, result, model_prob, market_prob, edge, tier, clv, market_key, market_label, delivered_at, strategies(name), fixtures(leagues(name, flag_url, tier))"
       )
       .order("delivered_at", { ascending: false })
       .limit(3000),
@@ -57,8 +57,8 @@ function PerfFallback() {
   return (
     <div className="mx-auto max-w-5xl px-5 pt-2 md:px-8" aria-hidden>
       <div className="flex gap-2"><div className="h-9 w-24 animate-pulse rounded-full bg-white/5" /><div className="h-9 w-24 animate-pulse rounded-full bg-white/5" /></div>
-      <div className="mt-4 grid grid-cols-2 gap-3.5 md:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="mt-4 grid grid-cols-2 gap-3.5 md:grid-cols-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="h-[104px] animate-pulse rounded-2xl bg-white/5" />
         ))}
       </div>

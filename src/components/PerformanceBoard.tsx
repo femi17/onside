@@ -17,6 +17,7 @@ export type PerfPick = {
   market_prob: number | null;
   edge: number | null; // fraction (0.05 = +5%)
   tier: string | null;
+  clv: number | null; // closing-line value = our de-vigged prob − the closing de-vigged prob (fraction)
   market_key: string | null;
   market_label: string | null;
   delivered_at: string | null;
@@ -52,7 +53,7 @@ export type LearningEvent = {
 const evAgent = (e: LearningEvent) => (Array.isArray(e.strategies) ? e.strategies[0]?.name : e.strategies?.name) ?? "Agent";
 
 // plain-language explanations for the top KPI cards (opened via the ? button on each card)
-type HelpKey = "landed" | "vsmarket" | "pnl" | "green";
+type HelpKey = "landed" | "vsmarket" | "clv" | "pnl" | "green";
 const HELP: Record<HelpKey, { title: string; body: string[] }> = {
   landed: {
     title: "Picks that landed",
@@ -70,6 +71,16 @@ const HELP: Record<HelpKey, { title: string; body: string[] }> = {
       "Odds are just the bookmaker’s estimate of a chance — odds of 1.72 imply about a 58% chance. That’s the “market implied” probability.",
       "If your picks won 62% but the prices only implied 58%, you beat the price by +4.2%.",
       "Positive = you’re finding bets the market underrated (good). Negative = you’re paying over the odds.",
+    ],
+  },
+  clv: {
+    title: "Value vs closing line",
+    body: [
+      "The sharpest read on skill — and the one pros trust most.",
+      "The “closing line” is the final price a market settles on right before kick-off, after all the smart money is in. It’s the most accurate estimate of a game there is.",
+      "We snapshot that closing price and compare it to the price your agent picked at. If the market moved toward your pick by kick-off, you “beat the close”.",
+      "Example: you took a pick at an implied 55%, and by kick-off the close implied 56% — that’s +1.0% CLV. Small numbers are normal; consistently positive is the goal.",
+      "Why it matters: unlike win rate, CLV barely depends on luck — beating the close over many picks is strong evidence your agent has a real edge, long before enough games settle to prove it.",
     ],
   },
   pnl: {
@@ -119,6 +130,13 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
     const vsMarket = winRatePriced - avgMarket;
     // paper P/L in units: 1u flat stakes at fair (de-vigged) odds
     const pnl = priced.reduce((s, p) => s + (p.result === "won" ? 1 / (p.market_prob as number) - 1 : -1), 0);
+
+    // closing-line value — the north-star skill metric. Available on any priced pick whose closing
+    // price was snapshotted (capture-closing), settled or not, so it reads across ALL in-scope picks.
+    const clvPicks = inScope.filter((p) => p.clv != null && Number.isFinite(p.clv));
+    const avgClv = clvPicks.length ? clvPicks.reduce((s, p) => s + (p.clv as number), 0) / clvPicks.length : 0;
+    const beatClose = clvPicks.filter((p) => (p.clv as number) > 0).length;
+    const beatCloseRate = clvPicks.length ? beatClose / clvPicks.length : 0;
 
     // strike on the greenest picks (edge ≥ 5%)
     const green = settled.filter((p) => (p.edge ?? -1) >= 0.05);
@@ -186,7 +204,7 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
     const best = graded.find((l) => (l.edgePct as number) > 0.02) ?? null;
     const worst = [...graded].reverse().find((l) => (l.edgePct as number) < -0.02) ?? null;
 
-    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
+    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, clvPicks, avgClv, beatCloseRate, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
   }, [picks, agent, days]);
 
   // self-tuning log (Pro Max learning agents), filtered to the same agent + timeframe
@@ -242,9 +260,10 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
         ) : (
           <>
             {/* KPIs */}
-            <div className="mt-4 grid grid-cols-2 gap-3.5 md:grid-cols-4">
+            <div className="mt-4 grid grid-cols-2 gap-3.5 md:grid-cols-3 lg:grid-cols-5">
               <Kpi k="Picks that landed" v={pct(d.winRate)} d={`${d.won} of ${d.total} settled`} onHelp={() => setHelp("landed")} />
               <Kpi k="vs market implied" v={d.priced.length ? signed(d.vsMarket) : "—"} tone={d.vsMarket >= 0 ? "up" : "down"} d={d.priced.length ? `market expected ${pct(d.avgMarket)}` : "no priced picks"} onHelp={() => setHelp("vsmarket")} />
+              <Kpi k="vs closing line" v={d.clvPicks.length ? signed(d.avgClv) : "—"} tone={d.avgClv >= 0 ? "up" : "down"} d={d.clvPicks.length ? `${pct(d.beatCloseRate)} beat the close · ${d.clvPicks.length}` : "no close data yet"} onHelp={() => setHelp("clv")} />
               <Kpi k="Paper P/L" v={d.priced.length ? `${d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(1)}u` : "—"} tone={d.pnl >= 0 ? "up" : "down"} d="1u flat, fair odds" onHelp={() => setHelp("pnl")} />
               <Kpi k="Strike on 🟢 picks" v={d.green.length ? pct(d.greenStrike) : "—"} tone="amber" d={d.green.length ? `${d.green.length} strong-edge` : "none yet"} onHelp={() => setHelp("green")} />
             </div>
