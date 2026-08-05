@@ -345,6 +345,14 @@ export default function AddGamesClient({
       const isLine = DEFAULT_LINE[m.key] != null;
       ln = isLine ? Number(line || DEFAULT_LINE[m.key]) : null;
       label = isLine ? `Over ${ln} ${unit(m.kind)}` : m.label;
+      // A goals-over chip (over_1_5/over_2_5) grades a FIXED line and ignores `line`, so an edited
+      // line must be routed to the market that actually grades it: the matching preset key, else
+      // total_goals_ou. (Corners already grade against the stored line, so they're left alone.)
+      if (isLine && m.kind === "goals" && ln != null) {
+        const preset: Record<string, string> = { "0.5": "over_0_5", "1.5": "over_1_5", "2.5": "over_2_5", "3.5": "over_3_5" };
+        key = preset[String(ln)] ?? "total_goals_ou";
+        side = "over";
+      }
     }
 
     const slipKey = `${g.id}:${key}:${ln ?? ""}:${label}`;
