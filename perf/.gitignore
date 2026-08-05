@@ -1,3 +1,4 @@
 node_modules/
 results/
 package-lock.json
+*.log
