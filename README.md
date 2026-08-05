@@ -3,7 +3,6 @@
 Track only the bet you made. A **Thinka Platforms LTD** product (RC 9336976).
 
 Next.js (App Router) PWA + Supabase (auth, Postgres, storage, realtime, edge functions).
-Backend project: Supabase `cutline` (ref `mbrtpetpgsggnlcazhqd`, region eu-west-2).
 
 ## Run locally
 
