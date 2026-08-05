@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --pitch:#0E1A1B; --pitch-2:#152523; --pitch-3:#1E312D;
+    --chalk:#ECE7DA; --chalk-2:#F6F2E9;
+    --ink:#13201D; --ink-mute:#5E6E68;
+    --flood:#FFB43C; --flood-deep:#E7952A;
+    --grass:#57A773; --brick:#C2604A;
+    --on-pitch:#E7E2D5; --on-pitch-mute:#8DA19B;
+    --line:rgba(236,231,218,.10);
+    --line-strong:rgba(236,231,218,.18);
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -10%, rgba(255,180,60,.10), transparent 60%),
+      radial-gradient(900px 500px at -5% 110%, rgba(87,167,115,.08), transparent 55%),
+      var(--pitch);
+    color:var(--on-pitch);
+    font-family:"Hanken Grotesk",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    letter-spacing:.1px;
+  }
+  .mono{font-family:"JetBrains Mono",monospace;font-feature-settings:"tnum" 1;letter-spacing:0}
+  .disp{font-family:"Bricolage Grotesque",sans-serif}
+
+  /* ---------- shell ---------- */
+  .app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+  .rail{
+    position:sticky;top:0;height:100vh;border-right:1px solid var(--line);
+    padding:26px 20px;display:flex;flex-direction:column;gap:34px;
+    background:linear-gradient(180deg,rgba(255,255,255,.015),transparent);
+  }
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .glyph{
+    width:34px;height:34px;border-radius:9px;flex:none;position:relative;
+    background:var(--flood);box-shadow:0 0 0 4px rgba(255,180,60,.12);
+  }
+  .brand .glyph::after{
+    content:"";position:absolute;inset:0;border-radius:9px;
+    background:
+      linear-gradient(90deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%),
+      linear-gradient(0deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%);
+  }
+  .brand .word{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px;letter-spacing:-.5px;color:var(--chalk)}
+  .brand .word b{color:var(--flood)}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav-eyebrow{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:2px;color:var(--on-pitch-mute);text-transform:uppercase;margin:0 0 10px 12px}
+  .nav a{
+    display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;
+    color:var(--on-pitch-mute);text-decoration:none;font-weight:600;font-size:14.5px;
+    transition:background .15s,color .15s;
+  }
+  .nav a .ic{width:8px;height:8px;border-radius:2px;background:currentColor;opacity:.55}
+  .nav a:hover{background:var(--pitch-2);color:var(--on-pitch)}
+  .nav a.active{background:var(--pitch-2);color:var(--chalk)}
+  .nav a.active .ic{background:var(--flood);opacity:1}
+  .rail .foot{margin-top:auto;display:flex;flex-direction:column;gap:12px}
+  .tier{
+    border:1px solid var(--line-strong);border-radius:12px;padding:13px 14px;background:var(--pitch-2);
+  }
+  .tier .lbl{font-family:"JetBrains Mono";font-size:10px;letter-spacing:1.5px;color:var(--on-pitch-mute);text-transform:uppercase}
+  .tier .name{font-weight:700;font-size:15px;color:var(--chalk);margin-top:3px}
+  .tier .meta{font-family:"JetBrains Mono";font-size:11px;color:var(--flood);margin-top:6px}
+  .tier .bar{height:5px;border-radius:3px;background:var(--pitch-3);margin-top:9px;overflow:hidden}
+  .tier .bar i{display:block;height:100%;width:60%;background:var(--flood);border-radius:3px}
+
+  /* ---------- main ---------- */
+  main{padding:30px 34px 120px;max-width:1080px}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap}
+  .eyebrow{font-family:"JetBrains Mono";font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--flood)}
+  h1{font-family:"Bricolage Grotesque";font-weight:700;font-size:38px;line-height:1.02;letter-spacing:-1px;color:var(--chalk);margin-top:8px}
+  h1 span{color:var(--on-pitch-mute)}
+  .clock{font-family:"JetBrains Mono";font-size:12.5px;color:var(--on-pitch-mute);text-align:right;line-height:1.7}
+  .clock b{color:var(--chalk);font-weight:500}
+
+  .strip{
+    display:flex;gap:0;margin:26px 0 8px;border:1px solid var(--line);
+    border-radius:12px;overflow:hidden;background:var(--pitch-2)
+  }
+  .strip .cell{flex:1;padding:14px 18px;border-right:1px solid var(--line)}
+  .strip .cell:last-child{border-right:0}
+  .strip .k{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--on-pitch-mute)}
+  .strip .v{font-family:"Bricolage Grotesque";font-weight:700;font-size:26px;color:var(--chalk);margin-top:5px;display:flex;align-items:baseline;gap:8px}
+  .strip .v .u{font-family:"Hanken Grotesk";font-size:12px;font-weight:600;color:var(--on-pitch-mute)}
+  .strip .v.amber{color:var(--flood)}
+
+  .section-label{display:flex;align-items:center;gap:12px;margin:30px 2px 14px}
+  .section-label span{font-family:"JetBrains Mono";font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--on-pitch-mute)}
+  .section-label .rule{flex:1;height:1px;background:var(--line)}
+
+  /* ---------- betslip ticket ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .ticket{
+    position:relative;background:var(--chalk);color:var(--ink);border-radius:var(--radius);
+    padding:20px 20px 18px;box-shadow:0 18px 40px -24px rgba(0,0,0,.7);
+    isolation:isolate;
+  }
+  /* perforated top edge — the betslip signature */
+  .ticket::before{
+    content:"";position:absolute;left:14px;right:14px;top:-6px;height:12px;
+    background:radial-gradient(circle at 6px 6px,transparent 5px,var(--chalk) 5.5px);
+    background-size:12px 12px;background-position:center top;z-index:-1;
+    -webkit-mask:linear-gradient(#000,#000);
+  }
+  .ticket .thead{display:flex;justify-content:space-between;align-items:center}
+  .lg{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .live{display:flex;align-items:center;gap:7px;font-family:"JetBrains Mono";font-size:12px;font-weight:700;color:var(--flood-deep)}
+  .live .dot{width:8px;height:8px;border-radius:50%;background:var(--flood-deep);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(231,149,42,.5)}70%{box-shadow:0 0 0 7px rgba(231,149,42,0)}100%{box-shadow:0 0 0 0 rgba(231,149,42,0)}}
+  .teams{font-family:"Bricolage Grotesque";font-weight:700;font-size:21px;letter-spacing:-.3px;margin:13px 0 2px;line-height:1.1}
+  .teams .v{color:var(--ink-mute);font-weight:600;font-size:15px;margin:0 6px}
+  .market{font-family:"JetBrains Mono";font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--flood-deep);font-weight:700}
+
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;margin:15px 0 4px}
+  .bignum{font-family:"JetBrains Mono";font-weight:700;font-size:52px;line-height:.9;color:var(--ink);letter-spacing:-1px}
+  .bignum .of{font-size:20px;color:var(--ink-mute);font-weight:500}
+  .need{text-align:right;font-family:"Hanken Grotesk"}
+  .need .n{font-family:"JetBrains Mono";font-weight:700;font-size:15px;color:var(--ink)}
+  .need .t{font-size:11.5px;color:var(--ink-mute);margin-top:2px}
+  .need.hit .n{color:var(--grass)}
+
+  .track{height:8px;border-radius:5px;background:rgba(19,32,29,.10);margin:12px 0 0;overflow:hidden;position:relative}
+  .track i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--flood),var(--flood-deep))}
+  .track.hit i{background:linear-gradient(90deg,#6fbe86,var(--grass))}
+  .track .lineflag{position:absolute;top:-3px;width:2px;height:14px;background:var(--ink);opacity:.35}
+
+  /* momentum meter */
+  .mom{margin-top:16px;padding-top:14px;border-top:1px dashed rgba(19,32,29,.16)}
+  .mom .mlbl{display:flex;justify-content:space-between;font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .mom .mlbl b{color:var(--flood-deep)}
+  .mombar{position:relative;height:26px;margin-top:9px;border-radius:8px;background:rgba(19,32,29,.06);overflow:hidden;display:flex;align-items:center}
+  .mombar .mid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(19,32,29,.2)}
+  .mombar .fill{position:absolute;top:0;bottom:0;background:rgba(231,149,42,.22);border-right:2px solid var(--flood-deep)}
+  .mombar .fill.right{right:0;border-right:0;border-left:2px solid var(--ink-mute);background:rgba(19,32,29,.06)}
+  .mombar .code{position:relative;z-index:2;font-family:"JetBrains Mono";font-size:11px;font-weight:700;padding:0 10px;color:var(--ink)}
+  .mombar .code.away{margin-left:auto;color:var(--ink-mute)}
+
+  /* agent print — cleared the cut */
+  .print{
+    position:relative;background:var(--chalk-2);border-radius:var(--radius);
+    padding:22px 24px;box-shadow:0 22px 50px -26px rgba(0,0,0,.75);
+    border:1px solid rgba(231,149,42,.4);overflow:hidden;
+  }
+  .print::after{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,var(--flood),var(--flood-deep))}
+  .print .ptag{display:inline-flex;align-items:center;gap:8px;font-family:"JetBrains Mono";font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;color:var(--flood-deep)}
+  .print .ptag .spark{width:9px;height:9px;background:var(--flood);border-radius:2px;transform:rotate(45deg)}
+  .print .prow{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-top:12px}
+  .print .pteams{font-family:"Bricolage Grotesque";font-weight:700;font-size:24px;color:var(--ink);letter-spacing:-.4px}
+  .print .pteams .v{color:var(--ink-mute);font-weight:600;font-size:16px;margin:0 7px}
+  .print .pmeta{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-mute);margin-top:6px}
+  .print .pmeta b{color:var(--grass)}
+  .print .why{display:flex;gap:20px;margin-top:4px}
+  .print .why .c{text-align:right}
+  .print .why .c .k{font-family:"JetBrains Mono";font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .print .why .c .val{font-family:"JetBrains Mono";font-weight:700;font-size:18px;color:var(--ink);margin-top:3px}
+  .print .why .c .val.amber{color:var(--flood-deep)}
+  .print .cta{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap}
+  .btn{font-family:"Hanken Grotesk";font-weight:700;font-size:13.5px;border:0;border-radius:9px;padding:11px 16px;cursor:pointer}
+  .btn.primary{background:var(--ink);color:var(--chalk-2)}
+  .btn.ghost{background:transparent;color:var(--ink);border:1px solid rgba(19,32,29,.2)}
+
+  /* mobile bottom nav (hidden on desktop) */
+  .tabbar{display:none}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr}
+    .rail{display:none}
+    main{padding:22px 16px 96px}
+    h1{font-size:30px}
+    .grid{grid-template-columns:1fr}
+    .strip{flex-wrap:wrap}
+    .strip .cell{flex:1 1 50%;border-bottom:1px solid var(--line)}
+    .tabbar{
+      display:flex;position:fixed;left:0;right:0;bottom:0;z-index:20;
+      background:rgba(14,26,27,.92);backdrop-filter:blur(12px);border-top:1px solid var(--line);
+      padding:9px 8px calc(9px + env(safe-area-inset-bottom));justify-content:space-around;
+    }
+    .tabbar a{display:flex;flex-direction:column;align-items:center;gap:5px;text-decoration:none;
+      font-family:"JetBrains Mono";font-size:10px;letter-spacing:.5px;color:var(--on-pitch-mute);padding:4px 12px}
+    .tabbar a .ic{width:18px;height:18px;border-radius:6px;background:var(--pitch-3)}
+    .tabbar a.active{color:var(--flood)}
+    .tabbar a.active .ic{background:var(--flood)}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- rail -->
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a class="active" href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot">
+      <a class="tier" href="pricing.html" style="text-decoration:none;display:block">
+        <div class="lbl">Your plan</div>
+        <div class="name">Terrace</div>
+        <div class="meta">5 of 8 leagues used</div>
+        <div class="bar"><i></i></div>
+      </a>
+    </div>
+  </aside>
+
+  <!-- main -->
+  <main>
+    <div class="head">
+      <div>
+        <p class="eyebrow">Thursday · 5 tracking</p>
+        <h1>Your slips, <span>live.</span></h1>
+      </div>
+      <div class="clock">
+        <b>18:42</b> WAT<br>3 live · 1 cleared cut
+      </div>
+    </div>
+
+    <div class="strip">
+      <div class="cell"><div class="k">Tracking</div><div class="v">5 <span class="u">markets</span></div></div>
+      <div class="cell"><div class="k">Live now</div><div class="v amber">3 <span class="u">games</span></div></div>
+      <div class="cell"><div class="k">Cleared your cut</div><div class="v amber">1 <span class="u">today</span></div></div>
+      <div class="cell"><div class="k">Landed</div><div class="v">1 <span class="u">of 5</span></div></div>
+    </div>
+
+    <!-- agent print -->
+    <div class="section-label"><span>From your agent</span><div class="rule"></div></div>
+    <div class="print">
+      <span class="ptag"><span class="spark"></span> Cleared your cut · Over 1.5 strategy</span>
+      <div class="prow">
+        <div>
+          <div class="pteams">Sporting CP <span class="v">v</span> Braga</div>
+          <div class="pmeta">Primeira Liga · kickoff <b>20:00</b> · delivered 18:40, as you set</div>
+        </div>
+        <div class="why">
+          <div class="c"><div class="k">Model</div><div class="val">0.74</div></div>
+          <div class="c"><div class="k">Market</div><div class="val">0.70</div></div>
+          <div class="c"><div class="k">Edge</div><div class="val amber">+4.1%</div></div>
+        </div>
+      </div>
+      <div class="cta">
+        <button class="btn primary">Track this game</button>
+        <button class="btn ghost">Why it qualified</button>
+      </div>
+    </div>
+
+    <!-- tracked tickets -->
+    <div class="section-label"><span>Tracking live</span><div class="rule"></div></div>
+    <div class="grid">
+
+      <!-- corners, live, pressure -->
+      <article class="ticket">
+        <div class="thead"><span class="lg">Premier League</span><span class="live"><span class="dot"></span> 63′</span></div>
+        <div class="teams">Arsenal <span class="v">v</span> Chelsea</div>
+        <div class="market">Over 8.5 corners</div>
+        <div class="hero">
+          <div class="bignum" id="cornerNum">7<span class="of"> / 8.5</span></div>
+          <div class="need"><div class="n">2 more</div><div class="t">to clear the line</div></div>
+        </div>
+        <div class="track"><div class="lineflag" style="left:82%"></div><i style="width:70%"></i></div>
+        <div class="mom">
+          <div class="mlbl"><span>Momentum · last 10′</span><b>Chelsea pressing</b></div>
+          <div class="mombar">
+            <div class="mid"></div>
+            <div class="fill" style="width:64%"></div>
+            <span class="code">ARS</span><span class="code away">CHE</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- home to score, already hit -->
+      <article class="ticket">
+        <div class="thead"><span class="lg">La Liga</span><span class="live"><span class="dot"></span> 71′</span></div>
+        <div class="teams">Real Madrid <span class="v">v</span> Sevilla</div>
+        <div class="market">Home team to score</div>
+        <div class="hero">
+          <div class="bignum">1<span class="of"> goal</span></div>
+          <div class="need hit"><div class="n">✓ Landed</div><div class="t">Vinícius · 38′</div></div>
+        </div>
+        <div class="track hit"><i style="width:100%"></i></div>
+        <div class="mom">
+          <div class="mlbl"><span>Momentum · last 10′</span><b>Even</b></div>
+          <div class="mombar">
+            <div class="mid"></div>
+            <div class="fill" style="width:52%"></div>
+            <span class="code">RMA</span><span class="code away">SEV</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- over 1.5 goals, early -->
+      <article class="ticket">
+        <div class="thead"><span class="lg">Eredivisie</span><span class="live"><span class="dot"></span> 24′</span></div>
+        <div class="teams">Feyenoord <span class="v">v</span> AZ</div>
+        <div class="market">Over 1.5 goals</div>
+        <div class="hero">
+          <div class="bignum">0<span class="of"> / 1.5</span></div>
+          <div class="need"><div class="n">2 more</div><div class="t">to clear the line</div></div>
+        </div>
+        <div class="track"><div class="lineflag" style="left:66%"></div><i style="width:8%"></i></div>
+        <div class="mom">
+          <div class="mlbl"><span>Momentum · last 10′</span><b>Feyenoord building</b></div>
+          <div class="mombar">
+            <div class="mid"></div>
+            <div class="fill" style="width:60%"></div>
+            <span class="code">FEY</span><span class="code away">AZ</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- prematch waiting -->
+      <article class="ticket" style="background:#E4DFD2">
+        <div class="thead"><span class="lg">Serie A</span><span class="live" style="color:var(--ink-mute)">◷ 20:45</span></div>
+        <div class="teams">Inter <span class="v">v</span> Napoli</div>
+        <div class="market">Both teams to score</div>
+        <div class="hero">
+          <div class="bignum" style="color:var(--ink-mute)">—</div>
+          <div class="need"><div class="n">in 2h 03m</div><div class="t">tracking starts at kickoff</div></div>
+        </div>
+        <div class="track"><i style="width:0%"></i></div>
+      </article>
+
+    </div>
+  </main>
+</div>
+
+<!-- mobile tabs -->
+<nav class="tabbar">
+  <a class="active" href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+
+<script>
+  // one small "alive" moment: a corner drops in after a beat, count ticks 7 -> 8
+  (function(){
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var el = document.getElementById('cornerNum');
+    setTimeout(function(){
+      el.innerHTML = '8<span class="of"> / 8.5</span>';
+      var card = el.closest('.ticket');
+      card.querySelector('.track i').style.width = '82%';
+      card.querySelector('.need .n').textContent = '1 more';
+    }, 2600);
+  })();
+</script>
+</body>
+</html>

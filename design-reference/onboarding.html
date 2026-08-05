@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Get set up</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .frame{max-width:640px;margin:0 auto;padding:34px 20px 80px}
+  .obtop{display:flex;justify-content:space-between;align-items:center;margin-bottom:30px}
+  .steps{display:flex;gap:8px;margin-bottom:26px}
+  .steps .s{flex:1;height:5px;border-radius:3px;background:var(--pitch-3)}
+  .steps .s.on{background:var(--flood)}
+  .obcard{background:var(--chalk);color:var(--ink);border-radius:16px;padding:26px;box-shadow:0 20px 46px -26px rgba(0,0,0,.6);margin-bottom:16px}
+  .obcard .k{font-family:"JetBrains Mono";font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--flood-deep);font-weight:700}
+  .obcard h2{font-family:"Bricolage Grotesque";font-weight:700;font-size:23px;color:var(--ink);margin:8px 0 6px;letter-spacing:-.4px}
+  .obcard p.d{color:var(--ink-mute);font-size:14px;line-height:1.5}
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+  .pl{border:1px solid rgba(19,32,29,.14);border-radius:12px;padding:15px;cursor:pointer;background:#fff;transition:.14s}
+  .pl.on{border-color:var(--flood-deep);background:rgba(255,180,60,.09);box-shadow:inset 0 0 0 1px var(--flood-deep)}
+  .pl .pn{font-family:"Bricolage Grotesque";font-weight:800;font-size:17px;color:var(--ink)}
+  .pl .pr{font-family:"JetBrains Mono";font-size:12px;color:var(--flood-deep);margin:4px 0 8px}
+  .pl ul{list-style:none;display:flex;flex-direction:column;gap:5px}
+  .pl li{font-size:12px;color:var(--ink-mute);display:flex;gap:6px}
+  .pl li::before{content:"·";color:var(--flood-deep);font-weight:700}
+  .tg{display:flex;gap:14px;align-items:center;margin-top:16px;padding:16px;border:1px dashed rgba(19,32,29,.22);border-radius:12px;background:rgba(19,32,29,.03)}
+  .tg .ic{width:44px;height:44px;border-radius:12px;background:#229ED9;flex:none;display:grid;place-items:center;color:#fff;font-weight:800;font-family:"Bricolage Grotesque";font-size:20px}
+  .tg .t{font-weight:700;font-size:14.5px;color:var(--ink)}
+  .tg .s{font-size:12.5px;color:var(--ink-mute);margin-top:2px}
+  .row-end{display:flex;justify-content:space-between;align-items:center;margin-top:20px}
+  .skip{color:var(--on-pitch-mute);text-decoration:none;font-size:13px}
+  .muted{opacity:.5}
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="obtop">
+      <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+      <a class="skip" href="tracker.html">Skip for now →</a>
+    </div>
+    <div class="steps"><div class="s on"></div><div class="s on"></div><div class="s"></div></div>
+
+    <!-- step 1 -->
+    <div class="obcard">
+      <div class="k">Step 1 · Choose a plan</div>
+      <h2>Start where it makes sense.</h2>
+      <p class="d">You can change this anytime. Free covers tracking and one agent run a month.</p>
+      <div class="plans">
+        <div class="pl on"><div class="pn">Free</div><div class="pr">₦0</div><ul><li>5 leagues</li><li>1 run / mo</li><li>Track all</li></ul></div>
+        <div class="pl"><div class="pn">Pro</div><div class="pr">₦4,500/mo</div><ul><li>15 leagues</li><li>Unlimited runs</li><li>Learning</li></ul></div>
+        <div class="pl"><div class="pn">Pro Max</div><div class="pr">₦9,500/mo</div><ul><li>All leagues</li><li>50 / prediction</li><li>Deep backtests</li></ul></div>
+      </div>
+    </div>
+
+    <!-- step 2 -->
+    <div class="obcard">
+      <div class="k">Step 2 · Get your games anywhere</div>
+      <h2>Connect Telegram.</h2>
+      <p class="d">Your picks arrive in-app and — if you want — as a private message from our bot. One tap links your account; you can leave it off.</p>
+      <div class="tg">
+        <div class="ic">✈</div>
+        <div style="flex:1"><div class="t">Start @CutlineBot</div><div class="s">Opens Telegram, links this account, then delivers your games privately.</div></div>
+        <a class="btn dark" href="#">Connect</a>
+      </div>
+    </div>
+
+    <!-- step 3 -->
+    <div class="obcard muted">
+      <div class="k">Step 3 · Build your first agent</div>
+      <h2>Tell it what you're hunting.</h2>
+      <p class="d">Pick a market and your leagues, add any rule, and set a delivery time. Takes about a minute.</p>
+    </div>
+
+    <div class="row-end">
+      <a class="skip" href="index.html">← Back</a>
+      <a class="btn amber" href="strategy.html">Build my first agent →</a>
+    </div>
+  </div>
+</body>
+</html>

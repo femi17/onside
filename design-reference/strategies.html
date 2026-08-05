@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Your agents</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+  .agent{background:var(--chalk);color:var(--ink);border-radius:var(--radius);padding:20px 22px;box-shadow:0 16px 38px -26px rgba(0,0,0,.6)}
+  .agent .ah{display:flex;justify-content:space-between;align-items:flex-start}
+  .agent .nm{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px;color:var(--ink);letter-spacing:-.3px}
+  .agent .mk{font-family:"JetBrains Mono";font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--flood-deep);margin-top:3px}
+  .status{font-family:"JetBrains Mono";font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:5px 9px;border-radius:20px}
+  .status.run{background:rgba(87,167,115,.16);color:var(--grass-deep)}
+  .status.pause{background:rgba(19,32,29,.08);color:var(--ink-mute)}
+  .stats{display:flex;gap:22px;margin:16px 0;border-top:1px dashed rgba(19,32,29,.16);padding-top:14px}
+  .st .k{font-family:"JetBrains Mono";font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .st .v{font-family:"Bricolage Grotesque";font-weight:800;font-size:22px;color:var(--ink);margin-top:3px}
+  .st .v.up{color:var(--grass-deep)} .st .v.down{color:var(--brick)}
+  .spark{height:34px;display:flex;align-items:flex-end;gap:3px;margin:6px 0 14px}
+  .spark i{flex:1;background:rgba(19,32,29,.14);border-radius:2px}
+  .spark i.h{background:var(--flood-deep)}
+  .agent .foot{display:flex;gap:10px}
+  .newcard{border:1.5px dashed var(--line-strong);border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:30px;color:var(--on-pitch-mute);text-decoration:none;min-height:200px}
+  .newcard .plus{width:44px;height:44px;border-radius:12px;background:var(--flood);color:var(--ink);display:grid;place-items:center;font-family:"JetBrains Mono";font-size:22px;font-weight:700}
+  .newcard:hover{border-color:var(--flood);color:var(--chalk)}
+  @media (max-width:860px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a class="active" href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main>
+    <div class="pagehead">
+      <div><p class="eyebrow">3 agents</p><h1>Your agents.</h1></div>
+      <a class="btn amber" href="strategy.html"><span class="mono">+</span> New agent</a>
+    </div>
+
+    <div class="grid">
+      <div class="agent">
+        <div class="ah"><div><div class="nm">Weekend Overs</div><div class="mk">Over 1.5 goals · 6 leagues</div></div><span class="status run">Running</span></div>
+        <div class="spark"><i style="height:40%"></i><i style="height:70%"></i><i class="h" style="height:90%"></i><i style="height:55%"></i><i class="h" style="height:80%"></i><i class="h" style="height:100%"></i><i style="height:60%"></i><i class="h" style="height:85%"></i></div>
+        <div class="stats">
+          <div class="st"><div class="k">Last 14d</div><div class="v">18/24</div></div>
+          <div class="st"><div class="k">vs market</div><div class="v up">+6.1%</div></div>
+          <div class="st"><div class="k">Delivered</div><div class="v">24</div></div>
+        </div>
+        <div class="foot"><a class="btn line-ink" href="agent.html">View feed</a><a class="btn line-ink" href="performance.html">Performance</a></div>
+      </div>
+
+      <div class="agent">
+        <div class="ah"><div><div class="nm">Corner Hunter</div><div class="mk">Over 8.5 corners · 3 leagues</div></div><span class="status run">Running</span></div>
+        <div class="spark"><i style="height:60%"></i><i class="h" style="height:80%"></i><i style="height:50%"></i><i style="height:40%"></i><i class="h" style="height:75%"></i><i style="height:55%"></i><i class="h" style="height:70%"></i><i style="height:45%"></i></div>
+        <div class="stats">
+          <div class="st"><div class="k">Last 14d</div><div class="v">9/17</div></div>
+          <div class="st"><div class="k">vs market</div><div class="v down">−1.4%</div></div>
+          <div class="st"><div class="k">Delivered</div><div class="v">17</div></div>
+        </div>
+        <div class="foot"><a class="btn line-ink" href="agent.html">View feed</a><a class="btn line-ink" href="performance.html">Performance</a></div>
+      </div>
+
+      <div class="agent">
+        <div class="ah"><div><div class="nm">Home Bankers</div><div class="mk">Home win · odds rule · 8 leagues</div></div><span class="status pause">Paused</span></div>
+        <div class="spark"><i style="height:70%"></i><i class="h" style="height:85%"></i><i class="h" style="height:90%"></i><i style="height:60%"></i><i class="h" style="height:80%"></i><i style="height:65%"></i><i style="height:50%"></i><i class="h" style="height:88%"></i></div>
+        <div class="stats">
+          <div class="st"><div class="k">Last 14d</div><div class="v">—</div></div>
+          <div class="st"><div class="k">All-time</div><div class="v up">+3.7%</div></div>
+          <div class="st"><div class="k">Delivered</div><div class="v">61</div></div>
+        </div>
+        <div class="foot"><a class="btn amber" href="#">Resume</a><a class="btn line-ink" href="performance.html">Performance</a></div>
+      </div>
+
+      <a class="newcard" href="strategy.html"><div class="plus">+</div><div style="font-weight:700">Build a new agent</div><div class="mono" style="font-size:12px">2 slots left on Free</div></a>
+    </div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

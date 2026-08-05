@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Arsenal v Chelsea</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .back{display:inline-flex;align-items:center;gap:8px;color:var(--on-pitch-mute);text-decoration:none;font-family:"JetBrains Mono";font-size:12px;margin-bottom:18px}
+  .back:hover{color:var(--chalk)}
+  .hero{background:var(--chalk);color:var(--ink);border-radius:16px;padding:24px;box-shadow:0 20px 46px -26px rgba(0,0,0,.6);position:relative;isolation:isolate}
+  .hero::before{content:"";position:absolute;left:16px;right:16px;top:-6px;height:12px;z-index:-1;background:radial-gradient(circle at 6px 6px,transparent 5px,var(--chalk) 5.5px);background-size:12px 12px}
+  .hrow{display:flex;justify-content:space-between;align-items:center}
+  .lg{font-family:"JetBrains Mono";font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .teams{font-family:"Bricolage Grotesque";font-weight:800;font-size:30px;letter-spacing:-.6px;color:var(--ink);margin:12px 0 2px}
+  .teams .v{color:var(--ink-mute);font-weight:600;font-size:18px;margin:0 8px}
+  .mkt{font-family:"JetBrains Mono";font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--flood-deep)}
+  .metric{display:flex;align-items:flex-end;justify-content:space-between;margin:20px 0 6px}
+  .big{font-family:"JetBrains Mono";font-weight:700;font-size:72px;line-height:.85;letter-spacing:-2px;color:var(--ink)}
+  .big .of{font-size:26px;color:var(--ink-mute)}
+  .need{text-align:right}.need .n{font-family:"JetBrains Mono";font-weight:700;font-size:18px;color:var(--ink)}.need .t{font-size:12px;color:var(--ink-mute);margin-top:2px}
+  .track{height:10px;border-radius:6px;background:rgba(19,32,29,.1);overflow:hidden;position:relative;margin-top:8px}
+  .track i{display:block;height:100%;background:linear-gradient(90deg,var(--flood),var(--flood-deep));width:82%}
+  .track .flag{position:absolute;top:-3px;left:82%;width:2px;height:16px;background:var(--ink);opacity:.4}
+  /* momentum timeline */
+  .mom{margin-top:20px;padding-top:16px;border-top:1px dashed rgba(19,32,29,.16)}
+  .mlab{display:flex;justify-content:space-between;font-family:"JetBrains Mono";font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--ink-mute)}
+  .mlab b{color:var(--flood-deep)}
+  .timeline{position:relative;height:52px;margin-top:12px}
+  .axis{position:absolute;left:0;right:0;top:26px;height:1px;background:rgba(19,32,29,.16)}
+  .wave{position:absolute;left:0;right:0;top:0;height:52px}
+  .ev{position:absolute;top:26px;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:50%;border:2px solid var(--chalk)}
+  .ev.corner{background:var(--flood-deep)} .ev.shot{background:rgba(19,32,29,.4)} .ev.goal{background:var(--grass-deep);width:16px;height:16px}
+  .evkey{display:flex;gap:16px;margin-top:8px;font-family:"JetBrains Mono";font-size:10.5px;color:var(--ink-mute)}
+  .evkey span{display:flex;align-items:center;gap:6px}.evkey i{width:9px;height:9px;border-radius:50%}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+  .stat{background:var(--pitch-2);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .stat .k{font-family:"JetBrains Mono";font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--on-pitch-mute)}
+  .stat .v{font-family:"Bricolage Grotesque";font-weight:800;font-size:22px;color:var(--chalk);margin-top:5px}
+  .stat .split{font-family:"JetBrains Mono";font-size:11px;color:var(--on-pitch-mute);margin-top:2px}
+  .context{background:var(--pitch-2);border:1px solid rgba(255,180,60,.3);border-radius:14px;padding:18px 20px;margin-top:16px;display:flex;gap:14px}
+  .context .b{width:9px;border-radius:5px;background:linear-gradient(var(--flood),var(--flood-deep));flex:none}
+  .context .t{font-family:"Bricolage Grotesque";font-weight:700;font-size:16px;color:var(--chalk)}
+  .context .d{font-size:13.5px;color:var(--on-pitch-mute);margin-top:5px;line-height:1.5}
+  @media (max-width:860px){.big{font-size:56px}.stats{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a class="active" href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main style="max-width:820px">
+    <a class="back" href="tracker.html">← Back to tracker</a>
+    <div class="hero">
+      <div class="hrow"><span class="lg">Premier League · Emirates</span><span class="live"><span class="dot"></span> 63′</span></div>
+      <div class="teams">Arsenal <span class="v">v</span> Chelsea</div>
+      <div class="mkt">Tracking · Over 8.5 corners</div>
+
+      <div class="metric">
+        <div class="big">8<span class="of"> / 8.5</span></div>
+        <div class="need"><div class="n">1 more</div><div class="t">to clear the line</div></div>
+      </div>
+      <div class="track"><i></i><span class="flag"></span></div>
+
+      <div class="mom">
+        <div class="mlab"><span>Momentum · last 10 minutes</span><b>Chelsea pressing</b></div>
+        <div class="timeline">
+          <div class="axis"></div>
+          <div class="ev shot" style="left:8%"></div>
+          <div class="ev corner" style="left:18%"></div>
+          <div class="ev shot" style="left:30%"></div>
+          <div class="ev corner" style="left:44%"></div>
+          <div class="ev shot" style="left:52%"></div>
+          <div class="ev shot" style="left:63%"></div>
+          <div class="ev corner" style="left:72%"></div>
+          <div class="ev goal" style="left:81%"></div>
+          <div class="ev corner" style="left:90%"></div>
+        </div>
+        <div class="evkey"><span><i style="background:var(--flood-deep)"></i> corner</span><span><i style="background:rgba(19,32,29,.4)"></i> shot</span><span><i style="background:var(--grass-deep)"></i> goal</span></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Corners</div><div class="v">8</div><div class="split">ARS 3 · CHE 5</div></div>
+      <div class="stat"><div class="k">Shots</div><div class="v">17</div><div class="split">6 · 11</div></div>
+      <div class="stat"><div class="k">Possession</div><div class="v">43%</div><div class="split">ARS side</div></div>
+      <div class="stat"><div class="k">Live xG</div><div class="v">1.8</div><div class="split">0.6 · 1.2</div></div>
+    </div>
+
+    <div class="context">
+      <div class="b"></div>
+      <div><div class="t">A corner could be coming.</div>
+      <div class="d">Chelsea have 4 corners and 6 shots in the last 10 minutes and are camped in Arsenal's half. Nothing's guaranteed — but on this run of pressure, your line is one set-piece away. <span class="mono" style="color:var(--flood)">context, not a prediction.</span></div></div>
+    </div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a class="active" href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

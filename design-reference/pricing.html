@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Plans</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .top{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;padding:18px 34px;background:rgba(14,26,27,.72);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .top .links{display:flex;gap:26px;align-items:center}
+  .top .links a{color:var(--on-pitch-mute);text-decoration:none;font-weight:600;font-size:14px}
+  .wrap{max-width:1080px;margin:0 auto;padding:50px 24px 80px;text-align:center}
+  h1{font-size:44px}
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:36px;text-align:left}
+  .plan-c{border:1px solid var(--line);border-radius:18px;padding:26px;background:var(--pitch-2);display:flex;flex-direction:column}
+  .plan-c.hot{border-color:rgba(255,180,60,.45);background:linear-gradient(180deg,rgba(255,180,60,.07),var(--pitch-2));position:relative}
+  .plan-c.hot .rec{position:absolute;top:-12px;left:26px;background:var(--flood);color:var(--ink);font-family:"JetBrains Mono";font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:5px 10px;border-radius:7px}
+  .pn{font-family:"Bricolage Grotesque";font-weight:800;font-size:24px;color:var(--chalk)}
+  .price{font-family:"Bricolage Grotesque";font-weight:800;font-size:38px;color:var(--flood);margin:14px 0 2px;letter-spacing:-1px}
+  .price small{font-family:"JetBrains Mono";font-size:13px;font-weight:400;color:var(--on-pitch-mute)}
+  .pd{color:var(--on-pitch-mute);font-size:13.5px;line-height:1.5;margin-bottom:18px}
+  ul{list-style:none;display:flex;flex-direction:column;gap:11px;margin-bottom:22px}
+  li{font-size:14px;color:var(--on-pitch);display:flex;gap:10px;line-height:1.4}
+  li::before{content:"✓";color:var(--grass);font-weight:700}
+  li.off{color:var(--on-pitch-mute)} li.off::before{content:"–";color:var(--on-pitch-mute)}
+  .plan-c .btn{margin-top:auto}
+  .compare{margin-top:14px;font-family:"JetBrains Mono";font-size:12px;color:var(--on-pitch-mute)}
+  @media (max-width:860px){.plans{grid-template-columns:1fr}h1{font-size:32px}.top .links a:not(.btn){display:none}}
+</style>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <div class="links"><a href="index.html">Home</a><a href="community.html">Community</a><a class="btn amber" href="tracker.html">Open app</a></div>
+  </header>
+  <div class="wrap">
+    <p class="eyebrow">Simple plans</p>
+    <h1>Pay when it earns it.</h1>
+    <p class="sub" style="margin:12px auto 0">Tracking is free forever. Upgrade for more leagues, unlimited agent runs, bigger predictions, and the learning that tells you what's actually working.</p>
+
+    <div class="plans">
+      <div class="plan-c">
+        <div class="pn">Free</div>
+        <div class="price">₦0</div>
+        <div class="pd">Track everything you bet, forever.</div>
+        <ul>
+          <li>Track unlimited games</li>
+          <li>Up to <b style="color:var(--chalk)">5 leagues</b></li>
+          <li>1 agent run / month</li>
+          <li>Up to 3 games / prediction</li>
+          <li class="off">Learning & backtests</li>
+          <li class="off">Strategy performance history</li>
+        </ul>
+        <a class="btn line" href="onboarding.html">Start free</a>
+      </div>
+
+      <div class="plan-c hot">
+        <div class="rec">Most popular</div>
+        <div class="pn">Pro</div>
+        <div class="price">₦4,500<small>/mo</small></div>
+        <div class="pd">For the regular bettor running real strategies.</div>
+        <ul>
+          <li><b style="color:var(--chalk)">15 leagues</b></li>
+          <li>Unlimited agent runs</li>
+          <li>Up to 15 games / prediction</li>
+          <li>Learning — it tunes to what lands</li>
+          <li>Full strategy performance history</li>
+          <li>Telegram delivery</li>
+        </ul>
+        <a class="btn amber" href="onboarding.html">Go Pro</a>
+      </div>
+
+      <div class="plan-c">
+        <div class="pn">Pro Max</div>
+        <div class="price">₦9,500<small>/mo</small></div>
+        <div class="pd">For the serious player and big accas.</div>
+        <ul>
+          <li><b style="color:var(--chalk)">All 42 leagues</b></li>
+          <li>Up to <b style="color:var(--chalk)">50 games / prediction</b></li>
+          <li>Everything in Pro</li>
+          <li>Deep backtests on your rules</li>
+          <li>Priority delivery & support</li>
+          <li>Early access to new markets</li>
+        </ul>
+        <a class="btn line" href="onboarding.html">Go Pro Max</a>
+      </div>
+    </div>
+    <p class="compare">Cancel anytime · prices shown monthly · annual saves ~20%</p>
+  </div>
+</body>
+</html>

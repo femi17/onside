@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Account</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .sec{background:var(--chalk);color:var(--ink);border-radius:14px;padding:20px 22px;box-shadow:0 14px 34px -26px rgba(0,0,0,.5);margin-top:16px}
+  .sec .st{font-family:"Bricolage Grotesque";font-weight:700;font-size:17px;color:var(--ink);margin-bottom:14px}
+  .field{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid rgba(19,32,29,.1)}
+  .field:last-child{border:0}
+  .field .k{font-weight:600;font-size:14px;color:var(--ink)}
+  .field .k .d{font-size:12.5px;color:var(--ink-mute);font-weight:400;margin-top:2px}
+  .field .v{font-family:"JetBrains Mono";font-size:13px;color:var(--ink-mute)}
+  .sw{width:44px;height:25px;border-radius:20px;background:var(--grass-deep);position:relative;cursor:pointer;flex:none}
+  .sw i{position:absolute;top:3px;left:22px;width:19px;height:19px;border-radius:50%;background:#fff;transition:.15s}
+  .sw.off{background:rgba(19,32,29,.18)} .sw.off i{left:3px}
+  .planbox{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,rgba(255,180,60,.1),transparent);border:1px solid rgba(255,180,60,.3);border-radius:12px;padding:16px 18px}
+  .planbox .pn{font-family:"Bricolage Grotesque";font-weight:800;font-size:18px;color:var(--ink)}
+  .planbox .pd{font-size:12.5px;color:var(--ink-mute);margin-top:3px}
+  .connect{display:flex;align-items:center;gap:12px}
+  .connect .ic{width:36px;height:36px;border-radius:10px;background:#229ED9;color:#fff;display:grid;place-items:center;font-size:16px;flex:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main style="max-width:720px">
+    <div class="pagehead"><div><p class="eyebrow">Settings</p><h1>Account.</h1></div></div>
+
+    <div class="sec">
+      <div class="st">Plan</div>
+      <div class="planbox">
+        <div><div class="pn">Free · Terrace</div><div class="pd">5 leagues · 1 agent run left this month</div></div>
+        <a class="btn amber" href="pricing.html">Upgrade</a>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="st">Profile</div>
+      <div class="field"><div class="k">Name</div><div class="v">Anna K.</div></div>
+      <div class="field"><div class="k">Email</div><div class="v">anna@example.com</div></div>
+      <div class="field"><div class="k">Currency</div><div class="v">₦ NGN</div></div>
+      <div class="field"><div class="k">Timezone</div><div class="v">WAT (UTC+1)</div></div>
+    </div>
+
+    <div class="sec">
+      <div class="st">Delivery</div>
+      <div class="field">
+        <div class="k">Telegram <div class="d">Private picks from @CutlineBot</div></div>
+        <div class="connect"><div class="ic">✈</div><span class="v">Connected</span></div>
+      </div>
+      <div class="field"><div class="k">In-app alerts</div><div class="sw"><i></i></div></div>
+      <div class="field"><div class="k">Web push <div class="d">Alerts when a game clears your cut</div></div><div class="sw"><i></i></div></div>
+      <div class="field"><div class="k">Live "pressure" nudges <div class="d">When your line looks close</div></div><div class="sw off"><i></i></div></div>
+    </div>
+
+    <div class="sec">
+      <div class="st">Responsible play</div>
+      <div class="field"><div class="k">Daily reminder cap <div class="d">Limit how often we ping you</div></div><div class="v">On</div></div>
+      <div class="field"><div class="k">Take a break</div><div class="v" style="color:var(--brick)">Pause alerts</div></div>
+    </div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

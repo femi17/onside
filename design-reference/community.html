@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Community</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .two{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-top:24px}
+  .join{background:linear-gradient(135deg,#229ED9,#1c7fb0);color:#fff;border-radius:16px;padding:22px 24px;display:flex;gap:16px;align-items:center}
+  .join .ic{width:52px;height:52px;border-radius:14px;background:rgba(255,255,255,.15);display:grid;place-items:center;font-size:24px;flex:none}
+  .join .t{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px}
+  .join .d{font-size:13.5px;opacity:.9;margin-top:4px;max-width:44ch;line-height:1.45}
+  .join .btn{background:#fff;color:#12435c;margin-left:auto;white-space:nowrap}
+  .feed{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .post{background:var(--chalk);color:var(--ink);border-radius:14px;padding:16px 18px;box-shadow:0 12px 30px -24px rgba(0,0,0,.5)}
+  .post .ph{display:flex;align-items:center;gap:10px}
+  .av{width:34px;height:34px;border-radius:50%;background:var(--flood);color:var(--ink);display:grid;place-items:center;font-weight:800;font-family:"Bricolage Grotesque"}
+  .av.g{background:var(--grass)} .av.b{background:var(--brick);color:#fff}
+  .post .nmr{font-weight:700;font-size:14px;color:var(--ink)}
+  .post .tm{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);margin-left:auto}
+  .post .body{font-size:14px;color:var(--ink);line-height:1.5;margin-top:10px}
+  .pill-slip{display:inline-flex;gap:8px;align-items:center;margin-top:10px;background:rgba(19,32,29,.05);border:1px solid rgba(19,32,29,.1);border-radius:9px;padding:8px 12px;font-family:"JetBrains Mono";font-size:12px}
+  .pill-slip .e{color:var(--grass-deep);font-weight:700}
+  .react{display:flex;gap:14px;margin-top:12px;font-family:"JetBrains Mono";font-size:12px;color:var(--ink-mute)}
+  .lead{background:var(--pitch-2);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .lead .pt{font-family:"Bricolage Grotesque";font-weight:700;font-size:16px;color:var(--chalk)}
+  .lead .psub{font-family:"JetBrains Mono";font-size:11px;color:var(--on-pitch-mute);margin-top:2px}
+  .lrow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .lrow:last-child{border:0}
+  .lrank{font-family:"JetBrains Mono";font-weight:700;color:var(--flood);width:22px}
+  .lname{font-weight:600;font-size:14px;color:var(--chalk);flex:1}
+  .lval{font-family:"JetBrains Mono";font-weight:700;font-size:13px;color:var(--grass)}
+  @media (max-width:960px){.two{grid-template-columns:1fr}.join{flex-wrap:wrap}.join .btn{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a class="active" href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main>
+    <div class="pagehead"><div><p class="eyebrow">The Cutline squad</p><h1>Community.</h1></div></div>
+
+    <div class="join">
+      <div class="ic">✈</div>
+      <div><div class="t">Join the Telegram community</div><div class="d">Get your own agent's picks by DM, and follow the group channel where members share slips, results and what's landing this week.</div></div>
+      <a class="btn amber" href="#">Join channel</a>
+    </div>
+
+    <div class="two">
+      <div>
+        <div class="section-label"><span>Shared this week</span><div class="rule"></div></div>
+        <div class="feed">
+          <div class="post">
+            <div class="ph"><div class="av g">T</div><div><div class="nmr">Tunde</div></div><div class="tm">2h</div></div>
+            <div class="body">Corner Hunter finally paid off. Chelsea game went to 11 corners, was sweating that last one 😮‍💨</div>
+            <div class="pill-slip">Over 8.5 corners · ARS v CHE · <span class="e">✓ landed</span></div>
+            <div class="react">♡ 24 · 💬 6</div>
+          </div>
+          <div class="post">
+            <div class="ph"><div class="av">A</div><div><div class="nmr">Amaka</div></div><div class="tm">5h</div></div>
+            <div class="body">My "Over 1.5 in Eredivisie" agent is unreal this month. 9/11. The Performance tab says +9% vs market — I'm bumping stakes.</div>
+            <div class="react">♡ 41 · 💬 12</div>
+          </div>
+          <div class="post">
+            <div class="ph"><div class="av b">K</div><div><div class="nmr">Kelvin</div></div><div class="tm">yesterday</div></div>
+            <div class="body">Acca cut on the Napoli leg again 💀 letting the agent screen my legs from now on.</div>
+            <div class="pill-slip" style="color:var(--brick)">15-fold · <span style="color:var(--brick);font-weight:700">1 leg cut</span></div>
+            <div class="react">♡ 18 · 💬 9</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label"><span>This week's edge</span><div class="rule"></div></div>
+        <div class="lead">
+          <div class="pt">Top agents · vs market</div>
+          <div class="psub">Members beating the price the most</div>
+          <div style="margin-top:12px">
+            <div class="lrow"><span class="lrank">1</span><span class="lname">Amaka · Eredivisie Overs</span><span class="lval">+9.2%</span></div>
+            <div class="lrow"><span class="lrank">2</span><span class="lname">You · Weekend Overs</span><span class="lval">+6.1%</span></div>
+            <div class="lrow"><span class="lrank">3</span><span class="lname">Seyi · BTTS Europe</span><span class="lval">+5.4%</span></div>
+            <div class="lrow"><span class="lrank">4</span><span class="lname">Tunde · Corner Hunter</span><span class="lval">+4.0%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a class="active" href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Track only the bet you made</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .top{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:space-between;padding:18px 34px;background:rgba(14,26,27,.72);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .top .links{display:flex;gap:26px;align-items:center}
+  .top .links a{color:var(--on-pitch-mute);text-decoration:none;font-weight:600;font-size:14px}
+  .top .links a:hover{color:var(--chalk)}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 34px}
+  .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center;padding:70px 0 40px}
+  .hero .eyebrow{margin-bottom:16px}
+  .htitle{font-family:"Bricolage Grotesque";font-weight:800;font-size:62px;line-height:.98;letter-spacing:-2px;color:var(--chalk)}
+  .htitle .am{color:var(--flood)}
+  .hsub{color:var(--on-pitch-mute);font-size:18px;line-height:1.55;margin-top:20px;max-width:46ch}
+  .hcta{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
+  .hnote{font-family:"JetBrains Mono";font-size:12px;color:var(--on-pitch-mute);margin-top:16px}
+  /* floating slip */
+  .float{position:relative}
+  .slipcard{background:var(--chalk);color:var(--ink);border-radius:16px;padding:20px;box-shadow:0 40px 80px -30px rgba(0,0,0,.8);position:relative;isolation:isolate}
+  .slipcard::before{content:"";position:absolute;left:16px;right:16px;top:-6px;height:12px;z-index:-1;background:radial-gradient(circle at 6px 6px,transparent 5px,var(--chalk) 5.5px);background-size:12px 12px}
+  .slipcard .lg{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute);display:flex;justify-content:space-between}
+  .slipcard .tm{font-family:"Bricolage Grotesque";font-weight:700;font-size:22px;margin:12px 0 2px}
+  .slipcard .mk{font-family:"JetBrains Mono";font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--flood-deep)}
+  .slipcard .big{font-family:"JetBrains Mono";font-weight:700;font-size:52px;letter-spacing:-1px;margin-top:10px}
+  .slipcard .big .of{font-size:20px;color:var(--ink-mute)}
+  .slipcard .mom{margin-top:14px;padding-top:12px;border-top:1px dashed rgba(19,32,29,.16);font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute)}
+  .slipcard .mombar{height:24px;border-radius:8px;background:rgba(19,32,29,.06);margin-top:8px;position:relative;overflow:hidden}
+  .slipcard .mombar i{position:absolute;left:0;top:0;bottom:0;width:64%;background:rgba(231,149,42,.22);border-right:2px solid var(--flood-deep)}
+  .badge2{position:absolute;top:-18px;right:-14px;background:var(--flood);color:var(--ink);font-family:"JetBrains Mono";font-size:11px;font-weight:700;padding:8px 12px;border-radius:10px;transform:rotate(4deg);box-shadow:0 12px 24px -10px rgba(0,0,0,.6)}
+
+  .props{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:20px 0 20px}
+  .prop{border:1px solid var(--line);border-radius:14px;padding:22px;background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}
+  .prop .n{font-family:"JetBrains Mono";font-size:12px;color:var(--flood)}
+  .prop h3{font-family:"Bricolage Grotesque";font-weight:700;font-size:19px;color:var(--chalk);margin:12px 0 8px}
+  .prop p{color:var(--on-pitch-mute);font-size:14px;line-height:1.55}
+
+  .steps{padding:56px 0}
+  .steps h2,.tease h2{font-family:"Bricolage Grotesque";font-weight:700;font-size:32px;letter-spacing:-.6px;color:var(--chalk);text-align:center}
+  .steprow{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:34px}
+  .step{position:relative;padding:22px;border-radius:14px;background:var(--pitch-2);border:1px solid var(--line)}
+  .step .k{font-family:"Bricolage Grotesque";font-weight:800;font-size:34px;color:var(--flood);opacity:.9}
+  .step h4{font-size:16px;color:var(--chalk);margin:8px 0 6px;font-weight:700}
+  .step p{color:var(--on-pitch-mute);font-size:13.5px;line-height:1.5}
+
+  .tease{padding:20px 0 60px;text-align:center}
+  .tease .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:30px;text-align:left}
+  .pcard{border:1px solid var(--line);border-radius:14px;padding:22px;background:var(--pitch-2)}
+  .pcard.hot{border-color:rgba(255,180,60,.4);background:linear-gradient(180deg,rgba(255,180,60,.06),var(--pitch-2))}
+  .pcard .pn{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px;color:var(--chalk)}
+  .pcard .pr{font-family:"JetBrains Mono";font-size:13px;color:var(--flood);margin:6px 0 12px}
+  .pcard ul{list-style:none;display:flex;flex-direction:column;gap:8px}
+  .pcard li{font-size:13.5px;color:var(--on-pitch-mute);display:flex;gap:8px}
+  .pcard li::before{content:"✓";color:var(--grass)}
+  footer{border-top:1px solid var(--line);padding:26px 0;text-align:center;color:var(--on-pitch-mute);font-family:"JetBrains Mono";font-size:12px}
+  @media (max-width:860px){.hero{grid-template-columns:1fr;padding:40px 0}.htitle{font-size:44px}.props,.steprow,.tease .plans{grid-template-columns:1fr}.top .links a:not(.btn){display:none}.wrap{padding:0 16px}.top{padding:14px 16px}}
+</style>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="community.html">Community</a>
+      <a class="btn amber" href="tracker.html">Open app</a>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Your bets. Nothing else on the screen.</p>
+        <h1 class="htitle">Track only the <span class="am">bet you made.</span></h1>
+        <p class="hsub">Forecasting is a headache and score apps drown you in noise. Cutline tracks just your markets — and gives you an AI agent that runs your strategy across your leagues and delivers the games that fit, on your schedule.</p>
+        <div class="hcta">
+          <a class="btn amber" href="onboarding.html">Start free</a>
+          <a class="btn line" href="tracker.html">See it live</a>
+        </div>
+        <p class="hnote">Free forever for tracking · 1 free agent run a month</p>
+      </div>
+      <div class="float">
+        <div class="slipcard">
+          <div class="badge2">◆ cleared your cut</div>
+          <div class="lg"><span>Premier League</span><span class="live"><span class="dot"></span>63′</span></div>
+          <div class="tm">Arsenal <span style="color:var(--ink-mute);font-size:15px">v</span> Chelsea</div>
+          <div class="mk">Over 8.5 corners</div>
+          <div class="big">8<span class="of"> / 8.5</span></div>
+          <div class="mom">Momentum · Chelsea pressing
+            <div class="mombar"><i></i></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="props">
+      <div class="prop"><div class="n">01</div><h3>Only your market</h3><p>Bet Over 8.5 corners on one game? You see corners — not 90 minutes of stats you don't care about.</p></div>
+      <div class="prop"><div class="n">02</div><h3>Your agent, your rules</h3><p>Describe any outcome in plain words. It checks every game and sends only the ones that clear your bar.</p></div>
+      <div class="prop"><div class="n">03</div><h3>Learns what works</h3><p>It settles every pick, tracks your strategy over time, and tells you honestly what's landing and what isn't.</p></div>
+    </section>
+
+    <section class="steps" id="how">
+      <h2>From headache to a heads-up.</h2>
+      <div class="steprow">
+        <div class="step"><div class="k">1</div><h4>Pick your leagues & market</h4><p>Choose the competitions you follow and the outcome you're hunting — preset or your own words.</p></div>
+        <div class="step"><div class="k">2</div><h4>Set the rule & schedule</h4><p>Add any logic (“if odds &lt; 1.6, straight win, else double chance”) and pick when it delivers.</p></div>
+        <div class="step"><div class="k">3</div><h4>Get your games, track live</h4><p>Qualifying games land in-app and on Telegram. Tap one and watch only the bit that matters.</p></div>
+      </div>
+    </section>
+
+    <section class="tease">
+      <h2>Start free. Upgrade when it earns it.</h2>
+      <div class="plans">
+        <div class="pcard"><div class="pn">Free</div><div class="pr">₦0</div><ul><li>Track unlimited games</li><li>Up to 5 leagues</li><li>1 agent run / month</li></ul></div>
+        <div class="pcard hot"><div class="pn">Pro</div><div class="pr">from ₦4,500/mo</div><ul><li>15 leagues</li><li>Unlimited agent runs</li><li>Learning + strategy tracking</li></ul></div>
+        <div class="pcard"><div class="pn">Pro Max</div><div class="pr">from ₦9,500/mo</div><ul><li>All 42 leagues</li><li>Up to 50 games / prediction</li><li>Priority + deep backtests</li></ul></div>
+      </div>
+      <div style="margin-top:28px"><a class="btn amber" href="onboarding.html">Create your first agent</a></div>
+    </section>
+  </div>
+  <footer>Cutline · track better, bet better · <a href="pricing.html" style="color:var(--flood)">See plans</a></footer>
+</body>
+</html>

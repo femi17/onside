@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Agent feed</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .chips{display:flex;gap:8px;margin:22px 0 6px;flex-wrap:wrap}
+  .chip{font-family:"JetBrains Mono";font-size:11.5px;letter-spacing:.5px;border:1px solid var(--line-strong);background:transparent;color:var(--on-pitch-mute);border-radius:20px;padding:8px 14px;cursor:pointer}
+  .chip.on{background:var(--flood);color:var(--ink);border-color:var(--flood)}
+  .daygrp{margin-top:22px}
+  .dayhd{font-family:"JetBrains Mono";font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--on-pitch-mute);margin-bottom:10px}
+  .feed{display:flex;flex-direction:column;gap:8px}
+  .item{display:grid;grid-template-columns:auto 1fr auto auto;gap:16px;align-items:center;background:var(--chalk);color:var(--ink);border-radius:12px;padding:14px 18px;box-shadow:0 12px 30px -24px rgba(0,0,0,.5);text-decoration:none}
+  .mk{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-family:"JetBrains Mono";font-weight:700;font-size:13px;flex:none}
+  .mk.won{background:rgba(87,167,115,.16);color:var(--grass-deep)}
+  .mk.lost{background:rgba(194,96,74,.16);color:var(--brick)}
+  .mk.live{background:rgba(255,180,60,.18);color:var(--flood-deep)}
+  .mk.pend{background:rgba(19,32,29,.07);color:var(--ink-mute)}
+  .item .tm{font-weight:700;font-size:14.5px;color:var(--ink)}
+  .item .tm .v{color:var(--ink-mute);font-weight:600;margin:0 5px}
+  .item .meta{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);margin-top:3px}
+  .item .meta b{color:var(--flood-deep)}
+  .item .edge{font-family:"JetBrains Mono";font-weight:700;font-size:13px;color:var(--flood-deep);text-align:right}
+  .item .from{font-family:"JetBrains Mono";font-size:10.5px;color:var(--ink-mute);text-align:right}
+  .res{font-family:"JetBrains Mono";font-size:12px;font-weight:700;text-align:right}
+  .res.won{color:var(--grass-deep)} .res.lost{color:var(--brick)} .res.live{color:var(--flood-deep)}
+  @media (max-width:860px){.item{grid-template-columns:auto 1fr auto}.item .from{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a class="active" href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main>
+    <div class="pagehead"><div><p class="eyebrow">Everything your agents sent</p><h1>Agent feed.</h1></div></div>
+    <div class="chips"><button class="chip on">All agents</button><button class="chip">Weekend Overs</button><button class="chip">Corner Hunter</button><button class="chip">Home Bankers</button></div>
+
+    <div class="daygrp">
+      <div class="dayhd">Today · delivered 06:00</div>
+      <div class="feed">
+        <a class="item" href="focus.html"><div class="mk live">●</div><div><div class="tm">Arsenal <span class="v">v</span> Chelsea</div><div class="meta">Over 8.5 corners · <b>Corner Hunter</b></div></div><div class="edge">+4.4%</div><div><div class="from">06:00</div><div class="res live">8 / 8.5 · 63′</div></div></a>
+        <a class="item" href="focus.html"><div class="mk live">●</div><div><div class="tm">Feyenoord <span class="v">v</span> AZ</div><div class="meta">Over 1.5 goals · <b>Weekend Overs</b></div></div><div class="edge">+5.1%</div><div><div class="from">06:00</div><div class="res live">0 / 1.5 · 24′</div></div></a>
+        <a class="item" href="focus.html"><div class="mk pend">◷</div><div><div class="tm">Inter <span class="v">v</span> Napoli</div><div class="meta">Both teams to score · <b>Weekend Overs</b></div></div><div class="edge">+3.6%</div><div><div class="from">06:00</div><div class="res">20:45</div></div></a>
+      </div>
+    </div>
+
+    <div class="daygrp">
+      <div class="dayhd">Yesterday</div>
+      <div class="feed">
+        <a class="item" href="focus.html"><div class="mk won">✓</div><div><div class="tm">Real Madrid <span class="v">v</span> Sevilla</div><div class="meta">Home to score · <b>Weekend Overs</b></div></div><div class="edge">+4.8%</div><div><div class="from">06:00</div><div class="res won">Landed 1–0</div></div></a>
+        <a class="item" href="focus.html"><div class="mk won">✓</div><div><div class="tm">Man City <span class="v">v</span> Wolves</div><div class="meta">Over 1.5 goals · <b>Weekend Overs</b></div></div><div class="edge">+4.0%</div><div><div class="from">06:00</div><div class="res won">Landed 2–0</div></div></a>
+        <a class="item" href="focus.html"><div class="mk lost">✕</div><div><div class="tm">Napoli <span class="v">v</span> Empoli</div><div class="meta">Home win · <b>Home Bankers</b></div></div><div class="edge">+2.9%</div><div><div class="from">06:00</div><div class="res lost">Missed 0–1</div></div></a>
+        <a class="item" href="focus.html"><div class="mk won">✓</div><div><div class="tm">Bayern <span class="v">v</span> Leipzig</div><div class="meta">Home win · <b>Home Bankers</b></div></div><div class="edge">+3.3%</div><div><div class="from">06:00</div><div class="res won">Landed 3–1</div></div></a>
+      </div>
+    </div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

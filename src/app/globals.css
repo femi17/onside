@@ -1,0 +1,126 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --pitch: #0e1a1b;
+  --pitch-2: #152523;
+  --pitch-3: #1e312d;
+  --chalk: #ece7da;
+  --chalk-2: #f6f2e9;
+  --ink: #13201d;
+  --ink-mute: #5e6e68;
+  --flood: #ffb43c;
+  --flood-deep: #e7952a;
+  --grass: #57a773;
+  --brick: #c2604a;
+  --on-pitch: #e7e2d5;
+  --on-pitch-mute: #8da19b;
+  --line: rgba(236, 231, 218, 0.1);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--pitch);
+  color: var(--on-pitch);
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* gradients live on a fixed viewport layer so they never repeat or split
+   when the page content scrolls */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(255, 180, 60, 0.1), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(87, 167, 115, 0.08), transparent 55%),
+    var(--pitch);
+}
+
+/* the amber crossed-square brand glyph */
+.glyph {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  position: relative;
+  background: var(--flood);
+  box-shadow: 0 0 0 4px rgba(255, 180, 60, 0.12);
+  flex: none;
+}
+.glyph::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9px;
+  background:
+    linear-gradient(90deg, transparent 46%, rgba(19, 32, 29, 0.9) 46%, rgba(19, 32, 29, 0.9) 54%, transparent 54%),
+    linear-gradient(0deg, transparent 46%, rgba(19, 32, 29, 0.9) 46%, rgba(19, 32, 29, 0.9) 54%, transparent 54%);
+}
+
+/* live "it happened" beat — pops the tracked figure when it changes (corner/goal in).
+   transform-only, so it never reflows or grows the card. */
+@keyframes onside-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+.pop {
+  animation: onside-pop 0.55s ease;
+  transform-origin: left center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop { animation: none; }
+}
+
+/* betslip ticket — perforated top edge (the signature look from the design system) */
+.betslip {
+  position: relative;
+  isolation: isolate;
+}
+.betslip::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: -6px;
+  height: 12px;
+  z-index: -1;
+  background-size: 12px 12px;
+  background-position: center top;
+}
+.betslip-chalk::before {
+  background-image: radial-gradient(circle at 6px 6px, transparent 5px, #ece7da 5.5px);
+}
+.betslip-chalk2::before {
+  background-image: radial-gradient(circle at 6px 6px, transparent 5px, #f6f2e9 5.5px);
+}
+
+/* hide the scrollbar visually but keep the element scrollable */
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE / old Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome / Safari / WebKit */
+}
+
+.onside-footer {
+  text-align: center;
+  padding: 22px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--on-pitch-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}

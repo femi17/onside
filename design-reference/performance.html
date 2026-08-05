@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Performance</title>
+<link rel="stylesheet" href="app.css" />
+<style>
+  .filterbar{display:flex;gap:8px;margin:20px 0 6px;flex-wrap:wrap}
+  .chip{font-family:"JetBrains Mono";font-size:11.5px;border:1px solid var(--line-strong);background:transparent;color:var(--on-pitch-mute);border-radius:20px;padding:8px 14px;cursor:pointer}
+  .chip.on{background:var(--flood);color:var(--ink);border-color:var(--flood)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+  .kpi{background:var(--chalk);color:var(--ink);border-radius:14px;padding:18px 20px;box-shadow:0 14px 34px -26px rgba(0,0,0,.5)}
+  .kpi .k{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .kpi .v{font-family:"Bricolage Grotesque";font-weight:800;font-size:32px;color:var(--ink);margin-top:6px;letter-spacing:-1px}
+  .kpi .v.up{color:var(--grass-deep)} .kpi .v.amber{color:var(--flood-deep)}
+  .kpi .d{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);margin-top:4px}
+  .two{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-top:16px}
+  .panelC{background:var(--chalk);color:var(--ink);border-radius:14px;padding:20px 22px;box-shadow:0 14px 34px -26px rgba(0,0,0,.5)}
+  .pt{font-family:"Bricolage Grotesque";font-weight:700;font-size:16px;color:var(--ink)}
+  .psub{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);margin-top:2px}
+  /* dual bar chart: actual vs market by period */
+  .chart{display:flex;align-items:flex-end;gap:16px;height:180px;margin-top:20px;padding-bottom:2px;border-bottom:1px solid rgba(19,32,29,.12)}
+  .col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars{display:flex;gap:4px;align-items:flex-end;height:100%;width:100%;justify-content:center}
+  .bars .b{width:26%;border-radius:5px 5px 0 0}
+  .bars .b.act{background:var(--flood-deep)} .bars .b.mkt{background:rgba(19,32,29,.16)}
+  .col .lab{font-family:"JetBrains Mono";font-size:10.5px;color:var(--ink-mute)}
+  .legendc{display:flex;gap:16px;margin-top:12px;font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute)}
+  .legendc span{display:flex;align-items:center;gap:6px}.legendc i{width:10px;height:10px;border-radius:3px}
+  .i-act{background:var(--flood-deep)} .i-mkt{background:rgba(19,32,29,.28)}
+  /* calibration rows */
+  .calrow{display:flex;align-items:center;gap:12px;margin-top:12px}
+  .calrow .rng{font-family:"JetBrains Mono";font-size:12px;color:var(--ink);width:66px}
+  .caltrack{flex:1;height:9px;border-radius:5px;background:rgba(19,32,29,.08);position:relative}
+  .caltrack .actual{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:var(--grass)}
+  .caltrack .pred{position:absolute;top:-3px;width:2px;height:15px;background:var(--ink);opacity:.5}
+  .calrow .n{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);width:52px;text-align:right}
+  /* league table */
+  .lgt{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+  .lgt .r{display:flex;justify-content:space-between;align-items:center;font-size:13.5px}
+  .lgt .r .nm{color:var(--ink);font-weight:600}
+  .lgt .r .v{font-family:"JetBrains Mono";font-weight:700}
+  .lgt .r .v.up{color:var(--grass-deep)} .lgt .r .v.down{color:var(--brick)}
+  /* insights */
+  .insight{background:var(--pitch-2);border:1px solid var(--line-strong);border-radius:14px;padding:18px 20px;margin-top:16px;display:flex;gap:14px}
+  .insight .b{width:9px;border-radius:5px;flex:none;background:linear-gradient(var(--grass),var(--grass-deep))}
+  .insight.warn .b{background:linear-gradient(var(--flood),var(--flood-deep))}
+  .insight .t{font-family:"Bricolage Grotesque";font-weight:700;font-size:16px;color:var(--chalk)}
+  .insight .d{font-size:13.5px;color:var(--on-pitch-mute);margin-top:5px;line-height:1.5}
+  @media (max-width:960px){.kpis{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a class="active" href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot"><a class="plan" href="pricing.html"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a></div>
+  </aside>
+
+  <main>
+    <div class="pagehead"><div><p class="eyebrow">Is it actually working?</p><h1>Performance.</h1></div></div>
+    <div class="filterbar"><button class="chip on">All agents</button><button class="chip">Weekend Overs</button><button class="chip">Corner Hunter</button><button class="chip">Home Bankers</button><span style="flex:1"></span><button class="chip">14 days</button><button class="chip on">This season</button></div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="k">Home/market scored</div><div class="v">71%</div><div class="d">88 of 124 settled</div></div>
+      <div class="kpi"><div class="k">vs market implied</div><div class="v up">+5.2%</div><div class="d">market expected 66%</div></div>
+      <div class="kpi"><div class="k">Paper P/L</div><div class="v up">+11.4u</div><div class="d">1u flat stakes, fair odds</div></div>
+      <div class="kpi"><div class="k">Strike on 🟢 picks</div><div class="v amber">78%</div><div class="d">strong-edge tier</div></div>
+    </div>
+
+    <div class="two">
+      <div class="panelC">
+        <div class="pt">Hit rate vs the market</div>
+        <div class="psub">Your settled picks against what the bookmakers priced, by period</div>
+        <div class="chart">
+          <div class="col"><div class="bars"><div class="b act" style="height:62%"></div><div class="b mkt" style="height:60%"></div></div><div class="lab">Jun</div></div>
+          <div class="col"><div class="bars"><div class="b act" style="height:70%"></div><div class="b mkt" style="height:64%"></div></div><div class="lab">Jul 1–14</div></div>
+          <div class="col"><div class="bars"><div class="b act" style="height:74%"></div><div class="b mkt" style="height:66%"></div></div><div class="lab">Jul 15–28</div></div>
+          <div class="col"><div class="bars"><div class="b act" style="height:71%"></div><div class="b mkt" style="height:66%"></div></div><div class="lab">This wk</div></div>
+        </div>
+        <div class="legendc"><span><i class="i-act"></i> Your actual</span><span><i class="i-mkt"></i> Market implied</span></div>
+      </div>
+
+      <div class="panelC">
+        <div class="pt">Calibration</div>
+        <div class="psub">When it says 80%, does it hit 80%? (tick = predicted)</div>
+        <div class="calrow"><span class="rng">70–75%</span><div class="caltrack"><div class="actual" style="width:73%"></div><div class="pred" style="left:72%"></div></div><span class="n">73% · 31</span></div>
+        <div class="calrow"><span class="rng">75–80%</span><div class="caltrack"><div class="actual" style="width:76%"></div><div class="pred" style="left:77%"></div></div><span class="n">76% · 44</span></div>
+        <div class="calrow"><span class="rng">80–85%</span><div class="caltrack"><div class="actual" style="width:79%"></div><div class="pred" style="left:82%"></div></div><span class="n">79% · 29</span></div>
+        <div class="calrow"><span class="rng">85%+</span><div class="caltrack"><div class="actual" style="width:88%"></div><div class="pred" style="left:88%"></div></div><span class="n">88% · 20</span></div>
+      </div>
+    </div>
+
+    <div class="two">
+      <div class="panelC">
+        <div class="pt">By league</div>
+        <div class="psub">Where your edge is real — and where it isn't</div>
+        <div class="lgt">
+          <div class="r"><span class="nm">Eredivisie</span><span class="v up">14/18 · +9%</span></div>
+          <div class="r"><span class="nm">Premier League</span><span class="v up">16/22 · +6%</span></div>
+          <div class="r"><span class="nm">La Liga</span><span class="v up">12/17 · +4%</span></div>
+          <div class="r"><span class="nm">Serie A</span><span class="v down">7/15 · −5%</span></div>
+          <div class="r"><span class="nm">Ligue 1</span><span class="v">9/14 · ≈ even</span></div>
+        </div>
+      </div>
+      <div class="panelC">
+        <div class="pt">By tier</div>
+        <div class="psub">Do the greenest picks really hit more?</div>
+        <div class="lgt">
+          <div class="r"><span class="nm">🟢 Strong (edge ≥5%)</span><span class="v up">78%</span></div>
+          <div class="r"><span class="nm">🟡 Solid (3–5%)</span><span class="v up">70%</span></div>
+          <div class="r"><span class="nm">🟠 Marginal (2–3%)</span><span class="v">64%</span></div>
+        </div>
+        <div class="psub" style="margin-top:14px">Yes — tier order holds. Stake heavier on green.</div>
+      </div>
+    </div>
+
+    <div class="section-label"><span>What your agent learned</span><div class="rule"></div></div>
+    <div class="insight"><div class="b"></div><div><div class="t">Your Eredivisie overs are the engine.</div><div class="d">14/18 landed at +9% over the market. The agent has nudged more weight here — it's your cleanest edge this season.</div></div></div>
+    <div class="insight warn"><div class="b"></div><div><div class="t">Serie A home wins keep letting you down.</div><div class="d">7/15, 5% below their price. The agent flagged it and tightened the bar for Serie A — and suggests dropping "Home win" there. <a href="strategies.html" style="color:var(--flood)">Review Home Bankers →</a></div></div></div>
+  </main>
+</div>
+<nav class="tabbar">
+  <a href="tracker.html"><span class="ic"></span>Tracker</a>
+  <a href="accumulators.html"><span class="ic"></span>Accas</a>
+  <a href="strategy.html"><span class="ic"></span>Build</a>
+  <a class="active" href="performance.html"><span class="ic"></span>Stats</a>
+  <a href="community.html"><span class="ic"></span>Squad</a>
+</nav>
+</body>
+</html>

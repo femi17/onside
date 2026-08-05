@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cutline — Accumulators & Import</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --pitch:#0E1A1B; --pitch-2:#152523; --pitch-3:#1E312D;
+    --chalk:#ECE7DA; --chalk-2:#F6F2E9;
+    --ink:#13201D; --ink-mute:#5E6E68;
+    --flood:#FFB43C; --flood-deep:#E7952A;
+    --grass:#57A773; --grass-deep:#3C8859; --brick:#C2604A;
+    --on-pitch:#E7E2D5; --on-pitch-mute:#8DA19B;
+    --line:rgba(236,231,218,.10); --line-strong:rgba(236,231,218,.18);
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -10%, rgba(255,180,60,.10), transparent 60%),
+      radial-gradient(900px 500px at -5% 110%, rgba(87,167,115,.08), transparent 55%),
+      var(--pitch);
+    color:var(--on-pitch);font-family:"Hanken Grotesk",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;letter-spacing:.1px;
+  }
+  .mono{font-family:"JetBrains Mono",monospace;font-feature-settings:"tnum" 1;letter-spacing:0}
+
+  .app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
+  .rail{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);padding:26px 20px;
+    display:flex;flex-direction:column;gap:34px;background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .glyph{width:34px;height:34px;border-radius:9px;flex:none;position:relative;background:var(--flood);box-shadow:0 0 0 4px rgba(255,180,60,.12)}
+  .brand .glyph::after{content:"";position:absolute;inset:0;border-radius:9px;
+    background:linear-gradient(90deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%),
+      linear-gradient(0deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%)}
+  .brand .word{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px;letter-spacing:-.5px;color:var(--chalk)}
+  .brand .word b{color:var(--flood)}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .nav-eyebrow{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:2px;color:var(--on-pitch-mute);text-transform:uppercase;margin:0 0 10px 12px}
+  .nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:var(--on-pitch-mute);
+    text-decoration:none;font-weight:600;font-size:14.5px;transition:background .15s,color .15s}
+  .nav a .ic{width:8px;height:8px;border-radius:2px;background:currentColor;opacity:.55}
+  .nav a:hover{background:var(--pitch-2);color:var(--on-pitch)}
+  .nav a.active{background:var(--pitch-2);color:var(--chalk)}
+  .nav a.active .ic{background:var(--flood);opacity:1}
+  .rail .foot{margin-top:auto}
+  .tier{border:1px solid var(--line-strong);border-radius:12px;padding:13px 14px;background:var(--pitch-2)}
+  .tier .lbl{font-family:"JetBrains Mono";font-size:10px;letter-spacing:1.5px;color:var(--on-pitch-mute);text-transform:uppercase}
+  .tier .name{font-weight:700;font-size:15px;color:var(--chalk);margin-top:3px}
+  .tier .meta{font-family:"JetBrains Mono";font-size:11px;color:var(--flood);margin-top:6px}
+
+  main{padding:30px 34px 120px;max-width:1000px}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap}
+  .eyebrow{font-family:"JetBrains Mono";font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--flood)}
+  h1{font-family:"Bricolage Grotesque";font-weight:700;font-size:36px;line-height:1.02;letter-spacing:-1px;color:var(--chalk);margin-top:8px}
+  h1 span{color:var(--on-pitch-mute)}
+  .addbtn{font-family:"Hanken Grotesk";font-weight:700;font-size:14px;border:0;border-radius:11px;padding:13px 18px;cursor:pointer;
+    background:var(--flood);color:var(--ink);display:inline-flex;align-items:center;gap:9px}
+  .addbtn .plus{font-family:"JetBrains Mono";font-size:16px;font-weight:700}
+
+  /* ---------- accumulator card ---------- */
+  .acca{position:relative;background:var(--chalk);color:var(--ink);border-radius:var(--radius);margin-top:26px;
+    box-shadow:0 20px 46px -26px rgba(0,0,0,.72);isolation:isolate;overflow:hidden}
+  .acca::before{content:"";position:absolute;left:14px;right:14px;top:-6px;height:12px;z-index:1;
+    background:radial-gradient(circle at 6px 6px,transparent 5px,var(--chalk) 5.5px);background-size:12px 12px}
+  .acca .top{padding:20px 22px 16px;border-bottom:1px dashed rgba(19,32,29,.16)}
+  .acca .toprow{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  .book{display:flex;align-items:center;gap:9px;font-family:"JetBrains Mono";font-size:11px;letter-spacing:.5px;color:var(--ink-mute);text-transform:uppercase}
+  .book .badge{background:var(--ink);color:var(--chalk-2);border-radius:5px;padding:3px 7px;font-weight:700;letter-spacing:1px}
+  .fold{font-family:"Bricolage Grotesque";font-weight:800;font-size:15px;color:var(--ink)}
+  .stake{text-align:right;font-family:"JetBrains Mono"}
+  .stake .flow{font-size:13px;color:var(--ink-mute)}
+  .stake .flow b{color:var(--ink);font-weight:700}
+  .stake .ret{font-family:"Bricolage Grotesque";font-weight:800;font-size:26px;color:var(--ink);letter-spacing:-.5px;margin-top:2px}
+  .stake .ret.dead{color:var(--brick);text-decoration:line-through;text-decoration-thickness:2px}
+
+  /* segmented status bar */
+  .segwrap{margin-top:16px}
+  .seg{display:flex;height:10px;border-radius:6px;overflow:hidden;gap:2px;background:transparent}
+  .seg i{display:block;border-radius:2px}
+  .seg .s-safe{background:var(--grass)}
+  .seg .s-live{background:var(--flood)}
+  .seg .s-cut{background:var(--brick)}
+  .seg .s-soon{background:rgba(19,32,29,.18)}
+  .legend{display:flex;gap:16px;margin-top:11px;flex-wrap:wrap;font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .legend .k{width:9px;height:9px;border-radius:3px}
+  .k.safe{background:var(--grass)} .k.live{background:var(--flood)} .k.cut{background:var(--brick)} .k.soon{background:rgba(19,32,29,.28)}
+
+  /* filter chips */
+  .chips{display:flex;gap:8px;padding:14px 22px 4px;flex-wrap:wrap}
+  .chip{font-family:"JetBrains Mono";font-size:11px;letter-spacing:.5px;border:1px solid rgba(19,32,29,.16);
+    background:transparent;color:var(--ink-mute);border-radius:20px;padding:7px 13px;cursor:pointer;text-transform:uppercase}
+  .chip.on{background:var(--ink);color:var(--chalk-2);border-color:var(--ink)}
+  .chip b{font-weight:700}
+
+  /* legs list — scrollable so 50 legs stay tidy */
+  .legs{max-height:340px;overflow-y:auto;padding:6px 12px 12px}
+  .legs::-webkit-scrollbar{width:8px} .legs::-webkit-scrollbar-thumb{background:rgba(19,32,29,.18);border-radius:8px}
+  .grouphd{position:sticky;top:0;background:linear-gradient(var(--chalk),var(--chalk) 70%,rgba(236,231,218,0));
+    display:flex;align-items:center;gap:8px;font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1.5px;
+    text-transform:uppercase;color:var(--ink-mute);padding:10px 10px 8px}
+  .grouphd .d{width:8px;height:8px;border-radius:50%}
+  .d.live{background:var(--flood)} .d.safe{background:var(--grass)} .d.cut{background:var(--brick)} .d.soon{background:rgba(19,32,29,.3)}
+  .leg{display:grid;grid-template-columns:26px 1fr auto;align-items:center;gap:12px;padding:11px 10px;border-radius:10px}
+  .leg:hover{background:rgba(19,32,29,.04)}
+  .leg .mk{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-family:"JetBrains Mono";font-weight:700;font-size:12px}
+  .mk.safe{background:rgba(87,167,115,.16);color:var(--grass-deep)}
+  .mk.live{background:rgba(231,149,42,.18);color:var(--flood-deep)}
+  .mk.cut{background:rgba(194,96,74,.16);color:var(--brick)}
+  .mk.soon{background:rgba(19,32,29,.07);color:var(--ink-mute)}
+  .leg .teams{font-weight:700;font-size:14.5px;color:var(--ink);line-height:1.15}
+  .leg .teams .v{color:var(--ink-mute);font-weight:600;margin:0 5px}
+  .leg .mkt{font-family:"JetBrains Mono";font-size:11px;letter-spacing:.3px;color:var(--flood-deep);text-transform:uppercase;margin-top:3px;font-weight:700}
+  .leg .state{text-align:right;font-family:"JetBrains Mono";font-size:12px}
+  .leg .state .sc{font-weight:700;font-size:14px;color:var(--ink)}
+  .leg .state .mn{color:var(--ink-mute);font-size:11px}
+  .leg .state.cut .sc{color:var(--brick)} .leg .state.safe .sc{color:var(--grass-deep)}
+
+  /* upsell moment */
+  .upsell{margin:4px 12px 16px;border-radius:12px;padding:16px 18px;position:relative;overflow:hidden}
+  .upsell.free{background:#241a12;border:1px solid rgba(255,180,60,.35)}
+  .upsell.sub{background:var(--pitch-2);border:1px solid var(--line-strong);margin-top:2px}
+  .upsell .utag{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700}
+  .upsell.free .utag{color:var(--flood)} .upsell.sub .utag{color:var(--grass)}
+  .upsell .utitle{font-family:"Bricolage Grotesque";font-weight:700;font-size:18px;color:var(--chalk);margin-top:8px;line-height:1.2}
+  .upsell .ubody{font-size:13.5px;color:var(--on-pitch-mute);margin-top:6px;max-width:56ch;line-height:1.5}
+  .upsell .uact{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .ubtn{font-family:"Hanken Grotesk";font-weight:700;font-size:13px;border:0;border-radius:9px;padding:11px 16px;cursor:pointer}
+  .ubtn.amber{background:var(--flood);color:var(--ink)} .ubtn.line{background:transparent;color:var(--chalk);border:1px solid var(--line-strong)}
+  .subnote{font-family:"JetBrains Mono";font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--on-pitch-mute);margin:20px 12px 6px}
+
+  /* ---------- import modal ---------- */
+  .scrim{position:fixed;inset:0;background:rgba(6,12,12,.66);backdrop-filter:blur(4px);z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+  .scrim.hide{display:none}
+  .modal{width:100%;max-width:560px;background:var(--chalk);color:var(--ink);border-radius:18px;box-shadow:0 40px 90px -30px rgba(0,0,0,.8);overflow:hidden}
+  .mhd{padding:20px 22px 0;display:flex;justify-content:space-between;align-items:flex-start}
+  .mhd h2{font-family:"Bricolage Grotesque";font-weight:700;font-size:22px;letter-spacing:-.4px;color:var(--ink)}
+  .mhd p{font-size:13px;color:var(--ink-mute);margin-top:4px}
+  .x{background:rgba(19,32,29,.07);border:0;width:32px;height:32px;border-radius:9px;cursor:pointer;font-size:16px;color:var(--ink)}
+  .tabs{display:flex;gap:4px;padding:16px 22px 0}
+  .tab{flex:1;font-family:"JetBrains Mono";font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;font-weight:700;
+    padding:11px;border:1px solid rgba(19,32,29,.14);background:transparent;color:var(--ink-mute);border-radius:10px;cursor:pointer}
+  .tab.on{background:var(--ink);color:var(--chalk-2);border-color:var(--ink)}
+  .pane{padding:18px 22px 22px;display:none} .pane.on{display:block}
+
+  .drop{border:1.5px dashed rgba(19,32,29,.28);border-radius:12px;padding:16px;display:flex;gap:14px;align-items:center;background:rgba(19,32,29,.03)}
+  .drop .thumb{width:54px;height:72px;border-radius:8px;background:linear-gradient(160deg,#22323a,#0f1c22);flex:none;position:relative;overflow:hidden;border:1px solid rgba(0,0,0,.2)}
+  .drop .thumb::after{content:"";position:absolute;left:7px;right:7px;top:9px;height:6px;border-radius:3px;background:rgba(255,180,60,.5);box-shadow:0 11px 0 rgba(236,231,218,.35),0 22px 0 rgba(236,231,218,.25),0 33px 0 rgba(236,231,218,.2)}
+  .drop .dtext .dt{font-weight:700;font-size:14px;color:var(--ink)}
+  .drop .dtext .ds{font-size:12.5px;color:var(--ink-mute);margin-top:3px}
+  .drop .dtext .parsed{font-family:"JetBrains Mono";font-size:11px;color:var(--grass-deep);margin-top:6px;font-weight:700}
+
+  .selhd{display:flex;justify-content:space-between;align-items:center;margin:16px 2px 8px}
+  .selhd .st{font-family:"JetBrains Mono";font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-mute)}
+  .selhd .all{font-size:12px;color:var(--flood-deep);font-weight:700;cursor:pointer}
+  .prow{display:grid;grid-template-columns:22px 1fr auto;gap:12px;align-items:center;padding:11px 10px;border-radius:10px;border:1px solid rgba(19,32,29,.09);margin-bottom:8px}
+  .prow.off{opacity:.5}
+  .cbx{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--ink);display:grid;place-items:center;cursor:pointer;background:var(--ink);color:var(--chalk-2);font-size:12px;font-weight:700}
+  .prow.off .cbx{background:transparent;color:transparent;border-color:rgba(19,32,29,.3)}
+  .prow .m{font-weight:700;font-size:14px;color:var(--ink);line-height:1.15}
+  .prow .m .v{color:var(--ink-mute);font-weight:600;margin:0 5px}
+  .prow .sub{font-family:"JetBrains Mono";font-size:11px;color:var(--ink-mute);margin-top:3px}
+  .prow .sub b{color:var(--flood-deep)}
+  .conf{font-family:"JetBrains Mono";font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;font-weight:700;padding:4px 7px;border-radius:20px}
+  .conf.hi{background:rgba(87,167,115,.16);color:var(--grass-deep)}
+  .conf.check{background:rgba(231,149,42,.18);color:var(--flood-deep)}
+  .mfoot{display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:16px;border-top:1px solid rgba(19,32,29,.1)}
+  .mfoot .cnt{font-family:"JetBrains Mono";font-size:12px;color:var(--ink-mute)}
+  .mfoot .cnt b{color:var(--ink)}
+  .go{font-family:"Hanken Grotesk";font-weight:700;font-size:14px;background:var(--ink);color:var(--chalk-2);border:0;border-radius:10px;padding:12px 20px;cursor:pointer}
+
+  @media (max-width:860px){
+    .app{grid-template-columns:1fr}.rail{display:none}
+    main{padding:20px 15px 40px}h1{font-size:27px}
+    .legs{max-height:none}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <a class="brand" href="index.html"><div class="glyph"></div><div class="word">CUT<b>LINE</b></div></a>
+    <nav class="nav">
+      <p class="nav-eyebrow">Matchday</p>
+      <a href="tracker.html"><span class="ic"></span> Tracker</a>
+      <a class="active" href="accumulators.html"><span class="ic"></span> Accumulators</a>
+      <a href="agent.html"><span class="ic"></span> Agent</a>
+      <a href="strategies.html"><span class="ic"></span> Strategies</a>
+      <a href="performance.html"><span class="ic"></span> Performance</a>
+      <a href="community.html"><span class="ic"></span> Community</a>
+    </nav>
+    <div class="foot">
+      <a class="tier" href="pricing.html" style="text-decoration:none;display:block"><div class="lbl">Your plan</div><div class="name">Terrace (free)</div><div class="meta">Agent: 1 run left</div></a>
+    </div>
+  </aside>
+
+  <main>
+    <div class="head">
+      <div>
+        <p class="eyebrow">Saturday · 1 slip live</p>
+        <h1>Your acca, <span>leg by leg.</span></h1>
+      </div>
+      <button class="addbtn" onclick="openModal()"><span class="plus">+</span> Add to tracker</button>
+    </div>
+
+    <!-- ACCUMULATOR -->
+    <section class="acca">
+      <div class="top">
+        <div class="toprow">
+          <div>
+            <div class="book"><span class="badge">Bet365</span> imported · 2h ago</div>
+            <div class="fold" style="margin-top:8px">15-fold accumulator</div>
+          </div>
+          <div class="stake">
+            <div class="flow">stake <b>₦5,000</b> → potential</div>
+            <div class="ret dead">₦412,900</div>
+          </div>
+        </div>
+        <div class="segwrap">
+          <div class="seg">
+            <i class="s-safe" style="flex:9"></i>
+            <i class="s-live" style="flex:3"></i>
+            <i class="s-cut" style="flex:1"></i>
+            <i class="s-soon" style="flex:2"></i>
+          </div>
+          <div class="legend">
+            <span><i class="k safe"></i> 9 safe</span>
+            <span><i class="k live"></i> 3 live</span>
+            <span><i class="k cut"></i> 1 cut</span>
+            <span><i class="k soon"></i> 2 upcoming</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chips">
+        <button class="chip on">All <b>15</b></button>
+        <button class="chip">Live <b>3</b></button>
+        <button class="chip">Safe <b>9</b></button>
+        <button class="chip">Cut <b>1</b></button>
+        <button class="chip">Upcoming <b>2</b></button>
+      </div>
+
+      <div class="legs">
+        <div class="grouphd"><span class="d cut"></span> Cut · 1</div>
+        <div class="leg">
+          <div class="mk cut">✕</div>
+          <div><div class="teams">Napoli <span class="v">v</span> Empoli</div><div class="mkt">Home win</div></div>
+          <div class="state cut"><div class="sc">0–1</div><div class="mn">78′ · down</div></div>
+        </div>
+
+        <!-- upsell fires right where it hurts -->
+        <div class="upsell free">
+          <div class="utag">◆ 14 of 15 were landing</div>
+          <div class="utitle">One leg just cut your ₦412,900 slip.</div>
+          <div class="ubody">Napoli were the shakiest pick on here — your odds implied 62%, the value said fold. An AI agent screens every leg before you commit and flags the one most likely to let you down. Most accas die on exactly that leg.</div>
+          <div class="uact">
+            <button class="ubtn amber">Try your agent — 1 free run</button>
+            <button class="ubtn line">See what it flags</button>
+          </div>
+        </div>
+
+        <div class="grouphd"><span class="d live"></span> Live now · 3</div>
+        <div class="leg">
+          <div class="mk live">●</div>
+          <div><div class="teams">Arsenal <span class="v">v</span> Chelsea</div><div class="mkt">Over 8.5 corners</div></div>
+          <div class="state"><div class="sc">8 / 8.5</div><div class="mn">63′ · 1 to go</div></div>
+        </div>
+        <div class="leg">
+          <div class="mk live">●</div>
+          <div><div class="teams">Roma <span class="v">v</span> Lazio</div><div class="mkt">Both teams to score</div></div>
+          <div class="state"><div class="sc">1–0</div><div class="mn">55′ · need Lazio</div></div>
+        </div>
+        <div class="leg">
+          <div class="mk live">●</div>
+          <div><div class="teams">Feyenoord <span class="v">v</span> AZ</div><div class="mkt">Over 1.5 goals</div></div>
+          <div class="state"><div class="sc">0 / 1.5</div><div class="mn">24′</div></div>
+        </div>
+
+        <div class="grouphd"><span class="d safe"></span> Safe · 9</div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Real Madrid <span class="v">v</span> Sevilla</div><div class="mkt">Home to score</div></div><div class="state safe"><div class="sc">1–0</div><div class="mn">landed 38′</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Man City <span class="v">v</span> Wolves</div><div class="mkt">Over 1.5 goals</div></div><div class="state safe"><div class="sc">2–0</div><div class="mn">landed</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Bayern <span class="v">v</span> Leipzig</div><div class="mkt">Home win</div></div><div class="state safe"><div class="sc">3–1</div><div class="mn">FT</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">PSG <span class="v">v</span> Lyon</div><div class="mkt">Over 2.5 goals</div></div><div class="state safe"><div class="sc">3–1</div><div class="mn">FT</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Ajax <span class="v">v</span> Twente</div><div class="mkt">Home to score</div></div><div class="state safe"><div class="sc">2–0</div><div class="mn">landed</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Benfica <span class="v">v</span> Porto</div><div class="mkt">Both teams to score</div></div><div class="state safe"><div class="sc">1–1</div><div class="mn">landed</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Celtic <span class="v">v</span> Rangers</div><div class="mkt">Over 1.5 goals</div></div><div class="state safe"><div class="sc">2–1</div><div class="mn">FT</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Inter <span class="v">v</span> Genoa</div><div class="mkt">Home to score</div></div><div class="state safe"><div class="sc">2–0</div><div class="mn">landed</div></div></div>
+        <div class="leg"><div class="mk safe">✓</div><div><div class="teams">Club Brugge <span class="v">v</span> Gent</div><div class="mkt">Over 0.5 goals</div></div><div class="state safe"><div class="sc">1–0</div><div class="mn">landed</div></div></div>
+
+        <div class="grouphd"><span class="d soon"></span> Upcoming · 2</div>
+        <div class="leg"><div class="mk soon">◷</div><div><div class="teams">Juventus <span class="v">v</span> Milan</div><div class="mkt">Under 3.5 goals</div></div><div class="state"><div class="sc">20:45</div><div class="mn">in 2h</div></div></div>
+        <div class="leg"><div class="mk soon">◷</div><div><div class="teams">Atlético <span class="v">v</span> Betis</div><div class="mkt">Home to score</div></div><div class="state"><div class="sc">21:00</div><div class="mn">in 2h</div></div></div>
+      </div>
+    </section>
+
+    <p class="subnote">If you were a subscriber, the same moment reads:</p>
+    <div class="upsell sub" style="border-radius:12px">
+      <div class="utag">✦ Agent learning</div>
+      <div class="utitle">Feed this slip to your agent.</div>
+      <div class="ubody">It'll learn that your home-win picks in Serie A underperform their price — and start warning you before the next one goes on your slip.</div>
+      <div class="uact"><button class="ubtn amber">Let it learn from this</button></div>
+    </div>
+  </main>
+</div>
+
+<!-- IMPORT MODAL -->
+<div class="scrim hide" id="scrim">
+  <div class="modal">
+    <div class="mhd">
+      <div><h2>Add games to track</h2><p>Tracking follows only the games you actually played.</p></div>
+      <button class="x" onclick="closeModal()">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab on" onclick="tab('shot')">Upload betslip</button>
+      <button class="tab" onclick="tab('agent')">Ask the agent</button>
+    </div>
+
+    <!-- screenshot parse -->
+    <div class="pane on" id="pane-shot">
+      <div class="drop">
+        <div class="thumb"></div>
+        <div class="dtext">
+          <div class="dt">bet365-slip.png</div>
+          <div class="ds">Screenshot read. Check the picks below, then confirm.</div>
+          <div class="parsed">✓ Parsed 6 selections</div>
+        </div>
+      </div>
+      <div class="selhd"><span class="st">Select the games you played</span><span class="all">All 6</span></div>
+
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Arsenal <span class="v">v</span> Chelsea</div><div class="sub">Premier League · <b>Over 8.5 corners</b></div></div><span class="conf hi">Read</span></div>
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Napoli <span class="v">v</span> Empoli</div><div class="sub">Serie A · <b>Home win</b></div></div><span class="conf hi">Read</span></div>
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Feyenoord <span class="v">v</span> AZ</div><div class="sub">Eredivisie · <b>Over 1.5 goals</b></div></div><span class="conf hi">Read</span></div>
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Roma <span class="v">v</span> Lazio</div><div class="sub">Serie A · <b>Both teams to score</b></div></div><span class="conf check">Check outcome</span></div>
+      <div class="prow off"><div class="cbx">✓</div><div><div class="m">Real Madrid <span class="v">v</span> Sevilla</div><div class="sub">La Liga · <b>Home to score</b></div></div><span class="conf hi">Read</span></div>
+      <div class="prow off"><div class="cbx">✓</div><div><div class="m">Bayern <span class="v">v</span> Leipzig</div><div class="sub">Bundesliga · <b>Home win</b></div></div><span class="conf hi">Read</span></div>
+
+      <div class="mfoot"><div class="cnt"><b>4</b> of 6 selected to track</div><button class="go">Track 4 games</button></div>
+    </div>
+
+    <!-- agent-assisted -->
+    <div class="pane" id="pane-agent">
+      <div class="drop" style="border-style:solid;border-color:rgba(231,149,42,.4);background:rgba(231,149,42,.06)">
+        <div class="thumb" style="background:linear-gradient(160deg,#3a2c12,#1a1207)"></div>
+        <div class="dtext">
+          <div class="dt">Your Over 1.5 strategy</div>
+          <div class="ds">The agent found today's games that fit your rule across your leagues.</div>
+          <div class="parsed" style="color:var(--flood-deep)">◆ 8 candidates · tick the ones on your slip</div>
+        </div>
+      </div>
+      <div class="selhd"><span class="st">Pick what you actually played</span><span class="all">Clear</span></div>
+
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Feyenoord <span class="v">v</span> AZ</div><div class="sub">Eredivisie · model <b>0.76</b> · edge +5.1%</div></div><span class="conf hi">Fits</span></div>
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Man City <span class="v">v</span> Wolves</div><div class="sub">Premier League · model <b>0.74</b> · edge +4.0%</div></div><span class="conf hi">Fits</span></div>
+      <div class="prow"><div class="cbx">✓</div><div><div class="m">Celtic <span class="v">v</span> Rangers</div><div class="sub">Scotland · model <b>0.72</b> · edge +3.3%</div></div><span class="conf hi">Fits</span></div>
+      <div class="prow off"><div class="cbx">✓</div><div><div class="m">Sporting <span class="v">v</span> Braga</div><div class="sub">Primeira Liga · model <b>0.74</b> · edge +4.1%</div></div><span class="conf check">Marginal</span></div>
+      <div class="prow off"><div class="cbx">✓</div><div><div class="m">Union SG <span class="v">v</span> Genk</div><div class="sub">Belgium · model <b>0.71</b> · edge +2.6%</div></div><span class="conf check">Marginal</span></div>
+
+      <div class="mfoot"><div class="cnt"><b>3</b> of 8 selected to track</div><button class="go">Track 3 games</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function openModal(){document.getElementById('scrim').classList.remove('hide')}
+  function closeModal(){document.getElementById('scrim').classList.add('hide')}
+  function tab(which){
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on')});
+    event.target.classList.add('on');
+    document.getElementById('pane-shot').classList.toggle('on', which==='shot');
+    document.getElementById('pane-agent').classList.toggle('on', which==='agent');
+  }
+  // toggle a row's "played" state on click
+  document.querySelectorAll('.prow').forEach(function(r){
+    r.addEventListener('click',function(){r.classList.toggle('off')});
+  });
+</script>
+</body>
+</html>

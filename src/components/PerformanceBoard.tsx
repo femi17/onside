@@ -1,0 +1,465 @@
+"use client";
+
+// Performance page — mirrors design-reference/performance.html. "Is it actually working?"
+// Grades your agents' settled picks against the market: hit rate, value vs market, paper P/L,
+// calibration, by-league / by-tier breakdowns, and data-derived "what's working" insights.
+// Everything is computed client-side from the delivered picks (no schema changes).
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import StickyHeader from "@/components/StickyHeader";
+import MobileLogo from "@/components/MobileLogo";
+
+export type PerfPick = {
+  id: string;
+  strategy_id: string | null;
+  result: string; // won | lost | void | pending
+  model_prob: number | null;
+  market_prob: number | null;
+  edge: number | null; // fraction (0.05 = +5%)
+  tier: string | null;
+  market_key: string | null;
+  market_label: string | null;
+  delivered_at: string | null;
+  strategies: { name: string | null } | { name: string | null }[] | null;
+  fixtures: { leagues: { name: string | null; flag_url: string | null; tier: string | null } | null } | null;
+};
+
+const agentOf = (p: PerfPick) => (Array.isArray(p.strategies) ? p.strategies[0]?.name : p.strategies?.name) ?? "Agent";
+const leagueOf = (p: PerfPick) => p.fixtures?.leagues?.name ?? "Other";
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+const signed = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
+// start of the ISO week (Mon) for a date, as a yyyy-mm-dd key
+function weekKey(iso: string): string {
+  const d = new Date(iso);
+  const day = (d.getUTCDay() + 6) % 7; // Mon=0
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+const weekLabel = (key: string) => new Date(key).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+
+export type LearningEvent = {
+  id: string;
+  strategy_id: string | null;
+  prev_min_edge: number | null;
+  new_min_edge: number | null;
+  avg_roi: number | null;
+  sample_size: number | null;
+  created_at: string | null;
+  strategies: { name: string | null } | { name: string | null }[] | null;
+};
+const evAgent = (e: LearningEvent) => (Array.isArray(e.strategies) ? e.strategies[0]?.name : e.strategies?.name) ?? "Agent";
+
+// plain-language explanations for the top KPI cards (opened via the ? button on each card)
+type HelpKey = "landed" | "vsmarket" | "pnl" | "green";
+const HELP: Record<HelpKey, { title: string; body: string[] }> = {
+  landed: {
+    title: "Picks that landed",
+    body: [
+      "Of your finished picks, the share that won.",
+      "“Settled” means the match is over so we know the result — pending games aren’t counted.",
+      "Example: 31 wins out of 50 finished picks = 62%.",
+      "This is your raw success rate. On its own it doesn’t tell you if you got good value — for that, see “vs market implied”.",
+    ],
+  },
+  vsmarket: {
+    title: "vs market implied",
+    body: [
+      "The important one. It compares how often your picks actually won against how often the bookmaker’s odds said they should.",
+      "Odds are just the bookmaker’s estimate of a chance — odds of 1.72 imply about a 58% chance. That’s the “market implied” probability.",
+      "If your picks won 62% but the prices only implied 58%, you beat the price by +4.2%.",
+      "Positive = you’re finding bets the market underrated (good). Negative = you’re paying over the odds.",
+    ],
+  },
+  pnl: {
+    title: "Paper P/L",
+    body: [
+      "“Paper” means simulated — a what-if, not money you actually staked. P/L = profit / loss.",
+      "“u” = units. 1 unit = one stake. Counting in units keeps it independent of how much you bet: +3.4u means you’d be up 3.4 stakes.",
+      "“1u flat” = the simulation puts exactly one unit on every pick.",
+      "“Fair odds” = payouts with the bookmaker’s built-in margin (the “vig”) removed, so this reflects your skill, not their cut.",
+    ],
+  },
+  green: {
+    title: "Strike on 🟢 picks",
+    body: [
+      "Your win rate on only your strongest picks.",
+      "Each pick gets an “edge” — how big an advantage your agent thinks it has over the price. 🟢 strong (edge 5%+), 🟡 medium, 🟠 slim.",
+      "“Strike” just means win rate, so this is how often your most-confident picks win.",
+      "You want this higher than “Picks that landed” — it’s proof that when your agent is confident, it’s right more often.",
+    ],
+  },
+};
+
+export default function PerformanceBoard({ picks, events }: { picks: PerfPick[]; events: LearningEvent[] }) {
+  const [agent, setAgent] = useState<string | null>(null);
+  const [days, setDays] = useState<14 | null>(null); // null = this season (all)
+  const [help, setHelp] = useState<HelpKey | null>(null); // which KPI explainer modal is open
+
+  const agents = useMemo(() => Array.from(new Set(picks.map(agentOf))).sort(), [picks]);
+
+  const d = useMemo(() => {
+    const floor = days ? Date.now() - days * 86400000 : 0;
+    const inScope = picks.filter((p) => {
+      if (agent && agentOf(p) !== agent) return false;
+      if (floor && (!p.delivered_at || Date.parse(p.delivered_at) < floor)) return false;
+      return true;
+    });
+    const settled = inScope.filter((p) => p.result === "won" || p.result === "lost");
+    const won = settled.filter((p) => p.result === "won").length;
+    const total = settled.length;
+    const winRate = total ? won / total : 0;
+
+    // priced = settled picks that carry a de-vigged market probability (used for value + P/L)
+    const priced = settled.filter((p) => p.market_prob != null && p.market_prob > 0 && p.market_prob < 1);
+    const pricedWon = priced.filter((p) => p.result === "won").length;
+    const winRatePriced = priced.length ? pricedWon / priced.length : 0;
+    const avgMarket = priced.length ? priced.reduce((s, p) => s + (p.market_prob as number), 0) / priced.length : 0;
+    const vsMarket = winRatePriced - avgMarket;
+    // paper P/L in units: 1u flat stakes at fair (de-vigged) odds
+    const pnl = priced.reduce((s, p) => s + (p.result === "won" ? 1 / (p.market_prob as number) - 1 : -1), 0);
+
+    // strike on the greenest picks (edge ≥ 5%)
+    const green = settled.filter((p) => (p.edge ?? -1) >= 0.05);
+    const greenWon = green.filter((p) => p.result === "won").length;
+    const greenStrike = green.length ? greenWon / green.length : 0;
+
+    // hit rate vs market, by week
+    const wkMap = new Map<string, { won: number; total: number; mkt: number; priced: number }>();
+    for (const p of settled) {
+      if (!p.delivered_at) continue;
+      const k = weekKey(p.delivered_at);
+      const b = wkMap.get(k) ?? { won: 0, total: 0, mkt: 0, priced: 0 };
+      b.total++; if (p.result === "won") b.won++;
+      if (p.market_prob != null && p.market_prob > 0 && p.market_prob < 1) { b.mkt += p.market_prob; b.priced++; }
+      wkMap.set(k, b);
+    }
+    const weeks = Array.from(wkMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([k, b]) => ({ label: weekLabel(k), actual: b.total ? b.won / b.total : 0, market: b.priced ? b.mkt / b.priced : 0 }));
+
+    // calibration: does an 80% model pick hit 80%? bucket settled by model_prob band
+    const bands = [
+      { lo: 0.5, hi: 0.6, label: "50–60%" },
+      { lo: 0.6, hi: 0.7, label: "60–70%" },
+      { lo: 0.7, hi: 0.8, label: "70–80%" },
+      { lo: 0.8, hi: 0.9, label: "80–90%" },
+      { lo: 0.9, hi: 1.01, label: "90%+" },
+    ].map((band) => {
+      const inBand = settled.filter((p) => p.model_prob != null && p.model_prob >= band.lo && p.model_prob < band.hi);
+      const w = inBand.filter((p) => p.result === "won").length;
+      const predicted = inBand.length ? inBand.reduce((s, p) => s + (p.model_prob as number), 0) / inBand.length : 0;
+      return { ...band, n: inBand.length, actual: inBand.length ? w / inBand.length : 0, predicted };
+    }).filter((b) => b.n > 0);
+
+    // by league — where the edge is real
+    const lgMap = new Map<string, { won: number; total: number; mkt: number; priced: number; pricedWon: number }>();
+    for (const p of settled) {
+      const k = leagueOf(p);
+      const b = lgMap.get(k) ?? { won: 0, total: 0, mkt: 0, priced: 0, pricedWon: 0 };
+      b.total++; if (p.result === "won") b.won++;
+      if (p.market_prob != null && p.market_prob > 0 && p.market_prob < 1) { b.mkt += p.market_prob; b.priced++; if (p.result === "won") b.pricedWon++; }
+      lgMap.set(k, b);
+    }
+    const leagues = Array.from(lgMap.entries()).map(([name, b]) => ({
+      name, won: b.won, total: b.total,
+      edgePct: b.priced ? b.pricedWon / b.priced - b.mkt / b.priced : null,
+    })).sort((a, b) => (b.edgePct ?? -1) - (a.edgePct ?? -1));
+
+    // by edge tier (matches the confidence dots: 🟢 ≥5%, 🟡 3–5%, 🟠 <3%)
+    const tierBand = (lo: number, hi: number) => {
+      const inT = settled.filter((p) => (p.edge ?? -1) >= lo && (p.edge ?? -1) < hi);
+      const w = inT.filter((p) => p.result === "won").length;
+      return { n: inT.length, rate: inT.length ? w / inT.length : 0 };
+    };
+    const tiers = [
+      { key: "🟢 Strong (edge ≥5%)", ...tierBand(0.05, 99) },
+      { key: "🟡 Solid (3–5%)", ...tierBand(0.03, 0.05) },
+      { key: "🟠 Marginal (<3%)", ...tierBand(-99, 0.03) },
+    ];
+    const tierHolds = tiers[0].n > 0 && tiers[2].n > 0 && tiers[0].rate >= tiers[1].rate && tiers[1].rate >= tiers[2].rate;
+
+    // insights (Phase 1: data-derived; Phase 2 will fold in the learning-change log)
+    const graded = leagues.filter((l) => l.total >= 4 && l.edgePct != null);
+    const best = graded.find((l) => (l.edgePct as number) > 0.02) ?? null;
+    const worst = [...graded].reverse().find((l) => (l.edgePct as number) < -0.02) ?? null;
+
+    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
+  }, [picks, agent, days]);
+
+  // self-tuning log (Pro Max learning agents), filtered to the same agent + timeframe
+  const tunes = useMemo(() => {
+    const floor = days ? Date.now() - days * 86400000 : 0;
+    return (events ?? []).filter((e) => {
+      if (agent && evAgent(e) !== agent) return false;
+      if (floor && (!e.created_at || Date.parse(e.created_at) < floor)) return false;
+      return true;
+    });
+  }, [events, agent, days]);
+
+  const hasData = d.total > 0;
+
+  return (
+    <div className="pb-24">
+      <StickyHeader>
+        <div className="mx-auto max-w-5xl px-5 pb-3 pt-6 md:px-8">
+          <MobileLogo />
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Is it actually working?</p>
+          <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">Performance.</h1>
+        </div>
+      </StickyHeader>
+
+      <div className="mx-auto max-w-5xl px-5 pt-2 md:px-8">
+        {/* filter bar: agents + timeframe */}
+        <div className="flex flex-wrap items-center gap-2">
+          {agents.length > 1 && (
+            <>
+              <Chip on={agent === null} onClick={() => setAgent(null)}>All agents</Chip>
+              {agents.map((a) => (
+                <Chip key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Chip>
+              ))}
+            </>
+          )}
+          <span className="flex-1" />
+          <Chip on={days === 14} onClick={() => setDays(14)}>14 days</Chip>
+          <Chip on={days === null} onClick={() => setDays(null)}>This season</Chip>
+        </div>
+
+        {!hasData ? (
+          <div className="mt-10 rounded-2xl border border-dashed border-white/15 bg-chalk p-12 text-center text-ink shadow-xl">
+            <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-flood/15 font-mono text-xl text-flood-deep">📊</div>
+            <h2 className="font-disp text-xl font-bold text-ink">No settled picks yet.</h2>
+            <p className="mx-auto mt-2 max-w-sm text-sm text-ink-mute">
+              Once your agents&apos; games finish, this is where you&apos;ll see whether they&apos;re beating the market —
+              hit rate, value vs price, and where your edge is real.
+            </p>
+            <Link href="/strategies/new" className="mt-5 inline-block rounded-xl bg-flood px-5 py-3 font-bold text-ink">Build an agent</Link>
+          </div>
+        ) : (
+          <>
+            {/* KPIs */}
+            <div className="mt-4 grid grid-cols-2 gap-3.5 md:grid-cols-4">
+              <Kpi k="Picks that landed" v={pct(d.winRate)} d={`${d.won} of ${d.total} settled`} onHelp={() => setHelp("landed")} />
+              <Kpi k="vs market implied" v={d.priced.length ? signed(d.vsMarket) : "—"} tone={d.vsMarket >= 0 ? "up" : "down"} d={d.priced.length ? `market expected ${pct(d.avgMarket)}` : "no priced picks"} onHelp={() => setHelp("vsmarket")} />
+              <Kpi k="Paper P/L" v={d.priced.length ? `${d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(1)}u` : "—"} tone={d.pnl >= 0 ? "up" : "down"} d="1u flat, fair odds" onHelp={() => setHelp("pnl")} />
+              <Kpi k="Strike on 🟢 picks" v={d.green.length ? pct(d.greenStrike) : "—"} tone="amber" d={d.green.length ? `${d.green.length} strong-edge` : "none yet"} onHelp={() => setHelp("green")} />
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+              {/* hit rate vs market */}
+              <Panel title="Hit rate vs the market" sub="Your settled picks against what the bookmakers priced, by week">
+                {d.weeks.length ? (
+                  <>
+                    <div className="mt-5 flex h-[180px] items-end gap-4 border-b border-ink/10 pb-0.5">
+                      {d.weeks.map((w) => (
+                        <div key={w.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
+                          <div className="flex h-full w-full items-end justify-center gap-1">
+                            <div className="w-[26%] rounded-t bg-flood-deep" style={{ height: `${Math.max(2, w.actual * 100)}%` }} title={`Actual ${pct(w.actual)}`} />
+                            <div className="w-[26%] rounded-t bg-ink/20" style={{ height: `${Math.max(2, w.market * 100)}%` }} title={`Market ${pct(w.market)}`} />
+                          </div>
+                          <span className="font-mono text-[10.5px] text-ink-mute">{w.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex gap-4 font-mono text-[11px] text-ink-mute">
+                      <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-[3px] bg-flood-deep" /> Your actual</span>
+                      <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-[3px] bg-ink/25" /> Market implied</span>
+                    </div>
+                  </>
+                ) : <Empty>Not enough settled weeks yet.</Empty>}
+              </Panel>
+
+              {/* calibration */}
+              <Panel title="Calibration" sub="When it says 80%, does it hit 80%? (tick = predicted)">
+                {d.bands.length ? (
+                  <div className="mt-2">
+                    {d.bands.map((b) => (
+                      <div key={b.label} className="mt-3 flex items-center gap-3">
+                        <span className="w-16 font-mono text-[12px] text-ink">{b.label}</span>
+                        <div className="relative h-2.5 flex-1 rounded-[5px] bg-ink/[0.08]">
+                          <div className="absolute inset-y-0 left-0 rounded-[5px] bg-grass" style={{ width: `${b.actual * 100}%` }} />
+                          <div className="absolute -top-[3px] h-[15px] w-0.5 bg-ink/50" style={{ left: `${b.predicted * 100}%` }} />
+                        </div>
+                        <span className="w-14 text-right font-mono text-[11px] text-ink-mute">{pct(b.actual)} · {b.n}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : <Empty>Priced picks needed to calibrate.</Empty>}
+              </Panel>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {/* by league */}
+              <Panel title="By league" sub="Where your edge is real — and where it isn't">
+                {/* fixed height ~6 rows; extra leagues scroll (invisible scrollbar) */}
+                <div className="no-scrollbar mt-3.5 flex max-h-[212px] flex-col gap-2 overflow-y-auto">
+                  {d.leagues.map((l) => (
+                    <div key={l.name} className="flex items-center justify-between text-[13.5px]">
+                      <span className="min-w-0 truncate pr-3 font-semibold text-ink">{l.name}</span>
+                      <span className={`flex-none font-mono font-bold ${l.edgePct == null ? "text-ink-mute" : l.edgePct > 0.005 ? "text-grass-deep" : l.edgePct < -0.005 ? "text-brick" : "text-ink-mute"}`}>
+                        {l.won}/{l.total}{l.edgePct != null ? ` · ${l.edgePct > 0.005 ? signed(l.edgePct) : l.edgePct < -0.005 ? signed(l.edgePct) : "≈ even"}` : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+
+              {/* by tier */}
+              <Panel title="By tier" sub="Do the greenest picks really hit more?">
+                <div className="mt-3.5 flex flex-col gap-2">
+                  {d.tiers.map((t) => (
+                    <div key={t.key} className="flex items-center justify-between text-[13.5px]">
+                      <span className="font-semibold text-ink">{t.key}</span>
+                      <span className={`flex-none font-mono font-bold ${t.n ? "text-grass-deep" : "text-ink-mute"}`}>{t.n ? `${pct(t.rate)} · ${t.n}` : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3.5 font-mono text-[11px] text-ink-mute">
+                  {d.tierHolds ? "Tier order holds — stake heavier on green." : "Tier order is mixed so far — needs more settled picks."}
+                </p>
+              </Panel>
+            </div>
+
+            {/* what your agent learned (Phase 1: derived from results) */}
+            <div className="mt-8 mb-2 flex items-center gap-3">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">What&apos;s working</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
+            {d.best || d.worst ? (
+              <div className="flex flex-col gap-3">
+                {d.best && (
+                  <Insight tone="good" title={`Your ${d.best.name} picks are the engine.`}>
+                    {d.best.won}/{d.best.total} landed at {signed(d.best.edgePct as number)} over the market — your cleanest edge this run.
+                  </Insight>
+                )}
+                {d.worst && (
+                  <Insight tone="warn" title={`${d.worst.name} keeps letting you down.`}>
+                    {d.worst.won}/{d.worst.total}, {signed(d.worst.edgePct as number)} vs their price. Consider tightening the bar there or dropping that market.{" "}
+                    <Link href="/strategies" className="text-flood">Review your agents →</Link>
+                  </Insight>
+                )}
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-white/10 bg-pitch-2 p-5 text-[13.5px] text-onpitch-mute">
+                Gathering results — clear insights appear once an agent has ~20 settled picks in a league.
+              </p>
+            )}
+
+            {/* Phase 2: the agent's real self-tuning log (Pro Max learning) */}
+            <div className="mt-8 mb-2 flex items-center gap-3">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">How your agents tuned themselves</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
+            {tunes.length ? (
+              <div className="flex flex-col gap-2.5">
+                {tunes.map((e) => {
+                  const prev = e.prev_min_edge ?? 0, next = e.new_min_edge ?? 0;
+                  const tightened = next > prev;
+                  const roi = e.avg_roi ?? 0;
+                  return (
+                    <div key={e.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-pitch-2 p-4">
+                      <span className={`grid h-8 w-8 flex-none place-items-center rounded-lg font-mono text-base font-bold ${tightened ? "bg-flood/15 text-flood-deep" : "bg-grass/15 text-grass-deep"}`}>
+                        {tightened ? "↑" : "↓"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13.5px] text-chalk">
+                          <b>{evAgent(e)}</b> {tightened ? "tightened" : "loosened"} its bar {signed(prev)} → {signed(next)}
+                        </div>
+                        <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">
+                          {roi >= 0 ? "+" : ""}{(roi * 100).toFixed(1)}% ROI over {e.sample_size ?? 0} settled
+                          {e.created_at ? ` · ${new Date(e.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-white/10 bg-pitch-2 p-5 text-[13.5px] text-onpitch-mute">
+                No self-tuning yet — a learning agent (Pro Max) adjusts its bar after 20+ settled picks. Turn on Learning when building an agent.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* plain-language explainer for a KPI card */}
+      {help && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+          <div onClick={() => setHelp(null)} className="absolute inset-0 bg-ink/60" />
+          <div role="dialog" aria-modal="true" aria-label={HELP[help].title} className="relative w-full max-w-md rounded-t-2xl bg-chalk p-5 text-ink shadow-2xl sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-disp text-lg font-extrabold text-ink">{HELP[help].title}</h3>
+              <button onClick={() => setHelp(null)} aria-label="Close" className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-ink/5 font-mono text-lg text-ink-mute transition-colors hover:text-ink">×</button>
+            </div>
+            <div className="mt-3 flex flex-col gap-2.5">
+              {HELP[help].body.map((p, i) => (
+                <p key={i} className="text-[13.5px] leading-relaxed text-ink-mute">{p}</p>
+              ))}
+            </div>
+            <button onClick={() => setHelp(null)} className="mt-4 w-full rounded-xl bg-flood py-2.5 font-bold text-ink">Got it</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full border px-3.5 py-2 font-mono text-[11.5px] tracking-wide transition-colors ${
+        on ? "border-flood bg-flood text-ink" : "border-white/15 text-onpitch-mute hover:border-white/30"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Kpi({ k, v, d, tone, onHelp }: { k: string; v: string; d: string; tone?: "up" | "down" | "amber"; onHelp?: () => void }) {
+  const vc = tone === "up" ? "text-grass-deep" : tone === "down" ? "text-brick" : tone === "amber" ? "text-flood-deep" : "text-ink";
+  return (
+    <div className="relative rounded-2xl bg-chalk p-4 text-ink shadow-xl md:p-5">
+      {onHelp && (
+        <button
+          onClick={onHelp}
+          aria-label={`What does "${k}" mean?`}
+          className="absolute right-2.5 top-2.5 grid h-5 w-5 place-items-center rounded-full border border-ink/15 font-mono text-[11px] font-bold leading-none text-ink-mute transition-colors hover:border-ink/40 hover:text-ink"
+        >
+          ?
+        </button>
+      )}
+      <div className="pr-6 font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">{k}</div>
+      <div className={`mt-1.5 font-disp text-[28px] font-extrabold leading-none tracking-tight md:text-[32px] ${vc}`}>{v}</div>
+      <div className="mt-1.5 font-mono text-[11px] text-ink-mute">{d}</div>
+    </div>
+  );
+}
+
+function Panel({ title, sub, children }: { title: string; sub: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
+      <div className="font-disp text-base font-bold text-ink">{title}</div>
+      <div className="mt-0.5 font-mono text-[11px] text-ink-mute">{sub}</div>
+      {children}
+    </div>
+  );
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="mt-6 font-mono text-[12px] text-ink-mute">{children}</p>;
+}
+
+function Insight({ tone, title, children }: { tone: "good" | "warn"; title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3.5 rounded-2xl border border-white/15 bg-pitch-2 p-5">
+      <span className={`w-[9px] flex-none rounded-[5px] ${tone === "warn" ? "bg-gradient-to-b from-flood to-flood-deep" : "bg-gradient-to-b from-grass to-grass-deep"}`} />
+      <div>
+        <div className="font-disp text-base font-bold text-chalk">{title}</div>
+        <div className="mt-1.5 text-[13.5px] leading-relaxed text-onpitch-mute">{children}</div>
+      </div>
+    </div>
+  );
+}

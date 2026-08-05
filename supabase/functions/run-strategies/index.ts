@@ -1,0 +1,757 @@
+// Onside strategy runner + edge engine + rule engine + per-user delivery scheduler.
+// Cron every minute; only DUE strategies run. Target window (same_day/tomorrow/saturday/sunday/
+// weekend/future); saturday/sunday fire only on that weekday. Pricing: model_prob (Poisson) vs
+// de-vigged market_prob = edge; families price every option and deliver the best. No fixture twice
+// per strategy; per-user daily cap = max_agents x cap. Telegram picks show flag + league + time +
+// a traffic-light confidence dot.
+// Leagues are a MODE (league_mode): fixed = hunt league_ids; all = every competition (Pro Max);
+// surprise = re-roll a fresh in-window subset every run (see resolveLeagueIds).
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// New Supabase API keys: prefer the secret key (sb_secret_…, maps to the service_role Postgres
+// role); fall back to the platform-injected legacy SERVICE_ROLE_KEY so this keeps working whether
+// or not legacy keys have been disabled. This function only needs the privileged client.
+const SB_URL = Deno.env.get("SUPABASE_URL")!;
+const SB_KEY = Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const sb = createClient(SB_URL, SB_KEY);
+const FINISHED_LIVE = ["FT", "AET", "PEN", "1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT"];
+const FINISHED = ["FT", "AET", "PEN"];
+const ODDS_FETCH_CAP = 90;
+const DEF_HOME = 1.45, DEF_AWAY = 1.15;
+const SHRINK = 4;
+const MIN_TEAM_MATCHES = 3;
+
+function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } }); }
+async function getSecret(name: string): Promise<string> {
+  const { data, error } = await sb.rpc("get_secret", { secret_name: name });
+  if (error || !data) throw new Error(`secret ${name}`);
+  return data as string;
+}
+async function getSecretSoft(name: string): Promise<string | null> {
+  try { const { data } = await sb.rpc("get_secret", { secret_name: name }); return (data as string) ?? null; } catch { return null; }
+}
+// Anthropic key: env-first (matches classify-bet), vault fallback. The key is stored as an
+// edge-function env secret, NOT in the vault — reading only the vault (the old bug) meant rules
+// never parsed and were silently ignored.
+async function anthropicKey(): Promise<string | null> {
+  const env = Deno.env.get("ANTHROPIC_API_KEY") || Deno.env.get("anthropic_api_key");
+  if (env) return env;
+  try { const { data } = await sb.rpc("get_secret", { secret_name: "anthropic_api_key" }); return (data as string) ?? null; } catch { return null; }
+}
+async function sendTelegram(chatId: number, text: string): Promise<void> {
+  const token = await getSecretSoft("telegram_bot_token");
+  if (!token) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    });
+  } catch { /* non-fatal */ }
+}
+// Web Push via the send-push edge fn (trusted call with the service key -> may target a user_id).
+async function sendPush(userId: string, title: string, body: string, url: string, tag?: string): Promise<void> {
+  try {
+    await fetch(`${SB_URL}/functions/v1/send-push`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "Authorization": `Bearer ${SB_KEY}` },
+      body: JSON.stringify({ user_id: userId, title, body, url, tag }),
+    });
+  } catch { /* non-fatal */ }
+}
+// country name -> flag emoji (ISO2 -> regional indicators); UEFA comps -> trophy, World -> globe
+const ISO2: Record<string, string> = { "England":"GB","Scotland":"GB","Wales":"GB","Northern-Ireland":"GB","Ireland":"IE","Spain":"ES","Italy":"IT","Germany":"DE","France":"FR","Netherlands":"NL","Portugal":"PT","Belgium":"BE","Turkey":"TR","Russia":"RU","Ukraine":"UA","Greece":"GR","Austria":"AT","Switzerland":"CH","Denmark":"DK","Norway":"NO","Sweden":"SE","Poland":"PL","Croatia":"HR","Serbia":"RS","Romania":"RO","Czech-Republic":"CZ","Hungary":"HU","Finland":"FI","Iceland":"IS","Brazil":"BR","Argentina":"AR","Mexico":"MX","USA":"US","Colombia":"CO","Chile":"CL","Uruguay":"UY","Ecuador":"EC","Peru":"PE","Paraguay":"PY","Bolivia":"BO","Venezuela":"VE","Japan":"JP","South-Korea":"KR","China":"CN","Saudi-Arabia":"SA","Qatar":"QA","UAE":"AE","Iran":"IR","India":"IN","Australia":"AU","Egypt":"EG","Morocco":"MA","Nigeria":"NG","Senegal":"SN","Ghana":"GH","Algeria":"DZ","Tunisia":"TN","Cameroon":"CM","South-Africa":"ZA","Ivory-Coast":"CI","Kenya":"KE" };
+function iso2ToEmoji(cc: string): string {
+  if (!cc || cc.length !== 2) return "";
+  return String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0)));
+}
+function flagFor(country: string | null, tier: string | null): string {
+  if (tier === "uefa") return "🏆"; // trophy
+  if (!country) return "";
+  if (country === "World") return "🌍"; // globe
+  return iso2ToEmoji(ISO2[country] ?? "");
+}
+// Confidence dot — green/yellow/amber, never red. Every game here was PICKED; the dot only grades
+// how sure we are. Amber = a real pick with low edge OR no odds/model score to rate (e.g. rule-only
+// matches in data-thin leagues), NOT "avoid".
+function confDot(tier: string | null, mp: number | null): string {
+  if (tier === "elite") return "🟢"; // green — strong value
+  if (tier === "strong") return "🟡"; // yellow — solid value
+  if (tier === "wide") return "🟠"; // amber — thin value
+  const p = mp ?? 0;
+  return p >= 0.65 ? "🟢" : p >= 0.55 ? "🟡" : "🟠"; // unpriced/model-only, or unrated → amber
+}
+function tzOffsetMin(d: Date, tz: string): number {
+  const s = d.toLocaleString("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const [datePart, timePart] = s.split(", ");
+  const [mo, da, yr] = datePart.split("/").map(Number);
+  const [hh, mi, se] = timePart.split(":").map(Number);
+  return (Date.UTC(yr, mo - 1, da, hh, mi, se) - d.getTime()) / 60000;
+}
+function tzDay(iso: string, tz: string): string { return new Date(iso).toLocaleDateString("en-CA", { timeZone: tz }); }
+function tzEndOfTodayISO(tz: string): string {
+  const now = new Date();
+  const off = tzOffsetMin(now, tz);
+  const [y, m, d] = now.toLocaleDateString("en-CA", { timeZone: tz }).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 23, 59, 59) - off * 60000).toISOString();
+}
+function tzDayBoundsISO(tz: string, offsetDays: number): [string, string] {
+  const now = new Date();
+  const off = tzOffsetMin(now, tz);
+  const [y, m, d] = now.toLocaleDateString("en-CA", { timeZone: tz }).split("-").map(Number);
+  const start = new Date(Date.UTC(y, m - 1, d + offsetDays, 0, 0, 0) - off * 60000).toISOString();
+  const end = new Date(Date.UTC(y, m - 1, d + offsetDays, 23, 59, 59) - off * 60000).toISOString();
+  return [start, end];
+}
+function tzDow(tz: string): number {
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(new Date().toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }));
+}
+function isDue(s: any, now: Date): boolean {
+  if (!s.deliver_at) return false;
+  const tz = s.timezone || "Africa/Lagos";
+  const target = s.target_day || "same_day";
+  const dow = tzDow(tz);
+  if (target === "saturday" && dow !== 6) return false;
+  if (target === "sunday" && dow !== 0) return false;
+  const nowTime = now.toLocaleTimeString("en-GB", { timeZone: tz, hour12: false });
+  if (nowTime < String(s.deliver_at).slice(0, 8)) return false;
+  if (s.last_run_at && tzDay(s.last_run_at, tz) === now.toLocaleDateString("en-CA", { timeZone: tz })) return false;
+  return true;
+}
+
+type Fixture = { id: number; league_id: number; kickoff_utc: string; home_team_id: number | null; away_team_id: number | null };
+
+const FACT = [1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800];
+const pois = (k: number, l: number) => Math.exp(-l) * Math.pow(l, k) / FACT[k];
+type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[] };
+function aggregate(lamH: number, lamA: number, N = 10): Agg {
+  const ph: number[] = [], pa: number[] = [];
+  for (let i = 0; i <= N; i++) { ph.push(pois(i, lamH)); pa.push(pois(i, lamA)); }
+  let hw = 0, dr = 0, aw = 0;
+  const totalP = new Array(2 * N + 1).fill(0);
+  const marg = new Array(2 * N + 1).fill(0);
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
+    const p = ph[i] * pa[j];
+    if (i > j) hw += p; else if (i === j) dr += p; else aw += p;
+    totalP[i + j] += p;
+    marg[i - j + N] += p;
+  }
+  return { hw, dr, aw, totalP, homeScore: 1 - ph[0], awayScore: 1 - pa[0], btts: (1 - ph[0]) * (1 - pa[0]), marg };
+}
+const overP = (agg: Agg, line: number) => { let s = 0; for (let t = 0; t < agg.totalP.length; t++) if (t > line) s += agg.totalP[t]; return s; };
+function modelProb(mk: string, side: string | null, line: number | null, agg: Agg): number | null {
+  switch (mk) {
+    case "home_win": return agg.hw;
+    case "away_win": return agg.aw;
+    case "draw": return agg.dr;
+    case "result_1x2": return side === "home" ? agg.hw : side === "away" ? agg.aw : agg.dr;
+    case "double_chance_1x": return agg.hw + agg.dr;
+    case "double_chance_x2": return agg.dr + agg.aw;
+    case "double_chance_12": return agg.hw + agg.aw;
+    case "over_0_5": return overP(agg, 0.5);
+    case "over_1_5": return overP(agg, 1.5);
+    case "over_2_5": return overP(agg, 2.5);
+    case "over_3_5": return overP(agg, 3.5);
+    case "under_2_5": return 1 - overP(agg, 2.5);
+    case "under_3_5": return 1 - overP(agg, 3.5);
+    case "total_goals_ou": return line == null ? null : (side === "over" ? overP(agg, line) : 1 - overP(agg, line));
+    case "btts": return side === "no" ? 1 - agg.btts : agg.btts;
+    case "home_to_score": return agg.homeScore;
+    case "away_to_score": return agg.awayScore;
+    case "handicap": {
+      if (line == null || !side) return null;
+      const N = (agg.marg.length - 1) / 2;
+      let s = 0;
+      for (let d = -N; d <= N; d++) {
+        const win = side === "home" ? (d + line) > 0 : (line - d) > 0;
+        if (win) s += agg.marg[d + N];
+      }
+      return s;
+    }
+    default: return null;
+  }
+}
+
+function oddOf(bet: any, value: string): number | null {
+  const v = (bet?.values ?? []).find((z: any) => String(z.value).toLowerCase() === value.toLowerCase());
+  return v ? Number(v.odd) : null;
+}
+function threeWay(bet: any): { home: number; draw: number; away: number } | null {
+  const h = oddOf(bet, "Home"), d = oddOf(bet, "Draw"), a = oddOf(bet, "Away");
+  if (!h || !d || !a) return null;
+  const ih = 1 / h, id = 1 / d, ia = 1 / a, s = ih + id + ia;
+  return { home: ih / s, draw: id / s, away: ia / s };
+}
+function twoWay(bet: any, yes: string, no: string): number | null {
+  const y = oddOf(bet, yes), n = oddOf(bet, no);
+  if (!y || !n) return null;
+  const iy = 1 / y, ino = 1 / n;
+  return iy / (iy + ino);
+}
+function ouProb(bet: any, line: number, sideWant: "over" | "under"): number | null {
+  if (!bet) return null;
+  const o = oddOf(bet, `Over ${line}`), u = oddOf(bet, `Under ${line}`);
+  if (!o || !u) return null;
+  const io = 1 / o, iu = 1 / u;
+  const over = io / (io + iu);
+  return sideWant === "over" ? over : 1 - over;
+}
+function bookProb(mk: string, side: string | null, line: number | null, bets: any[]): number | null {
+  const bet = (id: number) => bets.find((b) => Number(b.id) === id);
+  const dc = () => threeWay(bet(1));
+  switch (mk) {
+    case "home_win": { const t = threeWay(bet(1)); return t ? t.home : null; }
+    case "away_win": { const t = threeWay(bet(1)); return t ? t.away : null; }
+    case "draw": { const t = threeWay(bet(1)); return t ? t.draw : null; }
+    case "result_1x2": { const t = threeWay(bet(1)); return t ? (side === "home" ? t.home : side === "away" ? t.away : t.draw) : null; }
+    case "double_chance_1x": { const t = dc(); return t ? Math.min(1, t.home + t.draw) : null; }
+    case "double_chance_x2": { const t = dc(); return t ? Math.min(1, t.draw + t.away) : null; }
+    case "double_chance_12": { const t = dc(); return t ? Math.min(1, t.home + t.away) : null; }
+    case "over_0_5": return ouProb(bet(5), 0.5, "over");
+    case "over_1_5": return ouProb(bet(5), 1.5, "over");
+    case "over_2_5": return ouProb(bet(5), 2.5, "over");
+    case "over_3_5": return ouProb(bet(5), 3.5, "over");
+    case "under_2_5": return ouProb(bet(5), 2.5, "under");
+    case "under_3_5": return ouProb(bet(5), 3.5, "under");
+    case "total_goals_ou": return line == null ? null : ouProb(bet(5), line, side === "under" ? "under" : "over");
+    case "btts": { const p = twoWay(bet(8), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
+    case "home_to_score": return twoWay(bet(43), "Yes", "No");
+    case "away_to_score": return twoWay(bet(44), "Yes", "No");
+    default: return null;
+  }
+}
+function marketProb(mk: string, side: string | null, line: number | null, bookmakers: any[]): number | null {
+  const ps: number[] = [];
+  for (const bm of bookmakers) { const p = bookProb(mk, side, line, bm.bets ?? []); if (p != null && p > 0 && p < 1) ps.push(p); }
+  if (!ps.length) return null;
+  return ps.reduce((a, b) => a + b, 0) / ps.length;
+}
+
+type TeamRates = { hgf: number; hga: number; hn: number; agf: number; aga: number; an: number };
+type Model = { lHome: Map<number, number>; lAway: Map<number, number>; team: Map<number, TeamRates> };
+async function buildModel(leagueIds: number[]): Promise<Model> {
+  const team = new Map<number, TeamRates>();
+  const lHomeSum = new Map<number, [number, number]>();
+  const lAwaySum = new Map<number, [number, number]>();
+  if (leagueIds.length) {
+    const { data } = await sb.from("fixtures")
+      .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals")
+      .in("league_id", leagueIds).in("status", FINISHED).limit(40000);
+    for (const f of data ?? []) {
+      const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
+      if (hg == null || ag == null || f.home_team_id == null || f.away_team_id == null) continue;
+      const lh = lHomeSum.get(f.league_id) ?? [0, 0]; lh[0] += hg; lh[1] += 1; lHomeSum.set(f.league_id, lh);
+      const la = lAwaySum.get(f.league_id) ?? [0, 0]; la[0] += ag; la[1] += 1; lAwaySum.set(f.league_id, la);
+      const h = team.get(f.home_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
+      h.hgf += hg; h.hga += ag; h.hn += 1; team.set(f.home_team_id, h);
+      const a = team.get(f.away_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
+      a.agf += ag; a.aga += hg; a.an += 1; team.set(f.away_team_id, a);
+    }
+  }
+  const lHome = new Map<number, number>(), lAway = new Map<number, number>();
+  for (const [lg, gn] of lHomeSum) lHome.set(lg, gn[1] ? gn[0] / gn[1] : DEF_HOME);
+  for (const [lg, gn] of lAwaySum) lAway.set(lg, gn[1] ? gn[0] / gn[1] : DEF_AWAY);
+  return { lHome, lAway, team };
+}
+function lambdas(m: Model, f: Fixture): { lamH: number; lamA: number; confident: boolean } {
+  const lh = m.lHome.get(f.league_id) ?? DEF_HOME;
+  const la = m.lAway.get(f.league_id) ?? DEF_AWAY;
+  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined;
+  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined;
+  const rate = (sum: number, n: number, mean: number) => (sum + SHRINK * mean) / (n + SHRINK);
+  const homeAtt = H && H.hn ? rate(H.hgf, H.hn, lh) / lh : 1;
+  const homeDef = H && H.hn ? rate(H.hga, H.hn, la) / la : 1;
+  const awayAtt = A && A.an ? rate(A.agf, A.an, la) / la : 1;
+  const awayDef = A && A.an ? rate(A.aga, A.an, lh) / lh : 1;
+  const clamp = (x: number) => Math.max(0.15, Math.min(6, x));
+  const hMatches = (H?.hn ?? 0) + (H?.an ?? 0), aMatches = (A?.hn ?? 0) + (A?.an ?? 0);
+  const confident = m.lHome.has(f.league_id) && hMatches >= MIN_TEAM_MATCHES && aMatches >= MIN_TEAM_MATCHES;
+  return { lamH: clamp(lh * homeAtt * awayDef), lamA: clamp(la * awayAtt * homeDef), confident };
+}
+function tierOf(edge: number): string { return edge >= 0.05 ? "elite" : edge >= 0.04 ? "strong" : "wide"; }
+
+const FAMILIES: Record<string, { mk: string; side: string | null; line: number | null }[]> = {
+  result_best: [
+    { mk: "home_win", side: "home", line: null }, { mk: "draw", side: "draw", line: null }, { mk: "away_win", side: "away", line: null },
+    { mk: "double_chance_1x", side: "1x", line: null }, { mk: "double_chance_x2", side: "x2", line: null }, { mk: "double_chance_12", side: "12", line: null },
+  ],
+  dc_best: [
+    { mk: "double_chance_1x", side: "1x", line: null }, { mk: "double_chance_x2", side: "x2", line: null }, { mk: "double_chance_12", side: "12", line: null },
+  ],
+  ou_best: [
+    { mk: "over_1_5", side: "over", line: 1.5 }, { mk: "over_2_5", side: "over", line: 2.5 }, { mk: "over_3_5", side: "over", line: 3.5 },
+    { mk: "under_2_5", side: "under", line: 2.5 }, { mk: "under_3_5", side: "under", line: 3.5 },
+  ],
+  handicap_best: [
+    { mk: "handicap", side: "home", line: -1.5 }, { mk: "handicap", side: "home", line: -0.5 }, { mk: "handicap", side: "home", line: 0.5 },
+    { mk: "handicap", side: "away", line: -1.5 }, { mk: "handicap", side: "away", line: -0.5 }, { mk: "handicap", side: "away", line: 0.5 },
+  ],
+};
+const isFamily = (mk: string) => Object.prototype.hasOwnProperty.call(FAMILIES, mk);
+function handicapLabel(side: string | null, line: number | null): string {
+  return `Handicap ${side ?? ""} ${line != null && line > 0 ? "+" : ""}${line ?? ""}`.trim();
+}
+
+const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob"];
+const RULE_MARKETS = ["home_win","away_win","draw","double_chance_1x","double_chance_x2","double_chance_12","over_1_5","over_2_5","over_3_5","under_2_5","under_3_5","btts","home_to_score","away_to_score"];
+const MK_LABEL: Record<string, string> = {
+  home_win: "Home win", away_win: "Away win", draw: "Draw",
+  double_chance_1x: "Double chance (1X)", double_chance_x2: "Double chance (X2)", double_chance_12: "Double chance (12)",
+  over_1_5: "Over 1.5 goals", over_2_5: "Over 2.5 goals", over_3_5: "Over 3.5 goals",
+  under_2_5: "Under 2.5 goals", under_3_5: "Under 3.5 goals", btts: "Both teams to score",
+  home_to_score: "Home team to score", away_to_score: "Away team to score",
+};
+function defSide(mk: string): string | null {
+  if (mk === "home_win" || mk === "home_to_score") return "home";
+  if (mk === "away_win" || mk === "away_to_score") return "away";
+  if (mk === "draw") return "draw";
+  if (mk === "double_chance_1x") return "1x";
+  if (mk === "double_chance_x2") return "x2";
+  if (mk === "double_chance_12") return "12";
+  if (mk.startsWith("over")) return "over";
+  if (mk.startsWith("under")) return "under";
+  if (mk === "btts") return "yes";
+  return null;
+}
+function defLine(mk: string): number | null { const m = mk.match(/(?:over|under)_(\d)_5/); return m ? Number(`${m[1]}.5`) : null; }
+
+type Cond = { field: string; op: string; value: number; value2: number };
+type Branch = { when_field: string; when_op: string; when_value: number; when_value2: number; market_key: string; side: string; line: number };
+type RuleParsed = { filters: Cond[]; select: Branch[] };
+
+const COND_SCHEMA = { type: "object", additionalProperties: false, properties: { field: { type: "string", enum: RULE_FIELDS }, op: { type: "string", enum: ["lt", "lte", "gt", "gte", "eq", "between"] }, value: { type: "number" }, value2: { type: "number" } }, required: ["field", "op", "value", "value2"] };
+const BRANCH_SCHEMA = { type: "object", additionalProperties: false, properties: { when_field: { type: "string" }, when_op: { type: "string" }, when_value: { type: "number" }, when_value2: { type: "number" }, market_key: { type: "string", enum: RULE_MARKETS }, side: { type: "string" }, line: { type: "number" } }, required: ["when_field", "when_op", "when_value", "when_value2", "market_key", "side", "line"] };
+const RULE_SCHEMA = { type: "object", additionalProperties: false, properties: { filters: { type: "array", items: COND_SCHEMA }, select: { type: "array", items: BRANCH_SCHEMA } }, required: ["filters", "select"] };
+const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when_field/when_op/when_value(/when_value2 for 'between') and the market to use if it holds. A branch whose when_field is \"\" is the DEFAULT (always). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
+
+async function parseRule(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<RuleParsed | null> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-5", max_tokens: 1500,
+        thinking: { type: "disabled" },
+        output_config: { format: { type: "json_schema", schema: RULE_SCHEMA } },
+        messages: [{ role: "user", content: `${RULE_PROMPT}\n\nBASE market: ${base.label} (key ${base.mk}, side ${base.side ?? ""}).\nRULE: ${text.trim().slice(0, 500)}` }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const block = (data.content ?? []).find((b: any) => b.type === "text");
+    const p = JSON.parse(block?.text ?? "{}");
+    return { filters: Array.isArray(p.filters) ? p.filters : [], select: Array.isArray(p.select) ? p.select : [] };
+  } catch { return null; }
+}
+function medianOdd(bms: any[], betId: number, value: string): number | null {
+  const xs: number[] = [];
+  for (const bm of bms) { const bet = (bm.bets ?? []).find((b: any) => Number(b.id) === betId); if (!bet) continue; const o = oddOf(bet, value); if (o && o > 1) xs.push(o); }
+  if (!xs.length) return null;
+  xs.sort((a, b) => a - b); const m = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2;
+}
+type Form = { wins5: number; draws5: number; losses5: number; pts5: number; ppg5: number; n: number };
+function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null): Record<string, number | null> {
+  const home = medianOdd(bms, 1, "Home"), away = medianOdd(bms, 1, "Away");
+  return {
+    home_odds: home, draw_odds: medianOdd(bms, 1, "Draw"), away_odds: away,
+    fav_odds: home != null && away != null ? Math.min(home, away) : null,
+    dog_odds: home != null && away != null ? Math.max(home, away) : null,
+    over_1_5_odds: medianOdd(bms, 5, "Over 1.5"), over_2_5_odds: medianOdd(bms, 5, "Over 2.5"),
+    under_2_5_odds: medianOdd(bms, 5, "Under 2.5"), btts_yes_odds: medianOdd(bms, 8, "Yes"),
+    market_odds: marketP && marketP > 0 ? 1 / marketP : null, model_prob: modelP, market_prob: marketP, edge,
+    home_wins_last5: homeForm ? homeForm.wins5 : null, away_wins_last5: awayForm ? awayForm.wins5 : null,
+    home_form_ppg: homeForm ? homeForm.ppg5 : null, away_form_ppg: awayForm ? awayForm.ppg5 : null,
+    home_win_prob: homeWinP ?? null, away_win_prob: awayWinP ?? null,
+  };
+}
+function evalCond(c: { field: string; op: string; value: number; value2: number }, sig: Record<string, number | null>): boolean {
+  const x = sig[c.field]; if (x == null) return false;
+  switch (c.op) {
+    case "lt": return x < c.value; case "lte": return x <= c.value;
+    case "gt": return x > c.value; case "gte": return x >= c.value;
+    case "eq": return Math.abs(x - c.value) < 1e-9;
+    case "between": return x >= c.value && x <= c.value2;
+    default: return false;
+  }
+}
+type Eff = { mk: string; side: string | null; line: number | null };
+// Pick a market from the rule's ordered branches; first matching (or default) wins, else null.
+function applySelect(select: Branch[], sig: Record<string, number | null>): Eff | null {
+  for (const b of select) {
+    const isDefault = !b.when_field || b.when_field === "always" || b.when_op === "always";
+    const pick = (): Eff => ({ mk: b.market_key, side: b.side || defSide(b.market_key), line: b.line || defLine(b.market_key) });
+    if (isDefault) return pick();
+    if (evalCond({ field: b.when_field, op: b.when_op, value: b.when_value, value2: b.when_value2 }, sig)) return pick();
+  }
+  return null;
+}
+// Recent-form signals: each team's last-5 finished results (from whichever side it played).
+// Scoped to just the teams in this run's candidate fixtures — one query, newest-first, cap 5/team.
+async function buildFormMap(teamIds: number[]): Promise<Map<number, Form>> {
+  const map = new Map<number, Form>();
+  if (!teamIds.length) return map;
+  const list = teamIds.join(",");
+  const { data } = await sb.from("fixtures")
+    .select("home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+    .in("status", FINISHED)
+    .or(`home_team_id.in.(${list}),away_team_id.in.(${list})`)
+    .order("kickoff_utc", { ascending: false }).limit(6000);
+  const want = new Set(teamIds);
+  const taken = new Map<number, number>();
+  for (const f of data ?? []) {
+    const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
+    if (hg == null || ag == null) continue;
+    for (const home of [true, false]) {
+      const tid = home ? f.home_team_id : f.away_team_id;
+      if (tid == null || !want.has(tid) || (taken.get(tid) ?? 0) >= 5) continue;
+      const gf = home ? hg : ag, ga = home ? ag : hg;
+      const cur = map.get(tid) ?? { wins5: 0, draws5: 0, losses5: 0, pts5: 0, ppg5: 0, n: 0 };
+      if (gf > ga) { cur.wins5++; cur.pts5 += 3; } else if (gf === ga) { cur.draws5++; cur.pts5 += 1; } else cur.losses5++;
+      cur.n++; map.set(tid, cur); taken.set(tid, (taken.get(tid) ?? 0) + 1);
+    }
+  }
+  for (const v of map.values()) v.ppg5 = v.n ? v.pts5 / v.n : 0;
+  return map;
+}
+
+const oddsCache = new Map<number, any[]>();
+let oddsCalls = 0;
+async function bookmakersFor(fixtureId: number, key: string): Promise<any[]> {
+  if (oddsCache.has(fixtureId)) return oddsCache.get(fixtureId)!;
+  if (oddsCalls >= ODDS_FETCH_CAP) return [];
+  oddsCalls++;
+  try {
+    const res = await fetch(`https://v3.football.api-sports.io/odds?fixture=${fixtureId}`, { headers: { "x-apisports-key": key } });
+    await sb.rpc("bump_api_usage");
+    const body = await res.json();
+    const bms = body?.response?.[0]?.bookmakers ?? [];
+    oddsCache.set(fixtureId, bms);
+    return bms;
+  } catch { oddsCache.set(fixtureId, []); return []; }
+}
+
+type Cell = { agg: Agg; confident: boolean };
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null };
+async function pickFamily(fam: string, cell: Cell, f: Fixture, key: string, minEdge: number): Promise<Scored | null> {
+  const cands = FAMILIES[fam] ?? [];
+  const bms = await bookmakersFor(f.id, key);
+  let priced: { c: { mk: string; side: string | null; line: number | null }; mp: number; kp: number; edge: number } | null = null;
+  let model: { c: { mk: string; side: string | null; line: number | null }; mp: number } | null = null;
+  for (const c of cands) {
+    const mp = cell.confident ? modelProb(c.mk, c.side, c.line, cell.agg) : null;
+    if (mp == null) continue;
+    const kp = marketProb(c.mk, c.side, c.line, bms);
+    if (kp != null && kp > 0 && kp < 1) {
+      const edge = mp - kp;
+      if (!priced || edge > priced.edge) priced = { c, mp, kp, edge };
+    }
+    if (mp >= 0.5 && (!model || mp > model.mp)) model = { c, mp };
+  }
+  if (priced && priced.edge >= minEdge) {
+    return { f, mk: priced.c.mk, side: priced.c.side, line: priced.c.line, edge: priced.edge, tier: tierOf(priced.edge), model_prob: priced.mp, market_prob: priced.kp };
+  }
+  if (model) {
+    return { f, mk: model.c.mk, side: model.c.side, line: model.c.line, edge: null, tier: null, model_prob: model.mp, market_prob: null };
+  }
+  return null;
+}
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>): Promise<Scored[]> {
+  const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
+  const baseFamily = isFamily(baseMk);
+  const priced: Scored[] = [], unpriced: Scored[] = [];
+  for (const f of fixtures) {
+    let cell = aggCache.get(f.id);
+    if (!cell) { const ls = lambdas(model, f); cell = { agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident }; aggCache.set(f.id, cell); }
+
+    let eff: Eff = { mk: baseMk, side: baseSide, line: baseLine };
+    let useFamily = baseFamily;
+
+    // Rules apply to EVERY strategy, including "best"/family markets: filters gate the game,
+    // select branches choose the market. Form + opponent-strength signals are available here.
+    if (rule && (rule.filters.length || rule.select.length)) {
+      const bms = await bookmakersFor(f.id, key);
+      const homeForm = f.home_team_id != null ? formMap.get(f.home_team_id) : undefined;
+      const awayForm = f.away_team_id != null ? formMap.get(f.away_team_id) : undefined;
+      const bmp = (!baseFamily && cell.confident) ? modelProb(baseMk, baseSide, baseLine, cell.agg) : null;
+      const bkp = !baseFamily ? marketProb(baseMk, baseSide, baseLine, bms) : null;
+      const sig = signalsFor(bms, bmp, bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
+        homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null);
+      let blocked = false;
+      for (const c of rule.filters) if (!evalCond(c, sig)) { blocked = true; break; }
+      if (blocked) continue;
+      if (rule.select.length) {
+        const picked = applySelect(rule.select, sig);
+        if (!picked) continue; // no branch matched and no default → skip this game
+        eff = picked; useFamily = false;
+      }
+    }
+
+    if (useFamily) {
+      const chosen = await pickFamily(baseMk, cell, f, key, strategy.min_edge ?? 0);
+      if (!chosen) continue;
+      if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
+      continue;
+    }
+
+    const mp = cell.confident ? modelProb(eff.mk, eff.side, eff.line, cell.agg) : null;
+    if (mp == null) { unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null }); continue; }
+    const bms2 = await bookmakersFor(f.id, key);
+    const kp = marketProb(eff.mk, eff.side, eff.line, bms2);
+    if (kp == null) continue;
+    const edge = mp - kp;
+    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });
+  }
+  const overBar = priced.filter((p) => (p.edge ?? -1) >= (strategy.min_edge ?? 0)).sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0));
+  unpriced.sort((a, b) => new Date(a.f.kickoff_utc).getTime() - new Date(b.f.kickoff_utc).getTime());
+  return [...overBar, ...unpriced];
+}
+
+async function learnAdjust(strategy: any): Promise<{ next: number; avgRoi: number; sample: number } | null> {
+  if (!strategy.learning) return null;
+  const { data: settled } = await sb.from("deliveries").select("result, market_prob")
+    .eq("strategy_id", strategy.id).in("result", ["won", "lost"]).limit(500);
+  let roi = 0, cnt = 0;
+  for (const d of settled ?? []) {
+    const mp = d.market_prob;
+    if (mp == null || mp <= 0 || mp >= 1) continue;
+    roi += d.result === "won" ? (1 / mp - 1) : -1;
+    cnt++;
+  }
+  if (cnt < 20) return null;
+  const avgRoi = roi / cnt;
+  const cur = strategy.min_edge ?? 0;
+  let next = cur;
+  if (avgRoi < -0.05) next = Math.min(0.08, cur + 0.005);
+  else if (avgRoi > 0.05) next = Math.max(0, cur - 0.005);
+  return { next: Number(next.toFixed(4)), avgRoi: Number(avgRoi.toFixed(4)), sample: cnt };
+}
+
+// --- Surprise-me leagues: resolve the league set for THIS run -----------------
+// Server port of surpriseLeagues() in StrategyBuilder.tsx. league_mode drives it:
+//   fixed    -> hunt exactly strategy.league_ids (today's behaviour)
+//   all      -> no league filter, scan every competition (Pro Max)
+//   surprise -> re-roll a fresh random subset of in-window leagues EVERY run
+// Returns "all" for no filter, or the concrete league_id list to hunt.
+async function planMaxLeagues(userId: string): Promise<number> {
+  try {
+    const { data: prof } = await sb.from("profiles").select("plan").eq("id", userId).maybeSingle();
+    const { data: lim } = await sb.from("plan_limits").select("max_leagues").eq("plan", prof?.plan ?? "free").maybeSingle();
+    return lim?.max_leagues ?? 5;
+  } catch { return 5; }
+}
+// distinct league_ids with at least one un-started fixture in the target window —
+// the same pool the builder samples from (activeLeagueIds), so surprise never rolls a dead league.
+async function windowLeagueIds(fromIso: string, toIso: string): Promise<number[]> {
+  const { data } = await sb.from("fixtures").select("league_id")
+    .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
+    .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
+  return Array.from(new Set((data ?? []).map((r: any) => r.league_id).filter((x: any) => x != null)));
+}
+async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string): Promise<number[] | "all"> {
+  // legacy rows without league_mode: empty league_ids historically meant "all", else "fixed"
+  const mode = strategy.league_mode ?? (Array.isArray(strategy.league_ids) && strategy.league_ids.length ? "fixed" : "all");
+  if (mode === "all") return "all";
+  if (mode === "fixed") return Array.isArray(strategy.league_ids) ? strategy.league_ids : [];
+  // surprise: sample from day-eligible leagues. Fresh RNG each run (never seed from
+  // strategy.id) so two runs of the same agent can roll different leagues.
+  const active = await windowLeagueIds(fromIso, toIso);
+  if (!active.length) return [];
+  const maxLeagues = await planMaxLeagues(strategy.user_id);
+  const count = maxLeagues; // widest net the plan allows; the shuffle below keeps WHICH leagues fresh each run
+  const pool = active.slice();
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  return pool.slice(0, count);
+}
+
+async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Cell>, key: string): Promise<number> {
+  const nowIso = new Date().toISOString();
+  const tz = strategy.timezone || "Africa/Lagos";
+  const learned = await learnAdjust(strategy);
+  if (learned && learned.next !== strategy.min_edge) {
+    const prev = strategy.min_edge ?? 0;
+    strategy.min_edge = learned.next;
+    await sb.from("strategies").update({ min_edge: learned.next }).eq("id", strategy.id);
+    // log the adjustment so Performance can show what/why the agent self-tuned
+    await sb.from("strategy_learning_events").insert({
+      strategy_id: strategy.id, user_id: strategy.user_id,
+      prev_min_edge: prev, new_min_edge: learned.next, avg_roi: learned.avgRoi, sample_size: learned.sample,
+    });
+  }
+  const today = tzDay(nowIso, tz);
+  const { data: existing } = await sb.from("deliveries").select("fixture_id, delivered_at").eq("strategy_id", strategy.id);
+  const takenToday = new Set((existing ?? []).filter((d: any) => d.delivered_at && tzDay(d.delivered_at, tz) === today).map((d: any) => d.fixture_id));
+  const takenAll = new Set((existing ?? []).map((d: any) => d.fixture_id));
+  const strategyRoom = (strategy.max_per_prediction ?? 3) - takenToday.size;
+  if (strategyRoom <= 0) return 0;
+
+  let room = strategyRoom;
+  try {
+    const { data: prof } = await sb.from("profiles").select("plan").eq("id", strategy.user_id).maybeSingle();
+    const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction").eq("plan", prof?.plan ?? "free").maybeSingle();
+    const dailyCap = (lim?.max_agents ?? 1) * (lim?.max_games_per_prediction ?? 8);
+    const [dayStart] = tzDayBoundsISO(tz, 0);
+    const { count: userToday } = await sb.from("deliveries").select("id", { count: "exact", head: true })
+      .eq("user_id", strategy.user_id).gte("delivered_at", dayStart);
+    room = Math.min(strategyRoom, Math.max(0, dailyCap - (userToday ?? 0)));
+  } catch { /* fall back to per-strategy cap */ }
+  if (room <= 0) return 0;
+
+  const target = strategy.target_day ?? "same_day";
+  let fromIso = nowIso, toIso = tzEndOfTodayISO(tz);
+  if (target === "tomorrow") { const [s, e] = tzDayBoundsISO(tz, 1); fromIso = s; toIso = e; }
+  else if (target === "saturday" || target === "sunday") {
+    const td = target === "saturday" ? 6 : 0;
+    const delta = (td - tzDow(tz) + 7) % 7;
+    if (delta === 0) { fromIso = nowIso; toIso = tzEndOfTodayISO(tz); }
+    else { const [s, e] = tzDayBoundsISO(tz, delta); fromIso = s; toIso = e; }
+  }
+  else if (target === "weekend") {
+    const wd = tzDow(tz);
+    const daysToSat = wd === 0 ? -1 : 6 - wd;
+    const [satStart] = tzDayBoundsISO(tz, daysToSat);
+    const [, sunEnd] = tzDayBoundsISO(tz, daysToSat + 1);
+    fromIso = satStart > nowIso ? satStart : nowIso; toIso = sunEnd;
+  }
+  else if (target === "future") { const [, e] = tzDayBoundsISO(tz, 3); fromIso = nowIso; toIso = e; }
+
+  // Resolve leagues for THIS run (surprise re-rolls fresh from the window above).
+  const leagues = await resolveLeagueIds(strategy, fromIso, toIso);
+  const rolledLeagueIds = strategy.league_mode === "surprise" && leagues !== "all" ? leagues : null;
+  if (leagues !== "all" && leagues.length === 0) return 0; // no in-window leagues to hunt this run
+
+  let q = sb.from("fixtures").select("id, league_id, kickoff_utc, home_team_id, away_team_id")
+    .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
+    .not("status", "in", `(${FINISHED_LIVE.join(",")})`)
+    .order("kickoff_utc", { ascending: true }).limit(200);
+  if (leagues !== "all") q = q.in("league_id", leagues);
+  const { data: fixtures } = await q;
+  const candidates = (fixtures ?? []).filter((f: Fixture) => !takenAll.has(f.id));
+
+  const rule: RuleParsed | null = strategy.rule_parsed ?? null;
+  // Only compute recent-form signals when a rule is actually in play (keeps the common path fast).
+  const teamIds = rule
+    ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
+    : [];
+  const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
+  const ranked = (await scoreAndRank(strategy, candidates, model, aggCache, key, rule, formMap)).slice(0, room);
+  const rows = ranked.map((r) => ({
+    strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
+    market_key: r.mk ?? "custom",
+    market_label: r.mk === "handicap" ? handicapLabel(r.side, r.line) : (r.mk === strategy.market_key ? strategy.market_label : (MK_LABEL[r.mk] ?? strategy.market_label)),
+    side: r.side, line: r.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value,
+    model_prob: r.model_prob, market_prob: r.market_prob, edge: r.edge, tier: r.tier, result: "pending", delivered_at: nowIso,
+    // record the surprise roll so the app + Telegram can show which leagues were in play
+    ...(rolledLeagueIds ? { criteria: { rolled_league_ids: rolledLeagueIds } } : {}),
+  }));
+  if (rows.length) await sb.from("deliveries").insert(rows);
+
+  // per-run push summary to the user's devices — one notification per run, tagged so the next run
+  // replaces it rather than stacking. Independent of the agent's app/telegram channels (push is a
+  // separate per-device opt-in set in Profile).
+  if (rows.length) {
+    await sendPush(
+      strategy.user_id,
+      `🤖 ${strategy.name}`,
+      `${rows.length} new pick${rows.length === 1 ? "" : "s"} cleared your bar — tap to view.`,
+      "/agent",
+      `agent-${strategy.id}`,
+    );
+  }
+
+  if (rows.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+    const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
+    const chatId = prof?.telegram_chat_id;
+    if (chatId) {
+      const { data: fx } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc, leagues(name, country, tier)").in("id", rows.map((r) => r.fixture_id));
+      const fxMap = new Map((fx ?? []).map((g: any) => [g.id, g]));
+      const rankByFx = new Map(ranked.map((r) => [r.f.id, r]));
+      const blocks = rows.map((r) => {
+        const g: any = fxMap.get(r.fixture_id);
+        const rk: any = rankByFx.get(r.fixture_id);
+        const match = g ? `${g.home_team} v ${g.away_team}` : `Fixture ${r.fixture_id}`;
+        const lg = g?.leagues;
+        const league = [flagFor(lg?.country ?? null, lg?.tier ?? null), lg?.name].filter(Boolean).join(" ");
+        const ko = g?.kickoff_utc ? new Date(g.kickoff_utc).toLocaleString("en-GB", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit" }) : "";
+        const dot = confDot(r.tier ?? null, rk?.model_prob ?? null);
+        const edgeStr = r.edge != null ? ` (+${(r.edge * 100).toFixed(1)}% edge)` : "";
+        return `${dot} ${league}${ko ? ` · ${ko}` : ""}\n${match}\n→ ${r.market_label}${edgeStr}`;
+      });
+      // surprise runs: show which leagues were rolled this run (redundant for fixed/all)
+      let rolledNote = "";
+      if (rolledLeagueIds && rolledLeagueIds.length) {
+        const { data: lgs } = await sb.from("leagues").select("id, name, country, tier").in("id", rolledLeagueIds);
+        const names = (lgs ?? []).map((l: any) => `${flagFor(l.country ?? null, l.tier ?? null)} ${l.name}`.trim()).filter(Boolean);
+        if (names.length) rolledNote = `\n🎲 rolled: ${names.join(", ")}`;
+      }
+      const header = `🤖 ${strategy.name} — ${rows.length} pick${rows.length === 1 ? "" : "s"}`;
+      const legend = `\n🟢 high · 🟡 solid · 🟠 lower confidence`;
+      await sendTelegram(chatId, `${header}${rolledNote}\n\n${blocks.join("\n\n")}\n${legend}`);
+    }
+  }
+
+  // Friendly "no games" note so users know the agent ran and just found nothing (not broken).
+  if (!rows.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+    const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
+    if (prof?.telegram_chat_id) {
+      await sendTelegram(prof.telegram_chat_id,
+        `🤖 ${strategy.name}\n\nRan just now — no games cleared your criteria this time. I'd rather send nothing than a weak pick; I'll look again on the next run.`);
+    }
+  }
+
+  await sb.from("strategies").update({ last_run_at: nowIso }).eq("id", strategy.id);
+  return rows.length;
+}
+
+Deno.serve(async (req) => {
+  try {
+    let strategyId: string | null = null;
+    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; } catch { /* cron */ }
+
+    let strategies: any[] = [];
+    if (strategyId) { const { data } = await sb.from("strategies").select("*").eq("id", strategyId).limit(1); strategies = data ?? []; }
+    else {
+      const { data } = await sb.from("strategies").select("*").eq("status", "running");
+      const now = new Date();
+      strategies = (data ?? []).filter((s: any) => isDue(s, now));
+    }
+    if (!strategies.length) return json({ strategies: 0, inserted: 0 });
+
+    const needParse = strategies.some((s) => s.rule_text && !s.rule_parsed);
+    if (needParse) {
+      const akey = await anthropicKey();
+      if (akey) for (const s of strategies) {
+        if (s.rule_text && !s.rule_parsed) {
+          const rp = await parseRule(s.rule_text, akey, { mk: s.market_key, side: s.side, label: s.market_label ?? s.market_key });
+          if (rp) { s.rule_parsed = rp; await sb.from("strategies").update({ rule_parsed: rp }).eq("id", s.id); }
+        }
+      }
+    }
+
+    // Build the shared scoring model over every league any strategy might hunt this run.
+    // fixed -> its league_ids; all/surprise (empty league_ids OR mode says so) -> all upcoming
+    // leagues, which covers whatever a surprise run later rolls from the same window.
+    const leagueSet = new Set<number>();
+    let allLeagues = false;
+    for (const s of strategies) {
+      const broad = s.league_mode === "all" || s.league_mode === "surprise" || !(Array.isArray(s.league_ids) && s.league_ids.length);
+      if (broad) allLeagues = true;
+      else for (const l of s.league_ids) leagueSet.add(l);
+    }
+    if (allLeagues) {
+      const { data: up } = await sb.from("fixtures").select("league_id")
+        .gte("kickoff_utc", new Date().toISOString()).lte("kickoff_utc", new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString())
+        .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
+      for (const r of up ?? []) leagueSet.add(r.league_id);
+    }
+    const model = await buildModel(Array.from(leagueSet));
+    const aggCache = new Map<number, Cell>();
+    const key = await getSecret("api_football_key");
+
+    let inserted = 0;
+    for (const s of strategies) inserted += await runStrategy(s, model, aggCache, key);
+    return json({ strategies: strategies.length, inserted, oddsCalls });
+  } catch (e) {
+    console.error("run-strategies failed:", e);
+    return json({ error: String(e instanceof Error ? e.message : e) }, 500);
+  }
+});
