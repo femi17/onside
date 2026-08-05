@@ -1,0 +1,6 @@
+✓ logged in
+
+=== SUMMARY (median of 1 runs) ===
+route            form     score  LCP    TBT   CLS    INP   TTFB  JS(KB) total  budget
+
+0/0 within budget · raw JSON: C:\Users\oduol\source\repos\onside\perf\results\perf-2026-08-05T15-25-47-402Z.json

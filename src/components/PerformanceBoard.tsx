@@ -90,7 +90,7 @@ const HELP: Record<HelpKey, { title: string; body: string[] }> = {
   },
 };
 
-export default function PerformanceBoard({ picks, events }: { picks: PerfPick[]; events: LearningEvent[] }) {
+export default function PerformanceBoard({ picks, events, hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; hideHeader?: boolean }) {
   const [agent, setAgent] = useState<string | null>(null);
   const [days, setDays] = useState<14 | null>(null); // null = this season (all)
   const [help, setHelp] = useState<HelpKey | null>(null); // which KPI explainer modal is open
@@ -201,13 +201,15 @@ export default function PerformanceBoard({ picks, events }: { picks: PerfPick[];
 
   return (
     <div className="pb-24">
-      <StickyHeader>
-        <div className="mx-auto max-w-5xl px-5 pb-3 pt-6 md:px-8">
-          <MobileLogo />
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Is it actually working?</p>
-          <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">Performance.</h1>
-        </div>
-      </StickyHeader>
+      {!hideHeader && (
+        <StickyHeader>
+          <div className="mx-auto max-w-5xl px-5 pb-3 pt-6 md:px-8">
+            <MobileLogo />
+            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Is it actually working?</p>
+            <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">Performance.</h1>
+          </div>
+        </StickyHeader>
+      )}
 
       <div className="mx-auto max-w-5xl px-5 pt-2 md:px-8">
         {/* filter bar: agents + timeframe */}
