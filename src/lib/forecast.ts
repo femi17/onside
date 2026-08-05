@@ -36,12 +36,16 @@ export type ForecastConfig = {
   maxGoals: number; // score-matrix truncation
 };
 
+// Fitted on 171k finished fixtures (2025-06 → 2026-08) by coordinate search minimising held-out 1X2
+// log-loss (perf/backtest.mts). Beat the old independent-Poisson model by ~1.5% log-loss / 1.6% Brier
+// on 34k held-out matches, well-calibrated. Re-run the backtest to re-fit as the dataset grows.
+// (rho=0: the DC low-score correction didn't help 1X2 here — revisit it against BTTS/O-U specifically.)
 export const DEFAULTS: ForecastConfig = {
-  halfLifeDays: 180,
-  homeAdvElo: 60,
-  eloK: 20,
-  shrink: 4,
-  rho: -0.08,
+  halfLifeDays: 90,
+  homeAdvElo: 40,
+  eloK: 10,
+  shrink: 8,
+  rho: 0,
   eloPerLogGoal: 300,
   minMatches: 4,
   defHome: 1.45,
@@ -128,8 +132,9 @@ export function teamLambdas(r: Ratings, homeId: number, awayId: number, leagueId
   const lg = leagueId ?? -1;
   const lh = r.leagueHome.get(lg);
   const la = r.leagueAway.get(lg);
-  const leagueHome = lh && lh.n > 0 ? lh.goals / lh.n : (r.gHome.n > 0 ? r.gHome.goals / r.gHome.n : cfg.defHome);
-  const leagueAway = la && la.n > 0 ? la.goals / la.n : (r.gAway.n > 0 ? r.gAway.goals / r.gAway.n : cfg.defAway);
+  // floor the league means so a tiny/zero-goal league can never cause a 0-division → NaN λ
+  const leagueHome = Math.max(0.1, lh && lh.n > 0 ? lh.goals / lh.n : (r.gHome.n > 0 ? r.gHome.goals / r.gHome.n : cfg.defHome));
+  const leagueAway = Math.max(0.1, la && la.n > 0 ? la.goals / la.n : (r.gAway.n > 0 ? r.gAway.goals / r.gAway.n : cfg.defAway));
 
   const eloH = r.elo.get(homeId) ?? ELO_BASE;
   const eloA = r.elo.get(awayId) ?? ELO_BASE;
