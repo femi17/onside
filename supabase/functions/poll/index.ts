@@ -144,8 +144,8 @@ function fixtureUpdate(fx: any): Record<string, unknown> {
 
 function liveValue(mk: string, hg: number, ag: number, corners: number): number {
   if (mk === "over_8_5_corners") return corners;
-  if (mk === "home_to_score") return hg;
-  if (mk === "away_to_score") return ag;
+  if (mk === "home_to_score" || mk === "home_goals_ou") return hg;
+  if (mk === "away_to_score" || mk === "away_goals_ou") return ag;
   if (mk === "btts") return Math.min(hg, 1) + Math.min(ag, 1);
   if (["home_win", "away_win", "draw", "home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "draw_2up", "home_win_never_down", "away_win_never_down", "draw_never_down", "double_chance_1x_1up", "double_chance_x2_1up"].includes(mk)) return hg - ag;
   return hg + ag;
@@ -194,9 +194,15 @@ async function updateCornerTickets(tickets: any[], corners: number, liveFx: any)
   const regTime = REG_TIME.includes(liveFx.fixture?.status?.short);
   let settled = 0;
   for (const t of tickets) {
-    if (t.market_key !== "over_8_5_corners") continue;
-    if (regTime && corners > (t.line ?? 8.5)) { await sb.from("tickets").update({ status: "won", current_value: corners, settled_at: new Date().toISOString() }).eq("id", t.id); settled++; }
-    else await sb.from("tickets").update({ status: "live", current_value: corners }).eq("id", t.id);
+    // over_8_5_corners (FT-only) early-pays once corners pass the line. corners_ou can be a
+    // 1st/2nd-half bet, so never early-settle it on cumulative corners — just keep current_value in
+    // step with the live count (tracker + build-up alerts) and let HT/FT settlement grade the period.
+    if (t.market_key === "over_8_5_corners") {
+      if (regTime && corners > (t.line ?? 8.5)) { await sb.from("tickets").update({ status: "won", current_value: corners, settled_at: new Date().toISOString() }).eq("id", t.id); settled++; }
+      else await sb.from("tickets").update({ status: "live", current_value: corners }).eq("id", t.id);
+    } else if (t.market_key === "corners_ou") {
+      await sb.from("tickets").update({ status: "live", current_value: corners }).eq("id", t.id);
+    }
   }
   return settled;
 }
