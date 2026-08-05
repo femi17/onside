@@ -193,16 +193,25 @@ function EventSheet({ label, events, compact }: { label: string; events: GoalEve
   );
 }
 
-// A count-type event (corners now; shots, cards-count later) as a home–away split — same
-// dot attribution as the goal sheet, but a tally rather than a scorer list.
-function StatSplit({ label, home, away }: { label: string; home: number; away: number }) {
+// A count-type stat (corners now; shots, cards-count later) laid out exactly like the goal/card
+// scoresheet: a label + rule, then a home | away split with the vertical divider between the two
+// teams. Same dot attribution as the event sheets (home left, away right) — a tally, not a list.
+function StatSplit({ label, home, away, compact }: { label: string; home: number; away: number; compact?: boolean }) {
   return (
-    <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold">
-      <span className="flex-none uppercase tracking-wide text-ink-mute">{label}</span>
-      <span className="h-px flex-1 bg-ink/10" />
-      <span className="flex flex-none items-center gap-1.5 text-ink"><SideDot side="home" className="!h-1.5 !w-1.5" />{home}</span>
-      <span className="text-ink-mute">–</span>
-      <span className="flex flex-none items-center gap-1.5 text-ink">{away}<SideDot side="away" className="!h-1.5 !w-1.5" /></span>
+    <div className={compact ? "mt-3" : "mt-4"}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="flex-none font-mono text-[10px] uppercase tracking-wide text-ink-mute">{label}</span>
+        <span className="h-px flex-1 bg-ink/10" />
+      </div>
+      <div className="flex items-stretch gap-3 font-mono text-[10.5px] font-bold text-ink">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <SideDot side="home" className="!h-1.5 !w-1.5" />{home}
+        </div>
+        <span className="w-px self-stretch bg-ink/10" />
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 text-right">
+          {away}<SideDot side="away" className="!h-1.5 !w-1.5" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -574,9 +583,7 @@ function Card({
                 {goalCount > 0 && <EventSheet label="Goals" events={paddedGoals} compact={compact} />}
                 {cardEvents.length > 0 && <EventSheet label="Cards" events={cardEvents} compact={compact} />}
                 {showCorners && (
-                  <div className={compact ? "mt-3" : "mt-4"}>
-                    <StatSplit label="Corners" home={fs!.corners_home ?? 0} away={fs!.corners_away ?? 0} />
-                  </div>
+                  <StatSplit label="Corners" home={fs!.corners_home ?? 0} away={fs!.corners_away ?? 0} compact={compact} />
                 )}
                 {showMomentum && (
                   <div className="mt-4 border-t border-dashed border-ink/15 pt-3">
