@@ -46,6 +46,27 @@ Per route × {mobile, desktop}, median of N runs:
 Mobile: LCP < 2500ms · INP < 200ms · CLS < 0.1 · TTFB < 800ms · TBT < 200ms · SI < 3400ms ·
 JS < 300KB · total < 1200KB · score ≥ 85.  Desktop tightens LCP < 1500ms, TBT < 150ms, SI < 1500ms.
 
+## CI (GitHub Action)
+
+`.github/workflows/perf.yml` runs this harness against production and **fails the check if any route
+is over budget** — a regression gate. It triggers on every successful **Production** deploy (Vercel
+sends a `deployment_status` event), nightly at 06:00 UTC, and on manual dispatch. Results are uploaded
+as a `pagespeed-results` artifact.
+
+Set these repo secrets (**Settings → Secrets and variables → Actions**):
+
+| Secret | Required | Value |
+| --- | --- | --- |
+| `PERF_URL` | yes | production URL, e.g. `https://onside-mauve.vercel.app` |
+| `PERF_EMAIL` | for authed routes | a **dedicated CI test account** email |
+| `PERF_PASSWORD` | for authed routes | that account's password |
+
+Without `PERF_EMAIL`/`PERF_PASSWORD` it still runs, but only measures the public routes (the harness
+skips authed routes when no creds are present). Create the CI account the same way any user signs up
+(or ask the maintainer to provision a throwaway one) — never use a real user.
+
+To tune the gate, edit the `BUDGET` / `BUDGET_DESKTOP` objects in `perf.mjs`.
+
 ## Notes / gotchas
 
 - Uses a **throwaway test account** — the interactions are read-only, but never point it at a real user.

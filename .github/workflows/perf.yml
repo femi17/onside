@@ -1,0 +1,64 @@
+name: Page speed
+
+# Runs the Lighthouse + Playwright harness (perf/) against production and fails if any route is over
+# budget — a regression gate. Triggers: every successful Production deploy (Vercel sends
+# deployment_status), a nightly schedule, and manual dispatch.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  deployment_status:
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pagespeed:
+    runs-on: ubuntu-latest
+    # for deployment_status events, only run on a SUCCESSFUL Production deploy
+    if: >-
+      github.event_name != 'deployment_status' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
+    env:
+      PERF_URL: ${{ secrets.PERF_URL }}
+      PERF_EMAIL: ${{ secrets.PERF_EMAIL }}
+      PERF_PASSWORD: ${{ secrets.PERF_PASSWORD }}
+      PERF_RUNS: "3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install harness deps
+        working-directory: perf
+        run: npm install
+
+      - name: Install Chromium
+        working-directory: perf
+        run: npx playwright install --with-deps chromium
+
+      - name: Guard — require PERF_URL
+        run: |
+          if [ -z "$PERF_URL" ]; then
+            echo "::error::PERF_URL secret is not set — add it in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "$PERF_EMAIL" ]; then
+            echo "::warning::PERF_EMAIL/PERF_PASSWORD not set — only public routes will be measured."
+          fi
+
+      - name: Run page-speed harness
+        working-directory: perf
+        run: node perf.mjs
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pagespeed-results
+          path: perf/results/*.json
+          if-no-files-found: ignore
