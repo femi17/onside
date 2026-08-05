@@ -428,6 +428,22 @@ function Card({
     const pressLabel =
       pressing === "home" ? `${f?.home_team} pressing` : pressing === "away" ? `${f?.away_team} pressing` : "Even";
 
+    // Corners belong to THIS card only when the bet is a corner market — otherwise a corner bet on
+    // the fixture would leak its corner split onto a sibling goals/result bet (they share fixture
+    // stats). Every corner market key contains "corner". Momentum is a general live read (any bet).
+    const isCornerMarket = (t.market_key ?? "").includes("corner");
+    const showCorners = isCornerMarket && !!fs && (fs.corners_home != null || fs.corners_away != null);
+    const cornerTotal = (fs?.corners_home ?? 0) + (fs?.corners_away ?? 0);
+    const showMomentum = !settled && !!pressing;
+    // collapsed drawer summary + whether there's anything to reveal
+    const drawerParts = [
+      goalCount > 0 ? `${goalCount} goal${goalCount === 1 ? "" : "s"}` : "",
+      cardEvents.length > 0 ? `${cardEvents.length} card${cardEvents.length === 1 ? "" : "s"}` : "",
+      showCorners ? `${cornerTotal} corner${cornerTotal === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    const hasDrawerContent = goalCount > 0 || cardEvents.length > 0 || showCorners || showMomentum;
+    const drawerSummary = drawerParts.length ? drawerParts.join(" · ") : showMomentum ? "Live stats" : "No events yet";
+
     return (
       <div
         className={`betslip betslip-chalk rounded-2xl bg-chalk text-ink shadow-xl transition-transform duration-200 hover:-translate-y-0.5 ${
@@ -536,8 +552,9 @@ function Card({
           </div>
         )}
 
-        {/* events fold away by default so the card stays short; the chevron always shows so you
-            can draw them out — even before anything has happened. */}
+        {/* match-detail drawer — folds away so the card stays short; the chevron always shows so you
+            can draw it out. Goals & cards always; corners only on a corner bet (they're irrelevant to
+            a goals/result bet on the same fixture); the live momentum read while the game is on. */}
         <div className={compact ? "mt-3" : "mt-4"}>
           <button
             type="button"
@@ -545,52 +562,41 @@ function Card({
             aria-expanded={showEvents}
             className="flex w-full items-center gap-2 font-mono text-[10px] uppercase tracking-wide text-ink-mute transition-colors hover:text-ink"
           >
-            <span className="flex-none">
-              {goalCount === 0 && cardEvents.length === 0
-                ? "No events yet"
-                : [
-                    goalCount > 0 ? `${goalCount} goal${goalCount === 1 ? "" : "s"}` : "",
-                    cardEvents.length > 0 ? `${cardEvents.length} card${cardEvents.length === 1 ? "" : "s"}` : "",
-                  ].filter(Boolean).join(" · ")}
-            </span>
+            <span className="flex-none">{drawerSummary}</span>
             <span className="h-px flex-1 bg-ink/10" />
             <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" className={`h-3 w-3 flex-none transition-transform duration-200 ${showEvents ? "rotate-180" : ""}`}>
               <path d="M3 4.5 6 7.5 9 4.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
           {showEvents &&
-            (goalCount === 0 && cardEvents.length === 0 ? (
-              <p className="mt-2 font-mono text-[10.5px] text-ink-mute">No goals or cards yet.</p>
-            ) : (
+            (hasDrawerContent ? (
               <>
                 {goalCount > 0 && <EventSheet label="Goals" events={paddedGoals} compact={compact} />}
                 {cardEvents.length > 0 && <EventSheet label="Cards" events={cardEvents} compact={compact} />}
+                {showCorners && (
+                  <div className={compact ? "mt-3" : "mt-4"}>
+                    <StatSplit label="Corners" home={fs!.corners_home ?? 0} away={fs!.corners_away ?? 0} />
+                  </div>
+                )}
+                {showMomentum && (
+                  <div className="mt-4 border-t border-dashed border-ink/15 pt-3">
+                    <div className="flex justify-between font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
+                      <span>Momentum · last 10&prime;</span>
+                      <span className="font-bold text-flood-deep">{pressLabel}</span>
+                    </div>
+                    <div className="relative mt-2 flex h-6 items-center overflow-hidden rounded-lg bg-ink/[0.06]">
+                      <span className="absolute left-1/2 top-0 bottom-0 w-px bg-ink/20" />
+                      <span className="absolute left-0 top-0 bottom-0 border-r-2 border-flood-deep bg-flood/20" style={{ width: `${lean}%` }} />
+                      <span className="relative z-10 flex items-center gap-1.5 px-2.5 font-mono text-[11px] font-bold text-ink"><SideDot side="home" className="!h-2 !w-2" />{teamCode(f?.home_team)}</span>
+                      <span className="relative z-10 ml-auto flex items-center gap-1.5 px-2.5 font-mono text-[11px] font-bold text-ink">{teamCode(f?.away_team)}<SideDot side="away" className="!h-2 !w-2" /></span>
+                    </div>
+                  </div>
+                )}
               </>
+            ) : (
+              <p className="mt-2 font-mono text-[10.5px] text-ink-mute">No match events yet.</p>
             ))}
         </div>
-
-        {/* corners as a home–away split (populated for corner-market games) */}
-        {fs && (fs.corners_home != null || fs.corners_away != null) && (
-          <div className={compact ? "mt-3" : "mt-4"}>
-            <StatSplit label="Corners" home={fs.corners_home ?? 0} away={fs.corners_away ?? 0} />
-          </div>
-        )}
-
-        {/* momentum meter — live games only (it's a "last 10 minutes" read) */}
-        {!settled && !compact && pressing && (
-          <div className="mt-4 border-t border-dashed border-ink/15 pt-3">
-            <div className="flex justify-between font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
-              <span>Momentum · last 10&prime;</span>
-              <span className="font-bold text-flood-deep">{pressLabel}</span>
-            </div>
-            <div className="relative mt-2 flex h-6 items-center overflow-hidden rounded-lg bg-ink/[0.06]">
-              <span className="absolute left-1/2 top-0 bottom-0 w-px bg-ink/20" />
-              <span className="absolute left-0 top-0 bottom-0 border-r-2 border-flood-deep bg-flood/20" style={{ width: `${lean}%` }} />
-              <span className="relative z-10 flex items-center gap-1.5 px-2.5 font-mono text-[11px] font-bold text-ink"><SideDot side="home" className="!h-2 !w-2" />{teamCode(f?.home_team)}</span>
-              <span className="relative z-10 ml-auto flex items-center gap-1.5 px-2.5 font-mono text-[11px] font-bold text-ink">{teamCode(f?.away_team)}<SideDot side="away" className="!h-2 !w-2" /></span>
-            </div>
-          </div>
-        )}
 
         {showManual && <ManualSettle t={t} busy={busy} onSettle={onSettle} />}
       </div>
