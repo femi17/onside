@@ -45,7 +45,7 @@ async function PerfData() {
     // learning-change log (Pro Max self-tuning); powers the "what your agent learned" timeline
     supabase
       .from("strategy_learning_events")
-      .select("id, strategy_id, prev_min_edge, new_min_edge, avg_roi, sample_size, created_at, strategies(name)")
+      .select("id, strategy_id, prev_min_edge, new_min_edge, avg_roi, avg_clv, basis, sample_size, created_at, strategies(name)")
       .order("created_at", { ascending: false })
       .limit(200),
   ]);

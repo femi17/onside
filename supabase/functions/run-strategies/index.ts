@@ -584,8 +584,26 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
   return [...overBar, ...unpriced];
 }
 
-async function learnAdjust(strategy: any): Promise<{ next: number; avgRoi: number; sample: number } | null> {
+// Self-tune the strategy's edge bar. Prefer CLV (closing-line value) — a lower-variance skill signal
+// present on every priced pick with a close snapshot, not just settled ones — and fall back to
+// realized ROI until enough CLV has accrued. Positive signal → loosen the bar (we're finding value);
+// negative → tighten (we're taking bad prices).
+async function learnAdjust(strategy: any): Promise<{ next: number; basis: string; metric: number; sample: number } | null> {
   if (!strategy.learning) return null;
+  const cur = strategy.min_edge ?? 0;
+
+  const { data: clvRows } = await sb.from("deliveries").select("clv")
+    .eq("strategy_id", strategy.id).not("clv", "is", null)
+    .order("delivered_at", { ascending: false }).limit(300);
+  const clvs = (clvRows ?? []).map((r: any) => Number(r.clv)).filter((x: number) => Number.isFinite(x));
+  if (clvs.length >= 20) {
+    const avgClv = clvs.reduce((a, b) => a + b, 0) / clvs.length;
+    let next = cur;
+    if (avgClv < -0.003) next = Math.min(0.08, cur + 0.005);       // taking worse-than-close prices → tighten
+    else if (avgClv > 0.008) next = Math.max(0, cur - 0.005);      // consistently beating the close → widen
+    return { next: Number(next.toFixed(4)), basis: "clv", metric: Number(avgClv.toFixed(4)), sample: clvs.length };
+  }
+
   const { data: settled } = await sb.from("deliveries").select("result, market_prob")
     .eq("strategy_id", strategy.id).in("result", ["won", "lost"]).limit(500);
   let roi = 0, cnt = 0;
@@ -597,11 +615,10 @@ async function learnAdjust(strategy: any): Promise<{ next: number; avgRoi: numbe
   }
   if (cnt < 20) return null;
   const avgRoi = roi / cnt;
-  const cur = strategy.min_edge ?? 0;
   let next = cur;
   if (avgRoi < -0.05) next = Math.min(0.08, cur + 0.005);
   else if (avgRoi > 0.05) next = Math.max(0, cur - 0.005);
-  return { next: Number(next.toFixed(4)), avgRoi: Number(avgRoi.toFixed(4)), sample: cnt };
+  return { next: Number(next.toFixed(4)), basis: "roi", metric: Number(avgRoi.toFixed(4)), sample: cnt };
 }
 
 // --- Surprise-me leagues: resolve the league set for THIS run -----------------
@@ -652,7 +669,10 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
     // log the adjustment so Performance can show what/why the agent self-tuned
     await sb.from("strategy_learning_events").insert({
       strategy_id: strategy.id, user_id: strategy.user_id,
-      prev_min_edge: prev, new_min_edge: learned.next, avg_roi: learned.avgRoi, sample_size: learned.sample,
+      prev_min_edge: prev, new_min_edge: learned.next,
+      avg_roi: learned.basis === "roi" ? learned.metric : null,
+      avg_clv: learned.basis === "clv" ? learned.metric : null,
+      basis: learned.basis, sample_size: learned.sample,
     });
   }
   const today = tzDay(nowIso, tz);
