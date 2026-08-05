@@ -59,13 +59,30 @@ function parseTeamStats(statsArr: any[], liveFx: any): Record<string, [number | 
     fouls: [num(statVal(home, "Fouls")), num(statVal(away, "Fouls"))],
   };
 }
-function momentum(cur: any, prev: any) {
-  const p = prev ?? {};
-  const dH = ((cur.corners_home ?? 0) - (p.corners_home ?? 0)) + ((cur.shots_home ?? 0) - (p.shots_home ?? 0));
-  const dA = ((cur.corners_away ?? 0) - (p.corners_away ?? 0)) + ((cur.shots_away ?? 0) - (p.shots_away ?? 0));
+// Momentum over a rolling ~10-minute window of shots+corners, NOT the change since the last poll.
+// Polls run ~20s apart, and a shot/corner rarely lands inside one poll, so a per-poll delta was
+// almost always 0 -> "even" forever. Each poll appends a snapshot keyed by the match minute, drops
+// snapshots that have aged out of the window, and measures pressure as (current - oldest-in-window)
+// per team. The samples ride along in the momentum JSON so no extra table is needed.
+const MOMENTUM_WINDOW_MIN = 10;
+function momentum(cur: any, prevMomentum: any, elapsed: number | null) {
+  const el = elapsed ?? 0;
+  const now = {
+    el,
+    ch: cur.corners_home ?? 0, ca: cur.corners_away ?? 0,
+    sh: cur.shots_home ?? 0, sa: cur.shots_away ?? 0,
+  };
+  const prevSamples: any[] = Array.isArray(prevMomentum?.samples) ? prevMomentum.samples : [];
+  // keep a little past the window (stable baseline) and guard against the clock going backwards
+  const kept = prevSamples.filter((s) => (s?.el ?? 0) <= el && el - (s?.el ?? 0) <= MOMENTUM_WINDOW_MIN + 2);
+  const samples = [...kept, now];
+  // baseline = the oldest snapshot still inside the window (samples are chronological)
+  const base = samples.find((s) => el - (s?.el ?? 0) <= MOMENTUM_WINDOW_MIN) ?? now;
+  const dH = (now.ch - (base.ch ?? 0)) + (now.sh - (base.sh ?? 0));
+  const dA = (now.ca - (base.ca ?? 0)) + (now.sa - (base.sa ?? 0));
   let pressing = "even";
   if (dH - dA >= 2) pressing = "home"; else if (dA - dH >= 2) pressing = "away";
-  return { pressing, home_delta: dH, away_delta: dA };
+  return { pressing, home_delta: dH, away_delta: dA, samples };
 }
 function isGoalDisallow(detail: string): boolean {
   return /disallow|cancel|overturn|no goal|goal removed/i.test(detail || "");
@@ -732,8 +749,9 @@ async function poll() {
     const statsArr = await afGet("fixtures/statistics", { fixture: String(id) });
     if (!statsArr.length) continue;
     const parsed = parseStats(statsArr, liveMap.get(id));
-    const { data: prev } = await sb.from("fixture_stats").select("corners_home,corners_away,shots_home,shots_away").eq("fixture_id", id).maybeSingle();
-    const row: Record<string, unknown> = { fixture_id: id, ...parsed, momentum: momentum(parsed, prev), updated_at: nowIso };
+    const { data: prev } = await sb.from("fixture_stats").select("momentum").eq("fixture_id", id).maybeSingle();
+    const elapsed = liveMap.get(id)?.fixture?.status?.elapsed ?? null;
+    const row: Record<string, unknown> = { fixture_id: id, ...parsed, momentum: momentum(parsed, prev?.momentum, elapsed), updated_at: nowIso };
     // At HT the live corner totals ARE the 1st-half count (stats are cumulative) -- snapshot them so
     // 1st/2nd-half corner markets can grade later (2nd half = full-time total - this snapshot).
     if (liveMap.get(id)?.fixture?.status?.short === "HT") { row.corners_home_ht = parsed.corners_home; row.corners_away_ht = parsed.corners_away; }
