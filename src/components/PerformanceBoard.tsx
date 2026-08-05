@@ -138,6 +138,18 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
     const beatClose = clvPicks.filter((p) => (p.clv as number) > 0).length;
     const beatCloseRate = clvPicks.length ? beatClose / clvPicks.length : 0;
 
+    // CLV by league — where the agents beat the closing line (avg CLV + beat-rate per league)
+    const clvLgMap = new Map<string, { sum: number; n: number; beat: number }>();
+    for (const p of clvPicks) {
+      const k = leagueOf(p);
+      const b = clvLgMap.get(k) ?? { sum: 0, n: 0, beat: 0 };
+      b.sum += p.clv as number; b.n++; if ((p.clv as number) > 0) b.beat++;
+      clvLgMap.set(k, b);
+    }
+    const clvLeagues = Array.from(clvLgMap.entries())
+      .map(([name, b]) => ({ name, avg: b.sum / b.n, n: b.n, beatRate: b.beat / b.n }))
+      .sort((a, b) => b.avg - a.avg);
+
     // strike on the greenest picks (edge ≥ 5%)
     const green = settled.filter((p) => (p.edge ?? -1) >= 0.05);
     const greenWon = green.filter((p) => p.result === "won").length;
@@ -204,7 +216,7 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
     const best = graded.find((l) => (l.edgePct as number) > 0.02) ?? null;
     const worst = [...graded].reverse().find((l) => (l.edgePct as number) < -0.02) ?? null;
 
-    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, clvPicks, avgClv, beatCloseRate, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
+    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, clvPicks, avgClv, beatCloseRate, clvLeagues, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
   }, [picks, agent, days]);
 
   // self-tuning log (Pro Max learning agents), filtered to the same agent + timeframe
@@ -340,6 +352,36 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
                 <p className="mt-3.5 font-mono text-[11px] text-ink-mute">
                   {d.tierHolds ? "Tier order holds — stake heavier on green." : "Tier order is mixed so far — needs more settled picks."}
                 </p>
+              </Panel>
+            </div>
+
+            {/* CLV by league — reads across ALL priced picks with a captured close (not just settled) */}
+            <div className="mt-4">
+              <Panel title="CLV by league" sub="Where your agents beat the closing line — the sharpest read on edge">
+                {d.clvLeagues.length ? (
+                  <div className="no-scrollbar mt-3.5 grid max-h-[220px] grid-cols-1 gap-x-8 gap-y-2.5 overflow-y-auto sm:grid-cols-2">
+                    {d.clvLeagues.map((l) => (
+                      <div key={l.name} className="flex items-center gap-3 text-[13.5px]">
+                        <span className="min-w-0 flex-1 truncate font-semibold text-ink">{l.name}</span>
+                        {/* diverging bar, centred at zero: green right = beat the close, red left = worse */}
+                        <div className="relative h-2 w-14 flex-none rounded-full bg-ink/[0.08]">
+                          <span className="absolute inset-y-0 left-1/2 w-px bg-ink/20" />
+                          <span
+                            className={`absolute inset-y-0 rounded-full ${l.avg >= 0 ? "bg-grass" : "bg-brick"}`}
+                            style={l.avg >= 0
+                              ? { left: "50%", width: `${Math.min(50, Math.abs(l.avg) * 1000)}%` }
+                              : { right: "50%", width: `${Math.min(50, Math.abs(l.avg) * 1000)}%` }}
+                          />
+                        </div>
+                        <span className={`w-[68px] flex-none text-right font-mono font-bold ${l.avg > 0.0005 ? "text-grass-deep" : l.avg < -0.0005 ? "text-brick" : "text-ink-mute"}`}>
+                          {signed(l.avg)} · {l.n}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty>No closing-line snapshots yet — CLV fills in as your agents&apos; games approach kick-off.</Empty>
+                )}
               </Panel>
             </div>
 
