@@ -8,7 +8,7 @@ export default async function TrackerPage() {
   const { data: tickets } = await supabase
     .from("tickets")
     .select(
-      "id, accumulator_id, market_key, market_label, custom_market, line, side, bet_value, status, current_value, created_at, settled_at, tracker_hidden, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))"
+      "id, accumulator_id, market_key, market_label, custom_market, line, side, period, bet_value, status, current_value, created_at, settled_at, tracker_hidden, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
     )
     // a leg the user removed from the tracker stays in its acca but is hidden here
     .eq("tracker_hidden", false)

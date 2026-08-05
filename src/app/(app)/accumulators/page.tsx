@@ -18,7 +18,7 @@ export default async function AccumulatorsPage() {
   let query = supabase
     .from("accumulators")
     .select(
-      "id, title, bookmaker, stake, potential_return, currency, leg_count, status, created_at, tickets(id, market_key, market_label, custom_market, line, side, status, current_value, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away)))"
+      "id, title, bookmaker, stake, potential_return, currency, leg_count, status, created_at, tickets(id, market_key, market_label, custom_market, line, side, period, status, current_value, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht)))"
     )
     .order("created_at", { ascending: false });
   if (cap != null) query = query.limit(cap);

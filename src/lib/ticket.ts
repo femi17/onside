@@ -6,6 +6,8 @@ export type Stats = {
   momentum: { pressing?: string } | null;
   corners_home: number | null;
   corners_away: number | null;
+  corners_home_ht?: number | null; // half-time snapshot — lets 1st/2nd-half corner bets track live
+  corners_away_ht?: number | null;
 };
 
 // one fixture event, in order. Goals carry the running scoreline; cards (yellow/red) don't.
@@ -33,6 +35,7 @@ export type TrackedTicket = {
   custom_market: string | null;
   line: number | null;
   side?: string | null;
+  period?: string | null; // ft | 1h | 2h — drives period-aware live tracking
   bet_value?: string | null;
   status: string;
   current_value: number | null;
@@ -130,6 +133,29 @@ export type Track = {
 export function liveTrack(t: TrackedTicket): Track | null {
   const v = Number(t.current_value ?? 0);
   const won = t.status === "won";
+  const period = t.period ?? "ft";
+  // period-aware counts, mirroring the build-up push. During a half the live totals ARE that half's
+  // count; for the 2nd half we subtract the (stable) 1st-half goals from the events timeline, and
+  // 2nd-half corners = live full − the HT corner snapshot.
+  const evs = Array.isArray(t.fixtures?.events) ? t.fixtures!.events! : [];
+  const isGoalEv = (e: GoalEvent) => e.kind === "goal" || e.kind === "pen" || e.kind === "og";
+  const goals1h = (side?: "home" | "away") =>
+    evs.filter((e) => isGoalEv(e) && (e.min ?? 999) <= 45 && (!side || e.side === side)).length;
+  const periodGoals = (side?: "home" | "away") => {
+    const full = side === "home" ? (t.fixtures?.home_goals ?? 0) : side === "away" ? (t.fixtures?.away_goals ?? 0)
+      : (t.fixtures?.home_goals ?? 0) + (t.fixtures?.away_goals ?? 0);
+    if (period === "1h") return goals1h(side);
+    if (period === "2h") return Math.max(0, full - goals1h(side));
+    return full;
+  };
+  const stat = Array.isArray(t.fixtures?.fixture_stats) ? t.fixtures?.fixture_stats[0] : t.fixtures?.fixture_stats;
+  const cornerHT = stat && stat.corners_home_ht != null && stat.corners_away_ht != null
+    ? stat.corners_home_ht + stat.corners_away_ht : null;
+  const periodCorners = () => {
+    if (period === "1h") return cornerHT ?? v;            // during 1st half the live count IS the 1h count
+    if (period === "2h") return cornerHT != null ? Math.max(0, v - cornerHT) : v;
+    return v;
+  };
   // `count` defaults to the stored value (total goals/corners); team O/U passes that team's goals
   const overLine = (line: number, unit: string, count = v): Track => {
     const needed = Math.floor(line) + 1;
@@ -165,8 +191,8 @@ export function liveTrack(t: TrackedTicket): Track | null {
   switch (t.market_key) {
     case "home_goals_ou":
     case "away_goals_ou": {
-      // only that team's goals count toward the line (from the fixture, not current_value)
-      const g = t.market_key === "home_goals_ou" ? (t.fixtures?.home_goals ?? 0) : (t.fixtures?.away_goals ?? 0);
+      // only that team's goals count toward the line, in the bet's period
+      const g = periodGoals(t.market_key === "home_goals_ou" ? "home" : "away");
       const line = t.line ?? 0.5;
       return t.side === "under" ? underLine(line, "goals", g) : overLine(line, "goals", g);
     }
@@ -182,12 +208,13 @@ export function liveTrack(t: TrackedTicket): Track | null {
     case "under_3_5": return underLine(3.5, "goals");
     case "over_8_5_corners": return overLine(t.line ?? 8.5, "corners");
     // corners over/under on any line — poll keeps current_value in step with the live corner count
-    case "corners_ou": { const line = t.line ?? 9.5; return t.side === "under" ? underLine(line, "corners") : overLine(line, "corners"); }
+    case "corners_ou": { const line = t.line ?? 9.5; const c = periodCorners(); return t.side === "under" ? underLine(line, "corners", c) : overLine(line, "corners", c); }
     // total goals over/under on ANY line (e.g. Over 4.5) — current_value holds total goals.
     // Without this it fell through to null and rendered as a home-v-away scoreline.
     case "total_goals_ou": {
       const line = t.line ?? 2.5;
-      return t.side === "under" ? underLine(line, "goals") : overLine(line, "goals");
+      const g = periodGoals();
+      return t.side === "under" ? underLine(line, "goals", g) : overLine(line, "goals", g);
     }
     case "home_to_score":
     case "away_to_score": {
