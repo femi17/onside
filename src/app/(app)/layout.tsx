@@ -7,6 +7,7 @@ import MobileNav from "@/components/MobileNav";
 import LiveGamesFab from "@/components/LiveGamesFab";
 import PushChime from "@/components/PushChime";
 import InstallPushPrompt from "@/components/InstallPushPrompt";
+import UpdateWatcher from "@/components/UpdateWatcher";
 import Footer from "@/components/Footer";
 
 const NAV = [
@@ -113,6 +114,8 @@ export default async function AppLayout({
       <PushChime />
       {/* app-like soft-ask for notification permission on first launch when installed */}
       <InstallPushPrompt userId={user.id} />
+      {/* prompts a reload when an already-open app is behind a new deploy */}
+      <UpdateWatcher />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import ConnectTelegram from "@/components/ConnectTelegram";
 import CancelSubscription from "@/components/CancelSubscription";
 import ChangePassword from "@/components/ChangePassword";
 import NotificationSettings from "@/components/NotificationSettings";
+import AppVersionStatus from "@/components/AppVersionStatus";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
@@ -117,6 +118,12 @@ export default async function ProfilePage() {
           <div className="mb-1 font-disp text-[17px] font-bold">Security</div>
           <p className="text-[13px] text-ink-mute">Update the password you use to sign in.</p>
           <ChangePassword />
+        </section>
+
+        {/* app */}
+        <section className="mt-4 rounded-2xl bg-chalk p-5 text-ink shadow-xl">
+          <div className="mb-2 font-disp text-[17px] font-bold">App</div>
+          <AppVersionStatus />
         </section>
 
         <div className="mt-5 md:hidden">
