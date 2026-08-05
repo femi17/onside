@@ -181,6 +181,12 @@ export function liveTrack(t: TrackedTicket): Track | null {
     case "under_2_5": return underLine(2.5, "goals");
     case "under_3_5": return underLine(3.5, "goals");
     case "over_8_5_corners": return overLine(t.line ?? 8.5, "corners");
+    // total goals over/under on ANY line (e.g. Over 4.5) — current_value holds total goals.
+    // Without this it fell through to null and rendered as a home-v-away scoreline.
+    case "total_goals_ou": {
+      const line = t.line ?? 2.5;
+      return t.side === "under" ? underLine(line, "goals") : overLine(line, "goals");
+    }
     case "home_to_score":
     case "away_to_score": {
       const hit = won || v >= 1;
