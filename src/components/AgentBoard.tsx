@@ -16,7 +16,44 @@ export type AgentPick = TrackedTicket & {
   period?: string | null;
   bet_value?: string | null;
   settle_score?: string | null;
+  model_prob?: number | null;
+  market_prob?: number | null;
+  tier?: string | null;
 };
+
+// Plain-language "why did the agent pick this" for the ? explainer. Uses the pick's own numbers
+// where available (model vs market probability, edge, confidence tier), falling back gracefully for
+// model-only / rule-only picks that had no live odds to price against.
+function explainPick(p: AgentPick): { title: string; body: string[] } {
+  const f = p.fixtures;
+  const match = f ? `${f.home_team} v ${f.away_team}` : "this match";
+  const market = p.market_label ?? p.custom_market ?? "this market";
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const body: string[] = [
+    `${p.agent_name} picked ${market} for ${match}. Here's the thinking behind it:`,
+  ];
+  if (p.model_prob != null) {
+    body.push(`• Model estimate: the agent's model puts this at about ${pct(p.model_prob)} to land, based on both teams' recent scoring and the league's goal rates.`);
+  } else {
+    body.push(`• This was a model/rule selection — it matched your strategy's criteria rather than a goals-model probability.`);
+  }
+  if (p.market_prob != null) {
+    body.push(`• Market implied: the bookmakers' odds imply roughly ${pct(p.market_prob)}. The agent strips out the bookmaker margin so this is a fair comparison.`);
+  }
+  if (p.edge != null) {
+    body.push(`• Edge: that's ${p.edge > 0 ? "+" : ""}${p.edge}% in your favour — the agent only sends a pick when its estimate beats the market by the edge bar you set.`);
+  } else {
+    body.push(`• No live odds were available to price this one, so it was sent on the model/your rule alone — treat it as lower confidence.`);
+  }
+  const tierText: Record<string, string> = {
+    elite: "🟢 Strong value — a clear gap over the market.",
+    strong: "🟡 Solid value — a decent gap over the market.",
+    wide: "🟠 Thinner value — a smaller gap; a real pick, not a lock.",
+  };
+  if (p.tier && tierText[p.tier]) body.push(`• Confidence: ${tierText[p.tier]}`);
+  body.push(`This is where the odds looked slightly in your favour — not a guarantee. Value shows over many bets, not any single one.`);
+  return { title: "Why the agent picked this", body };
+}
 
 function dayOf(iso: string | null) {
   const now = new Date();
@@ -96,6 +133,7 @@ function Item({
   busy,
   onSettle,
   settling,
+  onExplain,
 }: {
   p: AgentPick;
   nowMs: number;
@@ -104,6 +142,7 @@ function Item({
   busy: boolean;
   onSettle: (id: string, result: "won" | "lost", score?: string) => void;
   settling: boolean;
+  onExplain: () => void;
 }) {
   const f = p.fixtures;
   const ms = stateOf(p, nowMs);
@@ -160,8 +199,18 @@ function Item({
               <span className="hidden md:inline">{chipDesktop}</span>
             </span>
           </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-ink-mute">
-            {market} · <b className="text-flood-deep">{p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
+              {market} · <b className="text-flood-deep">{p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+            </span>
+            <button
+              onClick={onExplain}
+              aria-label="Why the agent picked this"
+              title="Why the agent picked this"
+              className="grid h-4 w-4 flex-none place-items-center rounded-full border border-ink/15 font-mono text-[10px] font-bold leading-none text-ink-mute transition-colors hover:border-ink/40 hover:text-ink"
+            >
+              ?
+            </button>
           </div>
         </div>
         {/* right control: icon on mobile (keeps the row compact), full-text button on desktop.
@@ -245,6 +294,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [settlingId, setSettlingId] = useState<string | null>(null);
+  const [explain, setExplain] = useState<AgentPick | null>(null); // which pick's "why" modal is open
 
   // settle a no-data delivery (provider never covered the game) so it stops showing "no feed data".
   // Goes through an RPC that only flips result + stores the entered score for the caller's own
@@ -427,7 +477,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                 </div>
                 <div className="flex flex-col gap-2">
                   {day.items.map((p) => (
-                    <Item key={p.id} p={p} nowMs={nowMs} onTrack={addToTracker} tracked={tracked.has(p.id)} busy={busyId === p.id} onSettle={settleDelivery} settling={settlingId === p.id} />
+                    <Item key={p.id} p={p} nowMs={nowMs} onTrack={addToTracker} tracked={tracked.has(p.id)} busy={busyId === p.id} onSettle={settleDelivery} settling={settlingId === p.id} onExplain={() => setExplain(p)} />
                   ))}
                 </div>
               </section>
@@ -436,6 +486,25 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         </>
       )}
       </div>
+
+      {/* per-pick explainer: how the agent reached this decision */}
+      {explain && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
+          <div onClick={() => setExplain(null)} className="absolute inset-0 bg-ink/60" />
+          <div role="dialog" aria-modal="true" aria-label="Why the agent picked this" className="relative w-full max-w-md rounded-t-2xl bg-chalk p-5 text-ink shadow-2xl sm:rounded-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-disp text-lg font-extrabold text-ink">{explainPick(explain).title}</h3>
+              <button onClick={() => setExplain(null)} aria-label="Close" className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-ink/5 font-mono text-lg text-ink-mute transition-colors hover:text-ink">×</button>
+            </div>
+            <div className="mt-3 flex flex-col gap-2.5">
+              {explainPick(explain).body.map((line, i) => (
+                <p key={i} className="text-[13.5px] leading-relaxed text-ink-mute">{line}</p>
+              ))}
+            </div>
+            <button onClick={() => setExplain(null)} className="mt-4 w-full rounded-xl bg-flood py-2.5 font-bold text-ink">Got it</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

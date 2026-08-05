@@ -2,6 +2,10 @@
 // /api/version endpoint reports the live deployment's build. A difference => a new version is out.
 export const CURRENT_BUILD = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 
+// Human-friendly release label shown in the UI (bump on notable releases). The build id above is
+// what actually drives update detection; this is just what users read.
+export const APP_VERSION = "v4";
+
 export async function fetchLatestBuild(): Promise<string | null> {
   try {
     const res = await fetch("/api/version", { cache: "no-store" });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { recognizeBet, recognizedFromClassification } from "@/lib/betCatalog";
@@ -95,6 +96,8 @@ export default function ImportSlip({
   const router = useRouter();
   const supabase = createClient();
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false); // gate the portal to the client
+  useEffect(() => setMounted(true), []);
   const [busy, setBusy] = useState<null | "reading" | "tracking">(null);
   const [sels, setSels] = useState<Sel[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -353,8 +356,10 @@ export default function ImportSlip({
         </span>
       </div>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      {/* portalled to <body> so the header's sticky/backdrop-blur stacking context can't trap it
+          (that was hiding the modal behind the page's search bar) */}
+      {open && mounted && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
           <div
             className="fixed inset-0 bg-ink/60 backdrop-blur-sm"
             onClick={() => {
@@ -532,7 +537,8 @@ export default function ImportSlip({
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

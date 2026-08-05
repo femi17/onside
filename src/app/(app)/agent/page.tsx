@@ -13,7 +13,7 @@ export default async function AgentPage() {
   const { data } = await supabase
     .from("deliveries")
     .select(
-      "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))"
+      "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))"
     )
     .order("delivered_at", { ascending: false })
     .limit(200);
@@ -35,6 +35,9 @@ export default async function AgentPage() {
     agent_name: ((r.strategies as { name?: string } | null)?.name) ?? "Agent",
     // edge is stored as a fraction (0.05) — show it as a percentage (+5.0)
     edge: r.edge != null ? Math.round(Number(r.edge) * 1000) / 10 : null,
+    model_prob: r.model_prob != null ? Number(r.model_prob) : null,
+    market_prob: r.market_prob != null ? Number(r.market_prob) : null,
+    tier: (r.tier as string) ?? null,
     delivered_at: (r.delivered_at as string) ?? null,
   }));
 

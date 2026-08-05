@@ -2,7 +2,7 @@
 
 // Profile row showing whether the app is up to date, with a one-tap reload when a new build is out.
 import { useUpdateAvailable, reloadForUpdate } from "@/lib/useUpdateAvailable";
-import { CURRENT_BUILD } from "@/lib/version";
+import { APP_VERSION } from "@/lib/version";
 
 export default function AppVersionStatus() {
   const stale = useUpdateAvailable();
@@ -11,10 +11,7 @@ export default function AppVersionStatus() {
       <div className="min-w-0">
         <p className="text-sm font-bold text-ink">App version</p>
         <p className="mt-0.5 text-[12.5px] text-ink-mute">
-          {stale ? "A new version is available." : "You're on the latest version."}
-          <span className="ml-1 font-mono text-[10px] text-ink-mute/70">
-            {CURRENT_BUILD === "dev" ? "dev" : CURRENT_BUILD.slice(0, 7)}
-          </span>
+          {stale ? `A new version is available (you're on ${APP_VERSION}).` : `You are on the latest version ${APP_VERSION}.`}
         </p>
       </div>
       {stale && (

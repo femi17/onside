@@ -56,6 +56,9 @@ export default async function AddPage() {
               <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk">
                 Find your game.
               </h1>
+              <p className="mt-1.5 max-w-[22rem] text-[12.5px] leading-relaxed text-onpitch-mute">
+                Search below to add a game by hand — or upload your betslip to add a whole accumulator at once.
+              </p>
             </div>
             <div className="flex flex-col items-end gap-2">
               <Link href="/tracker" className="font-mono text-xs text-onpitch-mute hover:text-chalk">
