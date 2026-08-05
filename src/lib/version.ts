@@ -2,9 +2,17 @@
 // /api/version endpoint reports the live deployment's build. A difference => a new version is out.
 export const CURRENT_BUILD = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 
-// Human-friendly release label shown in the UI (bump on notable releases). The build id above is
-// what actually drives update detection; this is just what users read.
-export const APP_VERSION = "v4";
+// Human-friendly release label shown in the UI. Derived from the deploy date (baked at build time)
+// so it advances on every Vercel deploy on its own — the old hand-bumped constant kept getting stuck.
+// The build id above is what actually drives update detection; this is just what users read.
+function calver(iso: string | undefined): string {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return "dev";
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `v${d.getUTCFullYear()}.${mm}.${dd}`;
+}
+export const APP_VERSION = calver(process.env.NEXT_PUBLIC_BUILD_TIME);
 
 export async function fetchLatestBuild(): Promise<string | null> {
   try {
