@@ -17,10 +17,11 @@ const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const admin = createClient(SB_URL, SERVICE);
 
 // per-category default: true = opt-out (on unless turned off), false = opt-in (off unless turned on).
-// goals are noisy so they only fire when explicitly enabled. The keys also whitelist the category
-// (SQL-injection guard for the dynamic column select below).
+// goals + build_up are noisy so they only fire when explicitly enabled. The keys also whitelist the
+// category (SQL-injection guard for the dynamic column select below).
 const CATEGORY_DEFAULT_ON: Record<string, boolean> = {
   agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, community: true,
+  build_up: false,
 };
 
 async function getSecret(name: string): Promise<string | null> {
@@ -82,7 +83,7 @@ Deno.serve(async (req) => {
     .from("push_subscriptions").select("endpoint, p256dh, auth").in("user_id", targets);
   if (!subs?.length) return json({ sent: 0, optedOut, note: "no subscriptions" });
 
-  const payload = JSON.stringify({ title, body: message, url, tag, icon: "/icons/icon.svg" });
+  const payload = JSON.stringify({ title, body: message, url, tag, icon: "/icons/icon-192.png" });
   let sent = 0, pruned = 0;
   await Promise.all(subs.map(async (s) => {
     try {

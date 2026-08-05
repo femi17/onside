@@ -7,9 +7,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const VAPID = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
 // Category defaults MUST mirror send-push's CATEGORY_DEFAULT_ON so the UI and the sender agree.
-export type NotifCategory = "agent_picks" | "results" | "kickoff" | "full_time" | "goals" | "community";
+export type NotifCategory = "agent_picks" | "results" | "kickoff" | "full_time" | "goals" | "build_up" | "community";
 export const CATEGORY_DEFAULTS: Record<NotifCategory, boolean> = {
-  agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, community: true,
+  agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, build_up: false, community: true,
 };
 export const CATEGORY_META: { key: NotifCategory; label: string; desc: string }[] = [
   { key: "agent_picks", label: "Agent predictions", desc: "When your agent submits new picks" },
@@ -17,6 +17,7 @@ export const CATEGORY_META: { key: NotifCategory; label: string; desc: string }[
   { key: "kickoff", label: "Kick-off", desc: "When a match you're on starts" },
   { key: "full_time", label: "Full-time", desc: "When a match you're on ends" },
   { key: "goals", label: "Goals", desc: "Every goal in a match you're on (can get busy)" },
+  { key: "build_up", label: "Live build-up", desc: "Progress on your goals/corners bets as it happens — building up or counting down (busy)" },
   { key: "community", label: "Community replies", desc: "When someone replies to your post" },
 ];
 

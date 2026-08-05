@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
 
 // PWA manifest — served at /manifest.webmanifest. Installable to the home screen; launches standalone
-// into the tracker. Icons are SVG (crisp at any size) + a maskable variant for Android adaptive icons.
+// into the tracker. Icons are PNG (the Onside brand glyph) — installed app icons + the Android splash
+// are unreliable with SVG, so we ship real rasters at 192/512 + a maskable 512 for adaptive icons.
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Onside — track better, bet better",
@@ -16,8 +17,10 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#0e1a1b",
     categories: ["sports", "finance", "productivity"],
     icons: [
+      { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
       { src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-      { src: "/icons/maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
     ],
   };
 }

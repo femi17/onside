@@ -15,8 +15,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Onside";
   const options = {
     body: data.body || "",
-    icon: data.icon || "/icons/icon.svg",
-    badge: "/icons/icon.svg",
+    icon: data.icon || "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
     tag: data.tag || undefined,
     renotify: !!data.tag,
     // sound: the Notification `sound` property is unsupported in browsers, so we rely on the OS's

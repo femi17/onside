@@ -31,7 +31,7 @@ export default function NotificationSettings({ userId }: { userId: string }) {
       if (data) {
         setPrefs({
           agent_picks: data.agent_picks, results: data.results, kickoff: data.kickoff,
-          full_time: data.full_time, goals: data.goals, community: data.community,
+          full_time: data.full_time, goals: data.goals, build_up: data.build_up ?? false, community: data.community,
         });
       }
     })();

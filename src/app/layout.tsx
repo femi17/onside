@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Onside" },
   // defining metadata.icons overrides Next's auto file-based icon link, so the favicon must be listed
   // here too (otherwise the browser falls back to a missing /favicon.ico and shows blank)
-  icons: { icon: "/icon.svg", shortcut: "/icon.svg", apple: "/icons/apple-icon.svg" },
+  icons: { icon: "/icon.svg", shortcut: "/icon.svg", apple: "/icons/apple-icon.png" },
 };
 
 export const viewport: Viewport = {
