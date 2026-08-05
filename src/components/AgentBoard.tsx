@@ -61,11 +61,17 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
       body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${r.h2h.homeWins} ${home} win${s(r.h2h.homeWins)}, ${r.h2h.draws} draw${s(r.h2h.draws)}, ${r.h2h.awayWins} ${away} win${s(r.h2h.awayWins)}.`);
     }
 
-    if (r.model) {
-      const mk = p.market_key ?? "";
-      if (mk.includes("over") || mk.includes("under") || mk === "total_goals_ou") body.push(`Model: over 2.5 goals ≈ ${pct(r.model.over25)}.`);
-      else if (mk === "btts") body.push(`Model: both teams to score ≈ ${pct(r.model.btts)}.`);
-      else body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
+    // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other
+    // market (any goals line, BTTS, handicap, …) gets the model's probability for THAT exact pick,
+    // labelled with its real market — never a hardcoded "over 2.5".
+    const mk = p.market_key ?? "";
+    const resultFam = ["home_win", "away_win", "draw", "result_1x2", "double_chance_1x", "double_chance_x2", "double_chance_12"];
+    if (r.model && resultFam.includes(mk)) {
+      body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
+    } else if (p.model_prob != null) {
+      body.push(`Model rates ${market} at about ${pct(p.model_prob)}.`);
+    } else if (r.model) {
+      body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
     }
   }
 
