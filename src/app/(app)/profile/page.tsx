@@ -5,7 +5,7 @@ import SignOutButton from "@/components/SignOutButton";
 import ConnectTelegram from "@/components/ConnectTelegram";
 import CancelSubscription from "@/components/CancelSubscription";
 import ChangePassword from "@/components/ChangePassword";
-import NotificationsToggle from "@/components/NotificationsToggle";
+import NotificationSettings from "@/components/NotificationSettings";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
@@ -108,7 +108,7 @@ export default async function ProfilePage() {
           <Field label="In-app alerts" value="On" />
           <ConnectTelegram linked={!!profile?.telegram_linked_at} />
           <div className="mt-3 border-t border-ink/10 pt-3">
-            <NotificationsToggle userId={user.id} />
+            <NotificationSettings userId={user.id} />
           </div>
         </section>
 

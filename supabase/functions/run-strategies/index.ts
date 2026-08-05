@@ -54,7 +54,7 @@ async function sendPush(userId: string, title: string, body: string, url: string
     await fetch(`${SB_URL}/functions/v1/send-push`, {
       method: "POST",
       headers: { "content-type": "application/json", "Authorization": `Bearer ${SB_KEY}` },
-      body: JSON.stringify({ user_id: userId, title, body, url, tag }),
+      body: JSON.stringify({ user_id: userId, title, body, url, tag, category: "agent_picks" }),
     });
   } catch { /* non-fatal */ }
 }
@@ -415,9 +415,19 @@ async function buildFormMap(teamIds: number[]): Promise<Map<number, Form>> {
 }
 
 const oddsCache = new Map<number, any[]>();
+const ODDS_TTL_MS = 12 * 60 * 1000; // reuse a fixture's odds across agents/shards/runs for 12 min
 let oddsCalls = 0;
 async function bookmakersFor(fixtureId: number, key: string): Promise<any[]> {
   if (oddsCache.has(fixtureId)) return oddsCache.get(fixtureId)!;
+  // shared cross-run cache: another agent/shard/run may have fetched this fixture recently
+  try {
+    const { data: cached } = await sb.from("odds_cache").select("bookmakers, fetched_at").eq("fixture_id", fixtureId).maybeSingle();
+    if (cached?.fetched_at && Date.now() - Date.parse(cached.fetched_at) < ODDS_TTL_MS) {
+      const bms = (cached.bookmakers ?? []) as any[];
+      oddsCache.set(fixtureId, bms);
+      return bms;
+    }
+  } catch { /* cache unavailable -> fall through to a live fetch */ }
   if (oddsCalls >= ODDS_FETCH_CAP) return [];
   oddsCalls++;
   try {
@@ -426,8 +436,16 @@ async function bookmakersFor(fixtureId: number, key: string): Promise<any[]> {
     const body = await res.json();
     const bms = body?.response?.[0]?.bookmakers ?? [];
     oddsCache.set(fixtureId, bms);
+    // persist so other agents/shards/runs reuse it (upsert on fixture_id; non-fatal)
+    try { await sb.from("odds_cache").upsert({ fixture_id: fixtureId, bookmakers: bms, fetched_at: new Date().toISOString() }, { onConflict: "fixture_id" }); } catch { /* non-fatal */ }
     return bms;
   } catch { oddsCache.set(fixtureId, []); return []; }
+}
+// stable shard bucket for a strategy id (parallel cron fan-out)
+function hashShard(id: string, shards: number): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h) % shards;
 }
 
 type Cell = { agg: Agg; confident: boolean };
@@ -705,7 +723,8 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
 Deno.serve(async (req) => {
   try {
     let strategyId: string | null = null;
-    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; } catch { /* cron */ }
+    let shard = -1, shards = 0;
+    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); } catch { /* cron */ }
 
     let strategies: any[] = [];
     if (strategyId) { const { data } = await sb.from("strategies").select("*").eq("id", strategyId).limit(1); strategies = data ?? []; }
@@ -713,8 +732,10 @@ Deno.serve(async (req) => {
       const { data } = await sb.from("strategies").select("*").eq("status", "running");
       const now = new Date();
       strategies = (data ?? []).filter((s: any) => isDue(s, now));
+      // sharded fan-out: this invocation only handles its stable slice of due strategies
+      if (shards > 1 && shard >= 0) strategies = strategies.filter((s: any) => hashShard(String(s.id), shards) === shard);
     }
-    if (!strategies.length) return json({ strategies: 0, inserted: 0 });
+    if (!strategies.length) return json({ strategies: 0, inserted: 0, shard, shards });
 
     const needParse = strategies.some((s) => s.rule_text && !s.rule_parsed);
     if (needParse) {

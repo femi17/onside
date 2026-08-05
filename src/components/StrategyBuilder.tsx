@@ -465,6 +465,16 @@ export default function StrategyBuilder({
     });
   }
 
+  // jitter the stored delivery time by 0-5 min + random seconds so agents don't all become "due" in
+  // the same cron minute (spreads run-strategies load across ticks — see scalability review)
+  function jitteredDeliverAt(hhmm: string): string {
+    const [h, m] = hhmm.split(":").map(Number);
+    let mins = h * 60 + m + Math.floor(Math.random() * 6);
+    if (mins >= 24 * 60) mins = h * 60 + m;
+    const ss = String(Math.floor(Math.random() * 60)).padStart(2, "0");
+    return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}:${ss}`;
+  }
+
   function resolveMarket(): { ok: true; row: Record<string, unknown> } | { ok: false; err: string } {
     if (!name.trim()) return { ok: false, err: "Name your agent." };
     // the agent cap only applies to NEW agents — editing an existing one doesn't add a slot
@@ -509,7 +519,7 @@ export default function StrategyBuilder({
         selectivity: SELECT[selIdx].key,
         min_edge: SELECT[selIdx].min_edge,
         max_per_prediction: cap,
-        deliver_at: `${time}:00`,
+        deliver_at: jitteredDeliverAt(time),
         target_day: target,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
         channels: Array.from(channels),

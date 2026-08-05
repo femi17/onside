@@ -6,6 +6,7 @@ import SidebarNav from "@/components/SidebarNav";
 import MobileNav from "@/components/MobileNav";
 import LiveGamesFab from "@/components/LiveGamesFab";
 import PushChime from "@/components/PushChime";
+import InstallPushPrompt from "@/components/InstallPushPrompt";
 import Footer from "@/components/Footer";
 
 const NAV = [
@@ -46,12 +47,8 @@ export default async function AppLayout({
   // first-run: send brand-new accounts through onboarding (route lives outside this layout group).
   if (profile && profile.onboarded === false) redirect("/onboarding");
 
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: usage } = await supabase
-    .from("api_usage")
-    .select("count")
-    .eq("day", today)
-    .maybeSingle();
+  // api_usage is now a sharded counter — sum via the admin-gated RPC (null for non-admins)
+  const { data: apiToday } = await supabase.rpc("api_usage_today");
 
   const planLabel =
     profile?.plan === "pro_max" ? "Pro Max" : profile?.plan === "pro" ? "Pro" : "Free";
@@ -90,7 +87,7 @@ export default async function AppLayout({
             </Link>
           </div>
           <div className="px-1 font-mono text-[10px] text-onpitch-mute">
-            {profile?.is_admin ? `API today · ${usage?.count ?? 0}/75000` : "18+ · Bet responsibly"}
+            {profile?.is_admin ? `API today · ${apiToday ?? 0}/75000` : "18+ · Bet responsibly"}
           </div>
           <SignOutButton />
         </div>
@@ -104,7 +101,7 @@ export default async function AppLayout({
           items={mobileNav}
           planLabel={planLabel}
           name={profile?.display_name ?? user.email ?? ""}
-          usage={usage?.count ?? 0}
+          usage={apiToday ?? 0}
           upgradeHref={profile?.plan !== "pro_max" ? upgradeHref : null}
           isAdmin={profile?.is_admin ?? false}
         />
@@ -114,6 +111,8 @@ export default async function AppLayout({
       <LiveGamesFab />
       {/* plays a short chime when a push arrives and this tab is focused */}
       <PushChime />
+      {/* app-like soft-ask for notification permission on first launch when installed */}
+      <InstallPushPrompt userId={user.id} />
     </div>
   );
 }
