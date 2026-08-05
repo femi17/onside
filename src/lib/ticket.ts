@@ -129,6 +129,22 @@ export type Track = {
   busted?: boolean; // under bet already broken (scored past the line) — a live loss
 };
 
+// A single team's corner count for the bet's period, from the live fixture-stats snapshot. Corner
+// stats are cumulative, so during the 1st half the running total IS the 1h count; after HT the frozen
+// HT snapshot gives 1h, and (full − HT) gives 2h. Mirrors poll's pcorners + the total-corner
+// periodCorners closure below, but per team. null = no stats yet. (poll keeps current_value in step
+// only for TOTAL corner markets, so team corners read straight from fixture_stats.)
+export function periodTeamCorners(t: TrackedTicket, side: "home" | "away"): number | null {
+  const stat = oneStat(t.fixtures?.fixture_stats ?? null);
+  if (!stat) return null;
+  const full = side === "home" ? stat.corners_home : stat.corners_away;
+  const ht = side === "home" ? stat.corners_home_ht : stat.corners_away_ht;
+  const period = t.period ?? "ft";
+  if (period === "1h") return ht ?? full ?? null;                       // after HT the snapshot; during 1st half the running total
+  if (period === "2h") return full == null ? null : (ht != null ? Math.max(0, full - ht) : full);
+  return full ?? null;
+}
+
 // progress toward the line, betslip-style (big number, "X more", line flag). null = market with no line
 export function liveTrack(t: TrackedTicket): Track | null {
   const v = Number(t.current_value ?? 0);
@@ -209,6 +225,14 @@ export function liveTrack(t: TrackedTicket): Track | null {
     case "over_8_5_corners": return overLine(t.line ?? 8.5, "corners");
     // corners over/under on any line — poll keeps current_value in step with the live corner count
     case "corners_ou": { const line = t.line ?? 9.5; const c = periodCorners(); return t.side === "under" ? underLine(line, "corners", c) : overLine(line, "corners", c); }
+    // one team's corners over/under (period-aware) — only that team's corners count toward the line.
+    // current_value isn't kept in step for these, so read the team total from the fixture-stats snapshot.
+    case "home_corners_ou":
+    case "away_corners_ou": {
+      const c = periodTeamCorners(t, t.market_key === "home_corners_ou" ? "home" : "away") ?? 0;
+      const line = t.line ?? 4.5;
+      return t.side === "under" ? underLine(line, "corners", c) : overLine(line, "corners", c);
+    }
     // total goals over/under on ANY line (e.g. Over 4.5) — current_value holds total goals.
     // Without this it fell through to null and rendered as a home-v-away scoreline.
     case "total_goals_ou": {
@@ -439,6 +463,22 @@ export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | nu
     case "home_clean_sheet": return ag === 0 ? "green" : "red";
     case "away_clean_sheet": return hg === 0 ? "green" : "red";
     case "over_8_5_corners": { const c = Number(t.current_value ?? 0), line = t.line ?? 8.5; return c > line ? "green" : c >= line - 1 ? "yellow" : "red"; }
+    case "corners_ou": {
+      // total corners O/U, period-aware: prefer the fixture-stats snapshot, fall back to current_value
+      const ch = periodTeamCorners(t, "home"), ca = periodTeamCorners(t, "away");
+      const c = ch != null && ca != null ? ch + ca : Number(t.current_value ?? 0);
+      const need = Math.floor(t.line ?? 9.5) + 1;
+      return t.side === "under"
+        ? c >= need ? "red" : c === need - 1 ? "yellow" : "green"
+        : c >= need ? "green" : c === need - 1 ? "yellow" : "red";
+    }
+    case "home_corners_ou": case "away_corners_ou": {
+      const c = periodTeamCorners(t, mk === "home_corners_ou" ? "home" : "away") ?? 0;
+      const need = Math.floor(t.line ?? 4.5) + 1;
+      return t.side === "under"
+        ? c >= need ? "red" : c === need - 1 ? "yellow" : "green"
+        : c >= need ? "green" : c === need - 1 ? "yellow" : "red";
+    }
     case "handicap_eu": {
       // apply the head-start "H:A" from bet_value, then judge the adjusted result for the pick
       const m = (t.bet_value ?? "").match(/(\d+)\s*:\s*(\d+)/);
