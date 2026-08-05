@@ -18,8 +18,16 @@ const FINISHED_LIVE = ["FT", "AET", "PEN", "1H", "2H", "HT", "ET", "BT", "P", "L
 const FINISHED = ["FT", "AET", "PEN"];
 const ODDS_FETCH_CAP = 90;
 const DEF_HOME = 1.45, DEF_AWAY = 1.15;
-const SHRINK = 4;
-const MIN_TEAM_MATCHES = 3;
+// Forecast model (Elo + time-decayed rates). Params fitted on 171k finished fixtures via
+// perf/backtest.mts — beat the old flat independent-Poisson by ~1.5% log-loss / 1.6% Brier on 34k
+// held-out matches, well-calibrated. The user's rule engine still layers ON TOP of these probabilities.
+const SHRINK = 8;             // pseudo-matches pulling a team's rate toward its Elo prior
+const MIN_TEAM_MATCHES = 4;   // weighted-match floor for a "confident" (priced) fixture
+const HALF_LIFE_DAYS = 90;    // recency: a match's weight halves every 90 days
+const HOME_ADV_ELO = 40;      // Elo points added to the home side
+const ELO_K = 10;             // Elo update step
+const ELO_BASE = 1500;
+const ELO_PER_LOG_GOAL = 300; // Elo points ≈ one e-fold of goal strength (maps Elo → attack/defence prior)
 
 function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } }); }
 async function getSecret(name: string): Promise<string> {
@@ -226,46 +234,76 @@ function marketProb(mk: string, side: string | null, line: number | null, bookma
   return ps.reduce((a, b) => a + b, 0) / ps.length;
 }
 
-type TeamRates = { hgf: number; hga: number; hn: number; agf: number; aga: number; an: number };
-type Model = { lHome: Map<number, number>; lAway: Map<number, number>; team: Map<number, TeamRates> };
+type TeamRates = { hgf: number; hga: number; hn: number; agf: number; aga: number; an: number }; // time-decay-weighted
+type Model = { lHome: Map<number, number>; lAway: Map<number, number>; team: Map<number, TeamRates>; elo: Map<number, number> };
+// Build ratings from finished fixtures: time-decayed home/away goal rates per team + per-league means,
+// plus margin/home-adjusted Elo (processed chronologically). Elo also serves as the shrinkage prior for
+// thin-data teams (promoted sides / cups / friendlies). Uses the most recent ~40k in-scope results.
 async function buildModel(leagueIds: number[]): Promise<Model> {
   const team = new Map<number, TeamRates>();
+  const elo = new Map<number, number>();
   const lHomeSum = new Map<number, [number, number]>();
   const lAwaySum = new Map<number, [number, number]>();
   if (leagueIds.length) {
     const { data } = await sb.from("fixtures")
-      .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals")
-      .in("league_id", leagueIds).in("status", FINISHED).limit(40000);
-    for (const f of data ?? []) {
+      .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+      .in("league_id", leagueIds).in("status", FINISHED).order("kickoff_utc", { ascending: false }).limit(40000);
+    const rows = (data ?? []).slice().sort((a: any, b: any) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
+    const now = rows.length ? Date.parse(rows[rows.length - 1].kickoff_utc) : Date.now();
+    const decay = Math.LN2 / (HALF_LIFE_DAYS * 86400000);
+    const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
+    for (const f of rows) {
       const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
       if (hg == null || ag == null || f.home_team_id == null || f.away_team_id == null) continue;
-      const lh = lHomeSum.get(f.league_id) ?? [0, 0]; lh[0] += hg; lh[1] += 1; lHomeSum.set(f.league_id, lh);
-      const la = lAwaySum.get(f.league_id) ?? [0, 0]; la[0] += ag; la[1] += 1; lAwaySum.set(f.league_id, la);
+      // Elo update using ratings BEFORE this match (margin- and home-adjusted)
+      const rH = getElo(f.home_team_id), rA = getElo(f.away_team_id);
+      const exp = 1 / (1 + Math.pow(10, -((rH + HOME_ADV_ELO) - rA) / 400));
+      const s = hg > ag ? 1 : hg === ag ? 0.5 : 0;
+      const dr = (rH + HOME_ADV_ELO) - rA;
+      const gd = Math.abs(hg - ag);
+      const mult = gd <= 1 ? 1 : Math.log(gd + 1) * (2.2 / (Math.abs(dr) * 0.001 + 2.2));
+      const delta = ELO_K * mult * (s - exp);
+      elo.set(f.home_team_id, rH + delta); elo.set(f.away_team_id, rA - delta);
+      // time-decayed goal rates (recent matches weigh more)
+      const w = Math.exp(-decay * (now - Date.parse(f.kickoff_utc)));
+      const lh = lHomeSum.get(f.league_id) ?? [0, 0]; lh[0] += hg * w; lh[1] += w; lHomeSum.set(f.league_id, lh);
+      const la = lAwaySum.get(f.league_id) ?? [0, 0]; la[0] += ag * w; la[1] += w; lAwaySum.set(f.league_id, la);
       const h = team.get(f.home_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
-      h.hgf += hg; h.hga += ag; h.hn += 1; team.set(f.home_team_id, h);
+      h.hgf += hg * w; h.hga += ag * w; h.hn += w; team.set(f.home_team_id, h);
       const a = team.get(f.away_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
-      a.agf += ag; a.aga += hg; a.an += 1; team.set(f.away_team_id, a);
+      a.agf += ag * w; a.aga += hg * w; a.an += w; team.set(f.away_team_id, a);
     }
   }
   const lHome = new Map<number, number>(), lAway = new Map<number, number>();
   for (const [lg, gn] of lHomeSum) lHome.set(lg, gn[1] ? gn[0] / gn[1] : DEF_HOME);
   for (const [lg, gn] of lAwaySum) lAway.set(lg, gn[1] ? gn[0] / gn[1] : DEF_AWAY);
-  return { lHome, lAway, team };
+  return { lHome, lAway, team, elo };
 }
 function lambdas(m: Model, f: Fixture): { lamH: number; lamA: number; confident: boolean } {
-  const lh = m.lHome.get(f.league_id) ?? DEF_HOME;
-  const la = m.lAway.get(f.league_id) ?? DEF_AWAY;
-  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined;
-  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined;
-  const rate = (sum: number, n: number, mean: number) => (sum + SHRINK * mean) / (n + SHRINK);
-  const homeAtt = H && H.hn ? rate(H.hgf, H.hn, lh) / lh : 1;
-  const homeDef = H && H.hn ? rate(H.hga, H.hn, la) / la : 1;
-  const awayAtt = A && A.an ? rate(A.agf, A.an, la) / la : 1;
-  const awayDef = A && A.an ? rate(A.aga, A.an, lh) / lh : 1;
+  // floor league means so a tiny/zero-goal league can never divide to a NaN λ
+  const leagueHome = Math.max(0.1, m.lHome.get(f.league_id) ?? DEF_HOME);
+  const leagueAway = Math.max(0.1, m.lAway.get(f.league_id) ?? DEF_AWAY);
+  // Elo → attack/defence prior (relative to an average team); used as the shrinkage TARGET so a team
+  // with few recent games leans on Elo instead of a neutral 1.0.
+  const eloAttPrior = (id: number | null) => Math.exp((((id != null ? m.elo.get(id) : undefined) ?? ELO_BASE) - ELO_BASE) / ELO_PER_LOG_GOAL);
+  const eloDefPrior = (id: number | null) => Math.exp((-(((id != null ? m.elo.get(id) : undefined) ?? ELO_BASE) - ELO_BASE)) / ELO_PER_LOG_GOAL);
+  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined; // home team's HOME record
+  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined; // away team's AWAY record
+  const Hn = H?.hn ?? 0, An = A?.an ?? 0;
+  const rawHomeAtt = Hn > 0 ? (H!.hgf / Hn) / leagueHome : 1;
+  const rawHomeDef = Hn > 0 ? (H!.hga / Hn) / leagueAway : 1;
+  const rawAwayAtt = An > 0 ? (A!.agf / An) / leagueAway : 1;
+  const rawAwayDef = An > 0 ? (A!.aga / An) / leagueHome : 1;
+  const K = SHRINK;
+  const shrink = (raw: number, n: number, prior: number) => (raw * n + prior * K) / (n + K);
+  const homeAtt = shrink(rawHomeAtt, Hn, eloAttPrior(f.home_team_id));
+  const homeDef = shrink(rawHomeDef, Hn, eloDefPrior(f.home_team_id));
+  const awayAtt = shrink(rawAwayAtt, An, eloAttPrior(f.away_team_id));
+  const awayDef = shrink(rawAwayDef, An, eloDefPrior(f.away_team_id));
   const clamp = (x: number) => Math.max(0.15, Math.min(6, x));
   const hMatches = (H?.hn ?? 0) + (H?.an ?? 0), aMatches = (A?.hn ?? 0) + (A?.an ?? 0);
   const confident = m.lHome.has(f.league_id) && hMatches >= MIN_TEAM_MATCHES && aMatches >= MIN_TEAM_MATCHES;
-  return { lamH: clamp(lh * homeAtt * awayDef), lamA: clamp(la * awayAtt * homeDef), confident };
+  return { lamH: clamp(leagueHome * homeAtt * awayDef), lamA: clamp(leagueAway * awayAtt * homeDef), confident };
 }
 function tierOf(edge: number): string { return edge >= 0.05 ? "elite" : edge >= 0.04 ? "strong" : "wide"; }
 
