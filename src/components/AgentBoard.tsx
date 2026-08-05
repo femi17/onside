@@ -9,6 +9,14 @@ import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
+type TeamForm5 = { w: number; d: number; l: number; gf: number; ga: number; n: number };
+export type PickReasons = {
+  home_form: TeamForm5 | null;
+  away_form: TeamForm5 | null;
+  h2h: { n: number; homeWins: number; draws: number; awayWins: number } | null;
+  model: { home: number; draw: number; away: number; over25: number; btts: number } | null;
+};
+
 export type AgentPick = TrackedTicket & {
   agent_name: string;
   edge: number | null;
@@ -19,39 +27,55 @@ export type AgentPick = TrackedTicket & {
   model_prob?: number | null;
   market_prob?: number | null;
   tier?: string | null;
+  reasons?: PickReasons | null;
 };
 
-// Plain-language "why did the agent pick this" for the ? explainer. Uses the pick's own numbers
-// where available (model vs market probability, edge, confidence tier), falling back gracefully for
-// model-only / rule-only picks that had no live odds to price against.
+// "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
+// form + goals, the head-to-head record, the model's probabilities) and how they point to the pick,
+// then the edge/confidence. Falls back to the numbers-only explanation for older picks with no
+// stored reasons.
 function explainPick(p: AgentPick): { title: string; body: string[] } {
   const f = p.fixtures;
-  const match = f ? `${f.home_team} v ${f.away_team}` : "this match";
+  const home = f?.home_team ?? "Home";
+  const away = f?.away_team ?? "Away";
   const market = p.market_label ?? p.custom_market ?? "this market";
   const pct = (x: number) => `${Math.round(x * 100)}%`;
-  const body: string[] = [
-    `${p.agent_name} picked ${market} for ${match}. Here's the thinking behind it:`,
-  ];
-  if (p.model_prob != null) {
-    body.push(`• Model estimate: the agent's model puts this at about ${pct(p.model_prob)} to land, based on both teams' recent scoring and the league's goal rates.`);
-  } else {
-    body.push(`• This was a model/rule selection — it matched your strategy's criteria rather than a goals-model probability.`);
+  const r = p.reasons;
+  const body: string[] = [`${p.agent_name} picked ${market} for ${home} v ${away}.`];
+
+  if (r && (r.home_form || r.away_form || r.h2h || r.model)) {
+    const formLine = (name: string, ff: TeamForm5 | null) =>
+      ff && ff.n ? `${name}: ${ff.w}W-${ff.d}D-${ff.l}L in the last ${ff.n} (scored ${ff.gf}, conceded ${ff.ga}).` : null;
+    for (const line of [formLine(home, r.home_form), formLine(away, r.away_form)]) if (line) body.push(line);
+
+    const streak = (name: string, ff: TeamForm5 | null) => {
+      if (!ff || !ff.n) return null;
+      if (ff.l >= 3) return `${name} have lost ${ff.l} of their last ${ff.n} — form is against them.`;
+      if (ff.w >= 3) return `${name} have won ${ff.w} of their last ${ff.n} — in strong form.`;
+      return null;
+    };
+    for (const line of [streak(home, r.home_form), streak(away, r.away_form)]) if (line) body.push(line);
+
+    if (r.h2h && r.h2h.n) {
+      const s = (n: number) => (n === 1 ? "" : "s");
+      body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${r.h2h.homeWins} ${home} win${s(r.h2h.homeWins)}, ${r.h2h.draws} draw${s(r.h2h.draws)}, ${r.h2h.awayWins} ${away} win${s(r.h2h.awayWins)}.`);
+    }
+
+    if (r.model) {
+      const mk = p.market_key ?? "";
+      if (mk.includes("over") || mk.includes("under") || mk === "total_goals_ou") body.push(`Model: over 2.5 goals ≈ ${pct(r.model.over25)}.`);
+      else if (mk === "btts") body.push(`Model: both teams to score ≈ ${pct(r.model.btts)}.`);
+      else body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
+    }
   }
-  if (p.market_prob != null) {
-    body.push(`• Market implied: the bookmakers' odds imply roughly ${pct(p.market_prob)}. The agent strips out the bookmaker margin so this is a fair comparison.`);
-  }
-  if (p.edge != null) {
-    body.push(`• Edge: that's ${p.edge > 0 ? "+" : ""}${p.edge}% in your favour — the agent only sends a pick when its estimate beats the market by the edge bar you set.`);
-  } else {
-    body.push(`• No live odds were available to price this one, so it was sent on the model/your rule alone — treat it as lower confidence.`);
-  }
-  const tierText: Record<string, string> = {
-    elite: "🟢 Strong value — a clear gap over the market.",
-    strong: "🟡 Solid value — a decent gap over the market.",
-    wide: "🟠 Thinner value — a smaller gap; a real pick, not a lock.",
-  };
-  if (p.tier && tierText[p.tier]) body.push(`• Confidence: ${tierText[p.tier]}`);
-  body.push(`This is where the odds looked slightly in your favour — not a guarantee. Value shows over many bets, not any single one.`);
+
+  if (p.market_prob != null) body.push(`Bookmakers implied about ${pct(p.market_prob)} (margin removed for a fair comparison).`);
+  if (p.edge != null) body.push(`That's a ${p.edge > 0 ? "+" : ""}${p.edge}% edge in your favour — the agent only sends picks that clear your edge bar.`);
+  else if (!r) body.push(`No live odds were available to price this one, so it went on the model / your rule alone — treat it as lower confidence.`);
+
+  const tierText: Record<string, string> = { elite: "🟢 strong value", strong: "🟡 solid value", wide: "🟠 thinner value" };
+  if (p.tier && tierText[p.tier]) body.push(`Confidence: ${tierText[p.tier]}.`);
+  body.push(`Not a guarantee — value plays out over many bets, not any single one.`);
   return { title: "Why the agent picked this", body };
 }
 

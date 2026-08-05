@@ -349,7 +349,8 @@ function medianOdd(bms: any[], betId: number, value: string): number | null {
   xs.sort((a, b) => a - b); const m = Math.floor(xs.length / 2);
   return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2;
 }
-type Form = { wins5: number; draws5: number; losses5: number; pts5: number; ppg5: number; n: number };
+type Form = { wins5: number; draws5: number; losses5: number; pts5: number; ppg5: number; gf5: number; ga5: number; n: number };
+const round2 = (x: number) => Math.round(x * 100) / 100;
 function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null): Record<string, number | null> {
   const home = medianOdd(bms, 1, "Home"), away = medianOdd(bms, 1, "Away");
   return {
@@ -405,13 +406,34 @@ async function buildFormMap(teamIds: number[]): Promise<Map<number, Form>> {
       const tid = home ? f.home_team_id : f.away_team_id;
       if (tid == null || !want.has(tid) || (taken.get(tid) ?? 0) >= 5) continue;
       const gf = home ? hg : ag, ga = home ? ag : hg;
-      const cur = map.get(tid) ?? { wins5: 0, draws5: 0, losses5: 0, pts5: 0, ppg5: 0, n: 0 };
+      const cur = map.get(tid) ?? { wins5: 0, draws5: 0, losses5: 0, pts5: 0, ppg5: 0, gf5: 0, ga5: 0, n: 0 };
       if (gf > ga) { cur.wins5++; cur.pts5 += 3; } else if (gf === ga) { cur.draws5++; cur.pts5 += 1; } else cur.losses5++;
+      cur.gf5 += gf; cur.ga5 += ga;
       cur.n++; map.set(tid, cur); taken.set(tid, (taken.get(tid) ?? 0) + 1);
     }
   }
   for (const v of map.values()) v.ppg5 = v.n ? v.pts5 / v.n : 0;
   return map;
+}
+// Head-to-head record between two teams (last up-to-6 finished meetings), normalised to the
+// CURRENT home team's perspective, so the feed can say "X of the last Y went the home team's way".
+type H2H = { n: number; homeWins: number; draws: number; awayWins: number };
+async function buildH2H(homeId: number, awayId: number): Promise<H2H> {
+  const { data } = await sb.from("fixtures")
+    .select("home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+    .in("status", FINISHED)
+    .or(`and(home_team_id.eq.${homeId},away_team_id.eq.${awayId}),and(home_team_id.eq.${awayId},away_team_id.eq.${homeId})`)
+    .order("kickoff_utc", { ascending: false }).limit(6);
+  let homeWins = 0, draws = 0, awayWins = 0, n = 0;
+  for (const f of data ?? []) {
+    const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
+    if (hg == null || ag == null) continue;
+    const curHome = f.home_team_id === homeId ? hg : ag;
+    const curAway = f.home_team_id === homeId ? ag : hg;
+    if (curHome > curAway) homeWins++; else if (curHome === curAway) draws++; else awayWins++;
+    n++;
+  }
+  return { n, homeWins, draws, awayWins };
 }
 
 const oddsCache = new Map<number, any[]>();
@@ -652,15 +674,42 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
     : [];
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
   const ranked = (await scoreAndRank(strategy, candidates, model, aggCache, key, rule, formMap)).slice(0, room);
-  const rows = ranked.map((r) => ({
-    strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
-    market_key: r.mk ?? "custom",
-    market_label: r.mk === "handicap" ? handicapLabel(r.side, r.line) : (r.mk === strategy.market_key ? strategy.market_label : (MK_LABEL[r.mk] ?? strategy.market_label)),
-    side: r.side, line: r.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value,
-    model_prob: r.model_prob, market_prob: r.market_prob, edge: r.edge, tier: r.tier, result: "pending", delivered_at: nowIso,
-    // record the surprise roll so the app + Telegram can show which leagues were in play
-    ...(rolledLeagueIds ? { criteria: { rolled_league_ids: rolledLeagueIds } } : {}),
-  }));
+
+  // Per-pick reasoning ("why did the agent pick this") from the SAME data that drove the call:
+  // each team's last-5 form + goals, the head-to-head record, and the model's win/over probs.
+  // Stored on the delivery so the feed can narrate the real signals, not a generic blurb.
+  const reasonsByFx = new Map<number, unknown>();
+  if (ranked.length) {
+    const rTeamIds = Array.from(new Set(ranked.flatMap((r) => [r.f.home_team_id, r.f.away_team_id]).filter((x): x is number => x != null)));
+    const rForm = rTeamIds.length ? await buildFormMap(rTeamIds) : new Map<number, Form>();
+    for (const r of ranked) {
+      const hId = r.f.home_team_id, aId = r.f.away_team_id;
+      const hf = hId != null ? rForm.get(hId) : undefined;
+      const af = aId != null ? rForm.get(aId) : undefined;
+      const h2h = (hId != null && aId != null) ? await buildH2H(hId, aId) : null;
+      const agg = aggCache.get(r.f.id)?.agg;
+      const conf = aggCache.get(r.f.id)?.confident ?? false;
+      reasonsByFx.set(r.f.id, {
+        home_form: hf ? { w: hf.wins5, d: hf.draws5, l: hf.losses5, gf: hf.gf5, ga: hf.ga5, n: hf.n } : null,
+        away_form: af ? { w: af.wins5, d: af.draws5, l: af.losses5, gf: af.gf5, ga: af.ga5, n: af.n } : null,
+        h2h: h2h && h2h.n ? h2h : null,
+        model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), btts: round2(agg.btts) } : null,
+      });
+    }
+  }
+
+  const rows = ranked.map((r) => {
+    const reasons = reasonsByFx.get(r.f.id) ?? null;
+    const criteria = { ...(rolledLeagueIds ? { rolled_league_ids: rolledLeagueIds } : {}), ...(reasons ? { reasons } : {}) };
+    return {
+      strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
+      market_key: r.mk ?? "custom",
+      market_label: r.mk === "handicap" ? handicapLabel(r.side, r.line) : (r.mk === strategy.market_key ? strategy.market_label : (MK_LABEL[r.mk] ?? strategy.market_label)),
+      side: r.side, line: r.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value,
+      model_prob: r.model_prob, market_prob: r.market_prob, edge: r.edge, tier: r.tier, result: "pending", delivered_at: nowIso,
+      ...(Object.keys(criteria).length ? { criteria } : {}),
+    };
+  });
   if (rows.length) await sb.from("deliveries").insert(rows);
 
   // per-run push summary to the user's devices — one notification per run, tagged so the next run

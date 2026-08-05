@@ -13,7 +13,7 @@ export default async function AgentPage() {
   const { data } = await supabase
     .from("deliveries")
     .select(
-      "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))"
+      "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))"
     )
     .order("delivered_at", { ascending: false })
     .limit(200);
@@ -38,6 +38,7 @@ export default async function AgentPage() {
     model_prob: r.model_prob != null ? Number(r.model_prob) : null,
     market_prob: r.market_prob != null ? Number(r.market_prob) : null,
     tier: (r.tier as string) ?? null,
+    reasons: ((r.criteria as { reasons?: unknown } | null)?.reasons as AgentPick["reasons"]) ?? null,
     delivered_at: (r.delivered_at as string) ?? null,
   }));
 
