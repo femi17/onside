@@ -77,6 +77,57 @@ export async function getPlanCode(plan: PaidPlan): Promise<string | null> {
   }
 }
 
+// Disables a user's current recurring subscription (used by cancel AND by mid-cycle tier upgrades,
+// where the old tier must stop billing before the new one is scheduled). Resolves the code via the
+// Paystack customer when the webhook never recorded it. Returns true if something was disabled.
+export async function disableSubscriptionFor(userId: string): Promise<boolean> {
+  const key = paystackSecret();
+  const db = supabaseAdmin();
+  const { data: prof } = await db
+    .from("profiles")
+    .select("paystack_subscription_code, paystack_email_token, paystack_customer_code")
+    .eq("id", userId)
+    .maybeSingle();
+  let code = prof?.paystack_subscription_code ?? null;
+  let token = prof?.paystack_email_token ?? null;
+  try {
+    if ((!code || !token) && prof?.paystack_customer_code) {
+      const cRes = await fetch(`${PAYSTACK}/customer/${encodeURIComponent(prof.paystack_customer_code)}`, {
+        headers: { Authorization: `Bearer ${key}` },
+        cache: "no-store",
+      });
+      const cBody = await cRes.json();
+      const subs = (cBody?.data?.subscriptions ?? []) as Array<{ subscription_code?: string; email_token?: string; status?: string }>;
+      const sub = subs.find((s) => s.status === "active" || s.status === "non-renewing" || s.status === "attention") ?? subs[0];
+      if (sub?.subscription_code) {
+        code = sub.subscription_code;
+        token = sub.email_token ?? token;
+        if (!token) {
+          const sRes = await fetch(`${PAYSTACK}/subscription/${encodeURIComponent(code)}`, {
+            headers: { Authorization: `Bearer ${key}` },
+            cache: "no-store",
+          });
+          const sBody = await sRes.json();
+          token = sBody?.data?.email_token ?? null;
+        }
+      }
+    }
+    if (!code || !token) return false;
+    const res = await fetch(`${PAYSTACK}/subscription/disable`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ code, token }),
+      cache: "no-store",
+    });
+    const body = await res.json();
+    if (!body?.status) return false;
+    await db.from("profiles").update({ paystack_subscription_code: null, paystack_email_token: null }).eq("id", userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Maps a Paystack plan code back to our tier (for webhook events that only carry the plan code).
 export async function tierForPlanCode(planCode: string | null | undefined): Promise<PaidPlan | null> {
   if (!planCode) return null;

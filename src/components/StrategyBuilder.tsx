@@ -64,7 +64,7 @@ const SURPRISE_POOL: { key: string; label: string; side: string | null; line: nu
   { key: "away_to_score", label: "Away team to score", side: "away", line: null },
 ];
 
-const PICK_CAPS = [8, 15, 24];
+const PICK_CAPS = [8, 15, 24, 50]; // plan ceilings: free 8 · pro 24 · pro_max 50 (plan_limits.max_games_per_prediction)
 
 // selectivity tiers -> the minimum edge (model prob − market prob) a pick must clear
 const SELECT = [
@@ -954,7 +954,7 @@ export default function StrategyBuilder({
                     }`}
                   >
                     {c}
-                    {locked && <span className="ml-1.5 rounded bg-flood px-1 py-0.5 text-[8.5px] text-ink">{c <= 15 ? "PRO" : "MAX"}</span>}
+                    {locked && <span className="ml-1.5 rounded bg-flood px-1 py-0.5 text-[8.5px] text-ink">{c <= 24 ? "PRO" : "MAX"}</span>}
                   </button>
                 );
               })}

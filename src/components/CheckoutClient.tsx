@@ -19,17 +19,28 @@ export default function CheckoutClient({
   plan,
   planCode,
   upgrading = false,
+  currentPlan = null,
+  creditKobo = 0,
 }: {
   userId: string;
   email: string;
   plan: PaidPlan;
   planCode: string | null;
   upgrading?: boolean;
+  currentPlan?: PaidPlan | null; // the still-active paid plan being upgraded FROM (drives proration)
+  creditKobo?: number; // credit for the unused share of the current plan's month (kobo)
 }) {
   const router = useRouter();
   const price = PLAN_PRICING[plan];
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // prorated tier upgrade: pay the full next-tier month minus the unused-time credit, as a one-off
+  // charge (the server then moves the recurring subscription over)
+  const prorated = creditKobo > 0 && currentPlan != null;
+  const dueKobo = Math.max(0, price.kobo - creditKobo);
+  const dueNaira = Math.round(dueKobo / 100);
+  const creditNaira = Math.round(creditKobo / 100);
 
   // where the brand mark + "back" lead depends on why you're here: a new signup steps back into
   // onboarding; an existing member upgrading steps back into the app.
@@ -58,7 +69,7 @@ export default function CheckoutClient({
       onClose: () => setBusy(false),
     };
     if (planCode) opts.plan = planCode;
-    else opts.amount = price.kobo;
+    else opts.amount = prorated ? dueKobo : price.kobo;
     const handler = Pop.setup(opts);
     handler.openIframe();
   }
@@ -69,7 +80,7 @@ export default function CheckoutClient({
       const res = await fetch("/api/paystack/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reference, plan }),
+        body: JSON.stringify({ reference, plan, upgrade: prorated }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -123,6 +134,24 @@ export default function CheckoutClient({
           ))}
         </ul>
 
+        {/* prorated upgrade: show the plus-and-minus so the price is never a surprise */}
+        {prorated && (
+          <div className="mt-4 rounded-xl bg-ink/[0.04] p-3.5 font-mono text-[12px]">
+            <div className="flex justify-between text-ink-mute">
+              <span>{price.label} · one month</span>
+              <span>₦{price.naira.toLocaleString()}</span>
+            </div>
+            <div className="mt-1 flex justify-between text-grass-deep">
+              <span>Unused {currentPlan === "pro" ? "Pro" : "plan"} time</span>
+              <span>−₦{creditNaira.toLocaleString()}</span>
+            </div>
+            <div className="mt-2 flex justify-between border-t border-dashed border-ink/15 pt-2 font-bold text-ink">
+              <span>Due today</span>
+              <span>₦{dueNaira.toLocaleString()}</span>
+            </div>
+          </div>
+        )}
+
         {msg && <p className="mt-4 font-mono text-xs text-brick">{msg}</p>}
 
         <button
@@ -132,12 +161,18 @@ export default function CheckoutClient({
         >
           {busy
             ? "Processing…"
-            : planCode
-              ? `Subscribe · ₦${price.naira.toLocaleString()}/mo`
-              : `Pay ₦${price.naira.toLocaleString()} for a month`}
+            : prorated
+              ? `Upgrade · ₦${dueNaira.toLocaleString()} today`
+              : planCode
+                ? `Subscribe · ₦${price.naira.toLocaleString()}/mo`
+                : `Pay ₦${price.naira.toLocaleString()} for a month`}
         </button>
         <p className="mt-2.5 text-center font-mono text-[10.5px] text-ink-mute">
-          {planCode ? "Renews monthly · cancel anytime" : "Secured by Paystack · card, transfer & USSD"}
+          {prorated
+            ? `Your ${currentPlan === "pro" ? "Pro" : "current"} subscription stops · ${price.label} renews at ₦${price.naira.toLocaleString()}/mo`
+            : planCode
+              ? "Renews monthly · cancel anytime"
+              : "Secured by Paystack · card, transfer & USSD"}
         </p>
         <p className="mt-2 text-center font-mono text-[10px] text-ink-mute">
           Payment is for an Onside software subscription. By subscribing you agree to our{" "}
@@ -148,9 +183,12 @@ export default function CheckoutClient({
 
       {upgrading ? (
         <div className="mt-5 flex flex-col items-center gap-2">
-          <Link href={`/checkout?plan=${otherPlan}`} className="text-[13px] text-onpitch-mute hover:text-chalk">
-            Prefer {PLAN_PRICING[otherPlan].label}? Switch &rarr;
-          </Link>
+          {/* never offer the plan the user is already on (that's not a switch, it's a re-buy) */}
+          {otherPlan !== currentPlan && (
+            <Link href={`/checkout?plan=${otherPlan}`} className="text-[13px] text-onpitch-mute hover:text-chalk">
+              Prefer {PLAN_PRICING[otherPlan].label}? Switch &rarr;
+            </Link>
+          )}
           <Link href="/tracker" className="text-[12px] text-onpitch-mute/70 hover:text-chalk">
             &larr; Back to app
           </Link>
