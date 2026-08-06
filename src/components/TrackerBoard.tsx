@@ -26,6 +26,8 @@ import {
   goalRuns,
   goalRunsFor,
   leadStats,
+  cardTally,
+  firstCardSide,
   ticketDate,
   SCORE_GRADABLE,
   scoreGrade,
@@ -304,7 +306,13 @@ function Card({
   const f = t.fixtures;
   const ms = stateOf(t, nowMs);
   const group = groupOf(t, ms);
-  const pulse = usePulse(`${t.current_value ?? ""}|${ms?.score ?? ""}`);
+  const mk = t.market_key ?? "";
+  // bookings-family bets redraw (and pop) on a new card, not just on score/current_value moves
+  const isCardsFamily = mk.includes("cards") || mk === "booking_points_ou" || mk === "first_booking";
+  const cardsPulseN = isCardsFamily
+    ? ((f?.events ?? []) as GoalEvent[]).filter((e) => e.kind === "yellow" || e.kind === "red").length
+    : "";
+  const pulse = usePulse(`${t.current_value ?? ""}|${ms?.score ?? ""}|${cardsPulseN}`);
   const marketName = t.market_label ?? t.custom_market ?? "Tracked market";
   // Yes/No markets (GG 2+, N in a row, lead by N…): show the pick as a pill so it's unmistakable
   // (the "— No" in the label truncates, and the see-saw looks the same for Yes and No)
@@ -324,10 +332,31 @@ function Card({
   const hcap = t.market_key === "handicap_eu" ? (t.bet_value ?? "").match(/(\d+)\s*:\s*(\d+)/) : null;
   let homeBonus = hcap && Number(hcap[1]) > 0 ? Number(hcap[1]) : undefined;
   let awayBonus = hcap && Number(hcap[2]) > 0 ? Number(hcap[2]) : undefined;
-  if (t.market_key === "handicap" && t.line != null) {
+  if ((t.market_key === "handicap" || t.market_key === "cards_handicap") && t.line != null) {
     if (t.side === "home") homeBonus = t.line;
     else if (t.side === "away") awayBonus = t.line;
   }
+  // bookings markets with no line track (1X2 / handicap / 1st booking): the big figures are the
+  // live CARD COUNTS (YC=1, RC=2 — as settlement counts them), never the goal scoreline
+  const isCardsScore = mk === "cards_1x2" || mk === "cards_handicap" || mk === "first_booking";
+  const cardsH = isCardsScore ? cardTally(t, "home") : 0;
+  const cardsA = isCardsScore ? cardTally(t, "away") : 0;
+  const firstCard = mk === "first_booking" ? firstCardSide(t) : null;
+  // which side reads big: the picked side; draw/none weighs both equally
+  const cardsBigH = isCardsScore && t.side !== "away";
+  const cardsBigA = isCardsScore && t.side !== "home";
+  const cardsReadout = !isCardsScore
+    ? null
+    : mk === "cards_1x2"
+      ? { top: "most bookings", bottom: t.side === "draw" ? "backing level" : `backing ${(t.side === "home" ? f?.home_team : f?.away_team) ?? ""}` }
+      : mk === "cards_handicap"
+        ? { top: "bookings", bottom: `backing ${(t.side === "home" ? f?.home_team : f?.away_team) ?? ""}` }
+        : firstCard
+          ? { top: "1st booking", bottom: (firstCard === "home" ? f?.home_team : f?.away_team) ?? "" }
+          : { top: "1st booking?", bottom: t.side === "none" ? "backing no card" : `backing ${(t.side === "home" ? f?.home_team : f?.away_team) ?? ""}` };
+  // stats the live feed doesn't carry (shots / SOT / fouls / offsides): no goal scoreline —
+  // an honest placeholder; the settlement engine grades them from full-time match stats
+  const isStatNoFeed = /(?:^|_)(shots|sot|fouls|offsides)_(?:ou|1x2)$/.test(mk);
   // live traffic-light status for the whole bet (green/amber/red), updates as the score moves
   const signal = betSignal(t, hg, ag);
   // draw / double-chance-12 are about the balance, not a side — a see-saw: the leader rises
@@ -472,7 +501,20 @@ function Card({
                 {won ? "Landed" : lost ? "Missed" : "Full-time"}
               </span>
             ) : (
-              <LiveClock label={ms?.label ?? "Live"} />
+              <>
+                {/* settled early (line already cleared/broken) but the game is still on —
+                    badge the verdict here; the card only files under Settled at full-time */}
+                {(won || lost) && (
+                  <span
+                    className={`rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase ${
+                      won ? "bg-grass/15 text-grass-deep" : "bg-brick/15 text-brick"
+                    }`}
+                  >
+                    {won ? "Landed" : "Missed"}
+                  </span>
+                )}
+                <LiveClock label={ms?.label ?? "Live"} />
+              </>
             )}
             <RemoveBtn id={t.id} busy={busy} onRemove={onRemove} />
           </div>
@@ -495,7 +537,18 @@ function Card({
           <TrafficDot signal={signal} />
         </div>
 
-        {track ? (
+        {isStatNoFeed ? (
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <div className="font-mono font-bold leading-none tracking-tight text-ink-mute" style={{ fontSize: compact ? "34px" : "46px" }}>
+              —
+            </div>
+            <div className="text-right text-[11px] leading-snug text-ink-mute">
+              no live count for this stat
+              <br />
+              graded at full-time
+            </div>
+          </div>
+        ) : track ? (
           <div className="mt-4 flex items-end justify-between gap-3">
             <div
               className={`font-mono font-bold leading-none tracking-tight ${pulse ? "pop " : ""}${
@@ -522,10 +575,15 @@ function Card({
           // result / BTTS scoreline: [home] n – n [away]. Backed side is the dominant figure
           // (T5); BTTS weighs both teams equally since both must score.
           <div className={`mt-4 flex items-end gap-3 ${pulse ? "pop" : ""}`}>
-            <Tally n={hg} side="home" big={isLeadBy ? leadHomeUp : isRunStreak ? runHomeUp : isBtts || isBtts2 || (isSeesaw ? hg >= ag : homeBig)} compact={compact} bonus={homeBonus} />
+            <Tally n={isCardsScore ? cardsH : hg} side="home" big={isCardsScore ? cardsBigH : isLeadBy ? leadHomeUp : isRunStreak ? runHomeUp : isBtts || isBtts2 || (isSeesaw ? hg >= ag : homeBig)} compact={compact} bonus={homeBonus} />
             <span className="pb-1.5 font-mono text-lg text-ink-mute">–</span>
-            <Tally n={ag} side="away" big={isLeadBy ? leadAwayUp : isRunStreak ? runAwayUp : isBtts || isBtts2 || (isSeesaw ? ag >= hg : !homeBig)} compact={compact} bonus={awayBonus} />
-            {isBtts ? (
+            <Tally n={isCardsScore ? cardsA : ag} side="away" big={isCardsScore ? cardsBigA : isLeadBy ? leadAwayUp : isRunStreak ? runAwayUp : isBtts || isBtts2 || (isSeesaw ? ag >= hg : !homeBig)} compact={compact} bonus={awayBonus} />
+            {cardsReadout ? (
+              <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
+                {cardsReadout.top}
+                {cardsReadout.bottom && <><br />{cardsReadout.bottom}</>}
+              </div>
+            ) : isBtts ? (
               <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
                 {hg > 0 && ag > 0 ? "both scored" : hg > 0 ? <>{f?.away_team}<br />to score</> : ag > 0 ? <>{f?.home_team}<br />to score</> : "both to score"}
               </div>
@@ -736,8 +794,10 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
     return g;
   }, [tickets, since]);
 
-  const landed = useMemo(() => grouped.settled.filter((t) => t.status === "won"), [grouped]);
-  const missed = useMemo(() => grouped.settled.filter((t) => t.status === "lost"), [grouped]);
+  // a bet that settled while its match is still live stays in the Live section, but it has
+  // a verdict — count it under Landed/Missed too so the tabs (and the flash) tell the truth
+  const landed = useMemo(() => [...grouped.live, ...grouped.settled].filter((t) => t.status === "won"), [grouped]);
+  const missed = useMemo(() => [...grouped.live, ...grouped.settled].filter((t) => t.status === "lost"), [grouped]);
 
   const compactLive = grouped.live.length > LIVE_COMPACT_AT;
 

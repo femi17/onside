@@ -108,8 +108,12 @@ export function stateOf(t: TrackedTicket, nowMs?: number): MatchState | null {
 }
 
 export function groupOf(t: TrackedTicket, ms: MatchState | null): Group {
+  // a bet can settle while its match is still running (over 0.5 lands at the first goal;
+  // under 3.5 busts at the fourth). Keep it with the live game until full-time so a match
+  // with sibling bets doesn't split across two sections — it files under Settled at FT.
+  if (ms?.phase === "live") return "live";
   if (t.status === "won" || t.status === "lost" || t.status === "void" || ms?.phase === "done") return "settled";
-  if (t.status === "live" || ms?.phase === "live") return "live";
+  if (t.status === "live") return "live";
   return "upcoming";
 }
 
@@ -143,6 +147,42 @@ export function periodTeamCorners(t: TrackedTicket, side: "home" | "away"): numb
   if (period === "1h") return ht ?? full ?? null;                       // after HT the snapshot; during 1st half the running total
   if (period === "2h") return full == null ? null : (ht != null ? Math.max(0, full - ht) : full);
   return full ?? null;
+}
+
+// Card tallies from the timed events, counted exactly as settlement does (poll's cardCount):
+// yellow = 1, red = 2 — or booking points 10/25 — period by the card's minute (1st half ≤ 45').
+export function cardTally(
+  t: TrackedTicket,
+  side?: "home" | "away",
+  weights: { yellow: number; red: number } = { yellow: 1, red: 2 }
+): number {
+  const period = t.period ?? "ft";
+  let n = 0;
+  for (const e of (t.fixtures?.events ?? []) as GoalEvent[]) {
+    if (e.kind !== "yellow" && e.kind !== "red") continue;
+    if (side && e.side !== side) continue;
+    const min = e.min ?? 0;
+    if (period === "1h" && min > 45) continue;
+    if (period === "2h" && min <= 45) continue;
+    n += e.kind === "red" ? weights.red : weights.yellow;
+  }
+  return n;
+}
+
+// which team the period's first booking went to; null = no cards yet (mirrors poll's
+// firstBookingSide, which only settles "none" once the period is over)
+export function firstCardSide(t: TrackedTicket): "home" | "away" | null {
+  const period = t.period ?? "ft";
+  let best: { side: "home" | "away"; key: number } | null = null;
+  for (const e of (t.fixtures?.events ?? []) as GoalEvent[]) {
+    if (e.kind !== "yellow" && e.kind !== "red") continue;
+    const min = e.min ?? 0;
+    if (period === "1h" && min > 45) continue;
+    if (period === "2h" && min <= 45) continue;
+    const key = min * 100 + (e.extra ?? 0);
+    if (!best || key < best.key) best = { side: e.side, key };
+  }
+  return best?.side ?? null;
 }
 
 // progress toward the line, betslip-style (big number, "X more", line flag). null = market with no line
@@ -192,7 +232,8 @@ export function liveTrack(t: TrackedTicket): Track | null {
   const underLine = (line: number, unit: string, count = v): Track => {
     const bust = Math.floor(line) + 1; // total that breaks it (3 for 2.5)
     const busted = count >= bust;
-    const left = Math.max(0, bust - count); // goals until it breaks
+    const left = Math.max(0, bust - count); // goals/corners/cards until it breaks
+    const one = unit.replace(/s$/, ""); // "goal" / "corner" / "card" / "point"
     return {
       big: `${line}`, of: " under", unit,
       fillPct: Math.min(100, (count / bust) * 100),
@@ -200,8 +241,8 @@ export function liveTrack(t: TrackedTicket): Track | null {
       hit: won,
       busted,
       under: true,
-      needN: `${count} scored`,
-      needT: busted ? "line broken" : won ? "stayed under" : left === 1 ? "1 goal ends it" : `${left} goals end it`,
+      needN: unit === "goals" ? `${count} scored` : `${count} ${count === 1 ? one : unit}`,
+      needT: busted ? "line broken" : won ? "stayed under" : left === 1 ? `1 ${one} ends it` : `${left} ${unit} end it`,
     };
   };
   switch (t.market_key) {
@@ -239,6 +280,44 @@ export function liveTrack(t: TrackedTicket): Track | null {
       const line = t.line ?? 2.5;
       const g = periodGoals();
       return t.side === "under" ? underLine(line, "goals", g) : overLine(line, "goals", g);
+    }
+    // ---- bookings: counted live from the timed card events, exactly as settlement counts them
+    //      (YC=1, RC=2; booking points 10/25; period by the card's minute) ----
+    case "cards_ou": {
+      const n = cardTally(t);
+      const line = t.line ?? 3.5;
+      return t.side === "under" ? underLine(line, "cards", n) : overLine(line, "cards", n);
+    }
+    case "home_cards_ou":
+    case "away_cards_ou": {
+      const n = cardTally(t, t.market_key === "home_cards_ou" ? "home" : "away");
+      const line = t.line ?? 1.5;
+      return t.side === "under" ? underLine(line, "cards", n) : overLine(line, "cards", n);
+    }
+    case "booking_points_ou": {
+      const n = cardTally(t, undefined, { yellow: 10, red: 25 });
+      const line = t.line ?? 30;
+      return t.side === "under" ? underLine(line, "points", n) : overLine(line, "points", n);
+    }
+    // exact bookings behaves like an under (can't "land" mid-game — more cards may come),
+    // but it busts the moment the count passes the target
+    case "exact_cards":
+    case "home_exact_cards":
+    case "away_exact_cards": {
+      const team = t.market_key === "home_exact_cards" ? "home" : t.market_key === "away_exact_cards" ? "away" : undefined;
+      const n = cardTally(t, team);
+      const line = t.line ?? 0;
+      const busted = n > line;
+      return {
+        big: `${n}`, of: ` / ${line} exact`, unit: "cards",
+        fillPct: Math.min(100, (n / Math.max(1, line + 1)) * 100),
+        flagPct: null,
+        hit: won,
+        busted,
+        under: true, // urgency reads like an under: closer to busting floats up
+        needN: won ? "✓ Landed" : busted ? "passed it" : n === line ? "on the number" : `${line - n} more`,
+        needT: won ? "exact count" : busted ? "over the exact count" : n === line ? "no more cards" : "to hit the number",
+      };
     }
     case "home_to_score":
     case "away_to_score": {
@@ -492,6 +571,52 @@ export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | nu
       const L = t.line ?? 0;
       const adj = t.side === "home" ? hg + L - ag : ag + L - hg;
       return adj > 0 ? "green" : adj < 0 ? "red" : "yellow";
+    }
+    // ---- bookings family: judged on live card counts (YC=1, RC=2), same as settlement ----
+    case "cards_ou": {
+      const n = cardTally(t);
+      const need = Math.floor(t.line ?? 3.5) + 1;
+      return t.side === "under"
+        ? n >= need ? "red" : n === need - 1 ? "yellow" : "green"
+        : n >= need ? "green" : n === need - 1 ? "yellow" : "red";
+    }
+    case "home_cards_ou": case "away_cards_ou": {
+      const n = cardTally(t, mk === "home_cards_ou" ? "home" : "away");
+      const need = Math.floor(t.line ?? 1.5) + 1;
+      return t.side === "under"
+        ? n >= need ? "red" : n === need - 1 ? "yellow" : "green"
+        : n >= need ? "green" : n === need - 1 ? "yellow" : "red";
+    }
+    case "booking_points_ou": {
+      const n = cardTally(t, undefined, { yellow: 10, red: 25 });
+      const line = t.line ?? 30;
+      // within one yellow (10 pts) of the line = in the balance
+      return t.side === "under"
+        ? n > line ? "red" : n > line - 10 ? "yellow" : "green"
+        : n > line ? "green" : n > line - 10 ? "yellow" : "red";
+    }
+    case "exact_cards": case "home_exact_cards": case "away_exact_cards": {
+      const team = mk === "home_exact_cards" ? "home" : mk === "away_exact_cards" ? "away" : undefined;
+      const n = cardTally(t, team);
+      const line = t.line ?? 0;
+      return n > line ? "red" : n === line ? "green" : n === line - 1 ? "yellow" : "red";
+    }
+    case "cards_1x2": {
+      const ch = cardTally(t, "home"), ca = cardTally(t, "away");
+      const cur = ch > ca ? "home" : ca > ch ? "away" : "draw";
+      return cur === t.side ? "green" : Math.abs(ch - ca) <= 1 ? "yellow" : "red";
+    }
+    case "cards_handicap": {
+      const L = t.line ?? 0;
+      const ch = cardTally(t, "home"), ca = cardTally(t, "away");
+      const adj = t.side === "home" ? ch + L - ca : ca + L - ch;
+      return adj > 0 ? "green" : adj < 0 ? "red" : "yellow";
+    }
+    case "first_booking": {
+      // the first card locks the outcome the moment it's shown
+      const first = firstCardSide(t);
+      if (t.side === "none") return first ? "red" : "green";
+      return first ? (first === t.side ? "green" : "red") : "yellow";
     }
     default: return "yellow";
   }
