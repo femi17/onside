@@ -41,24 +41,26 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
   const market = p.market_label ?? p.custom_market ?? "this market";
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   const r = p.reasons;
-  const body: string[] = [`${p.agent_name} picked ${market} for ${home} v ${away}.`];
+  const body: string[] = [`${p.agent_name} picked “${market}” in ${home} v ${away}. Here's why:`];
 
   if (r && (r.home_form || r.away_form || r.h2h || r.model)) {
     const formLine = (name: string, ff: TeamForm5 | null) =>
-      ff && ff.n ? `${name}: ${ff.w}W-${ff.d}D-${ff.l}L in the last ${ff.n} (scored ${ff.gf}, conceded ${ff.ga}).` : null;
+      ff && ff.n
+        ? `${name} — last ${ff.n} games: won ${ff.w}, drew ${ff.d}, lost ${ff.l}. Scored ${ff.gf}, let in ${ff.ga}.`
+        : null;
     for (const line of [formLine(home, r.home_form), formLine(away, r.away_form)]) if (line) body.push(line);
 
     const streak = (name: string, ff: TeamForm5 | null) => {
       if (!ff || !ff.n) return null;
-      if (ff.l >= 3) return `${name} have lost ${ff.l} of their last ${ff.n} — form is against them.`;
-      if (ff.w >= 3) return `${name} have won ${ff.w} of their last ${ff.n} — in strong form.`;
+      if (ff.l >= 3) return `${name} are struggling — ${ff.l} losses in their last ${ff.n}.`;
+      if (ff.w >= 3) return `${name} are in form — ${ff.w} wins in their last ${ff.n}.`;
       return null;
     };
     for (const line of [streak(home, r.home_form), streak(away, r.away_form)]) if (line) body.push(line);
 
     if (r.h2h && r.h2h.n) {
       const s = (n: number) => (n === 1 ? "" : "s");
-      body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${r.h2h.homeWins} ${home} win${s(r.h2h.homeWins)}, ${r.h2h.draws} draw${s(r.h2h.draws)}, ${r.h2h.awayWins} ${away} win${s(r.h2h.awayWins)}.`);
+      body.push(`When these two met before (last ${r.h2h.n} game${s(r.h2h.n)}): ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}.`);
     }
 
     // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other
@@ -67,21 +69,26 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
     const mk = p.market_key ?? "";
     const resultFam = ["home_win", "away_win", "draw", "result_1x2", "double_chance_1x", "double_chance_x2", "double_chance_12"];
     if (r.model && resultFam.includes(mk)) {
-      body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
+      body.push(`Our computer model's ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)}.`);
     } else if (p.model_prob != null) {
-      body.push(`Model rates ${market} at about ${pct(p.model_prob)}.`);
+      body.push(`Our computer model gives “${market}” about a ${pct(p.model_prob)} chance.`);
     } else if (r.model) {
-      body.push(`Model: ${pct(r.model.home)} ${home} / ${pct(r.model.draw)} draw / ${pct(r.model.away)} ${away}.`);
+      body.push(`Our computer model's ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)}.`);
     }
   }
 
-  if (p.market_prob != null) body.push(`Bookmakers implied about ${pct(p.market_prob)} (margin removed for a fair comparison).`);
-  if (p.edge != null) body.push(`That's a ${p.edge > 0 ? "+" : ""}${p.edge}% edge in your favour — the agent only sends picks that clear your edge bar.`);
-  else if (!r) body.push(`No live odds were available to price this one, so it went on the model / your rule alone — treat it as lower confidence.`);
+  if (p.market_prob != null) body.push(`The bookies' odds say about ${pct(p.market_prob)} (their built-in profit removed, so it's a fair comparison).`);
+  if (p.edge != null) {
+    body.push(
+      `So the model sees a better chance than the odds are paying for — about ${p.edge > 0 ? "+" : ""}${(p.edge * 100).toFixed(1)}% in your favour. The agent only sends picks that clear your bar.`,
+    );
+  } else if (!r) {
+    body.push(`No odds were available for this game, so the agent went on its model and your rules alone. Treat this one as lower confidence.`);
+  }
 
   const tierText: Record<string, string> = { elite: "🟢 strong value", strong: "🟡 solid value", wide: "🟠 thinner value" };
   if (p.tier && tierText[p.tier]) body.push(`Confidence: ${tierText[p.tier]}.`);
-  body.push(`Not a guarantee — value plays out over many bets, not any single one.`);
+  body.push(`One thing to remember: no single game is a sure thing. Value shows over many bets, not one.`);
   return { title: "Why the agent picked this", body };
 }
 
