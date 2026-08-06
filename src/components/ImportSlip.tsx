@@ -122,17 +122,18 @@ export default function ImportSlip({
     let cancelled = false;
     setFinding(true);
     const timer = setTimeout(async () => {
-      const like = `%${term}%`;
-      const since = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
-      const { data } = await supabase
-        .from("fixtures")
-        .select("id, home_team, away_team, kickoff_utc, leagues(name)")
-        .or(`home_team.ilike.${like},away_team.ilike.${like}`)
-        .gte("kickoff_utc", since)
-        .order("kickoff_utc", { ascending: true })
-        .limit(15);
+      // accent-insensitive, league-aware, word-subset search (search_fixtures RPC): finds
+      // "Hradec Králové" from "FC Hradec Kralove", and matches by competition name too.
+      const { data } = await supabase.rpc("search_fixtures", { q: term });
       if (!cancelled) {
-        setFindResults((data ?? []) as unknown as Game[]);
+        const games = (data ?? []).map((r: { id: number; home_team: string; away_team: string; kickoff_utc: string; league_name: string | null }) => ({
+          id: r.id,
+          home_team: r.home_team,
+          away_team: r.away_team,
+          kickoff_utc: r.kickoff_utc,
+          leagues: r.league_name ? { name: r.league_name } : null,
+        }));
+        setFindResults(games as Game[]);
         setFinding(false);
       }
     }, 300);
