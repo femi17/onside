@@ -64,7 +64,7 @@ const SURPRISE_POOL: { key: string; label: string; side: string | null; line: nu
   { key: "away_to_score", label: "Away team to score", side: "away", line: null },
 ];
 
-const PICK_CAPS = [8, 15, 24, 50]; // plan ceilings: free 8 · pro 24 · pro_max 50 (plan_limits.max_games_per_prediction)
+const PICK_CAPS = [8, 24, 50]; // plan ceilings: free 8 · pro 24 · pro_max 50 (plan_limits.max_games_per_prediction)
 
 // selectivity tiers -> the minimum edge (model prob − market prob) a pick must clear
 const SELECT = [
@@ -201,7 +201,11 @@ export default function StrategyBuilder({
   const [leagueSurprise, setLeagueSurprise] = useState<boolean>(existing?.league_mode === "surprise");
   const [lgSearch, setLgSearch] = useState("");
   const [selIdx, setSelIdx] = useState(initSelIdx);
-  const [cap, setCap] = useState(Math.min(existing?.max_per_prediction ?? 8, maxPicks));
+  // snap a stored cap (e.g. legacy 15) to the largest offered pill it covers, within the plan
+  const [cap, setCap] = useState(() => {
+    const want = Math.min(existing?.max_per_prediction ?? 8, maxPicks);
+    return PICK_CAPS.filter((c) => c <= want).pop() ?? PICK_CAPS[0];
+  });
   const [time, setTime] = useState(existing?.deliver_at ? existing.deliver_at.slice(0, 5) : "06:00");
   const [target, setTarget] = useState(existing?.target_day ?? "same_day");
   const [channels, setChannels] = useState<Set<string>>(new Set(existing?.channels ?? ["app"]));
