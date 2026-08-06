@@ -229,18 +229,22 @@ function Item({
               <span className="hidden md:inline">{chipDesktop}</span>
             </span>
           </div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
-              {market} · <b className="text-flood-deep">{p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
-            </span>
-            <button
-              onClick={onExplain}
-              aria-label="Why the agent picked this"
-              title="Why the agent picked this"
-              className="grid h-4 w-4 flex-none place-items-center rounded-full border border-ink/15 font-mono text-[10px] font-bold leading-none text-ink-mute transition-colors hover:border-ink/40 hover:text-ink"
-            >
-              ?
-            </button>
+          <div className="mt-0.5 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
+                {market}<b className="hidden text-flood-deep md:inline"> · {p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+              </span>
+              <button
+                onClick={onExplain}
+                aria-label="Why the agent picked this"
+                title="Why the agent picked this"
+                className="grid h-4 w-4 flex-none place-items-center rounded-full border border-ink/15 font-mono text-[10px] font-bold leading-none text-ink-mute transition-colors hover:border-ink/40 hover:text-ink"
+              >
+                ?
+              </button>
+            </div>
+            {/* on mobile the agent name drops to its own line so it isn't truncated off the row */}
+            <div className="truncate font-mono text-[11px] font-bold text-flood-deep md:hidden">{p.agent_name}</div>
           </div>
         </div>
         {/* right control: icon on mobile (keeps the row compact), full-text button on desktop.
