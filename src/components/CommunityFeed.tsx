@@ -9,7 +9,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
 
-export type Attachment = { match?: string; league?: string | null; market?: string; result?: string } | null;
+export type PickLine = { match: string; market: string | null; edge: number | null; ko: string | null };
+export type Attachment = { match?: string; league?: string | null; market?: string; result?: string; agent?: string; picks?: PickLine[] } | null;
 export type CommunityPost = {
   id: string;
   author_handle: string;
@@ -32,6 +33,27 @@ function ago(iso: string): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 172800) return "yesterday";
   return `${Math.floor(s / 86400)}d`;
+}
+
+// an agent's published picks — one compact mono row per game, nothing else
+function PicksCard({ picks }: { picks: PickLine[] }) {
+  return (
+    <div className="mt-2.5 overflow-hidden rounded-lg border border-ink/10 bg-ink/[0.04] font-mono text-[12px] text-ink">
+      {picks.map((x, i) => (
+        <div key={i} className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
+          {x.ko && <span className="flex-none text-ink-mute">{x.ko}</span>}
+          <span className="min-w-0 flex-1 truncate">
+            {x.match} · <b>{x.market}</b>
+          </span>
+          {x.edge != null && (
+            <span className={`flex-none font-bold ${x.edge >= 0 ? "text-grass-deep" : "text-brick"}`}>
+              {x.edge >= 0 ? "+" : ""}{x.edge}%
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Avatar({ handle, color }: { handle: string; color: string | null }) {
@@ -279,6 +301,7 @@ export default function CommunityFeed({
                 <span className="ml-auto font-mono text-[11px] text-ink-mute">{ago(p.created_at)}</span>
               </div>
               {p.body && <div className="mt-2.5 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{p.body}</div>}
+              {p.kind === "picks" && p.attachment?.picks?.length ? <PicksCard picks={p.attachment.picks} /> : null}
               {p.attachment && (p.kind === "result" || p.kind === "slip") && (
                 <div className="mt-2.5 inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-2 font-mono text-[12px] text-ink">
                   {p.attachment.market && <span className="font-bold">{p.attachment.market}</span>}
@@ -346,6 +369,7 @@ export default function CommunityFeed({
                   <span className="ml-auto font-mono text-[11px] text-ink-mute">{ago(openPost.created_at)}</span>
                 </div>
                 {openPost.body && <div className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{openPost.body}</div>}
+                {openPost.kind === "picks" && openPost.attachment?.picks?.length ? <PicksCard picks={openPost.attachment.picks} /> : null}
                 {openPost.attachment && (openPost.kind === "result" || openPost.kind === "slip") && (
                   <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink/10 bg-white px-3 py-2 font-mono text-[12px] text-ink">
                     {openPost.attachment.market && <span className="font-bold">{openPost.attachment.market}</span>}

@@ -34,7 +34,8 @@ export default function LeaderboardOptIn({ on, canOptIn }: { on: boolean; canOpt
         <span className="min-w-0">
           <span className="block text-[13px] font-semibold text-chalk">Publish my agents here</span>
           <span className="mt-0.5 block font-mono text-[10.5px] leading-snug text-onpitch-mute">
-            Share your edge vs market with the squad, under your handle. Off by default; needs 20+ settled picks.
+            Your agents&apos; daily picks (top 5) post to the feed under your handle, and your edge vs market
+            joins this board (board needs 20+ settled picks). Off by default.
           </span>
         </span>
       </button>
