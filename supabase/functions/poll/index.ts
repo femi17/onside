@@ -159,6 +159,95 @@ function fixtureUpdate(fx: any): Record<string, unknown> {
   return upd;
 }
 
+// ---------- fixture orientation guard ----------
+// The provider sometimes swaps a fixture's home/away AFTER we stored it (venue moves are common in
+// friendlies/cups). Scores and events always arrive in the provider's CURRENT orientation, so a
+// stale stored orientation mirrors every number — and a "home" bet silently grades against the
+// wrong team (this is how a correct pick can settle "missed"). On every update we adopt the
+// provider's orientation: swap the stored teams/events/stats AND flip the side of every open bet so
+// each bet keeps pointing at the TEAM that was actually picked when it was placed.
+const orientById = new Map<number, { homeId: number | null; awayId: number | null }>();
+async function loadOrientations(ids: number[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += 500) {
+    const { data } = await sb.from("fixtures").select("id,home_team_id,away_team_id").in("id", ids.slice(i, i + 500));
+    for (const r of data ?? []) orientById.set(r.id, { homeId: r.home_team_id, awayId: r.away_team_id });
+  }
+}
+function swapKey(k: string): string {
+  if (k.startsWith("home_")) return `away_${k.slice(5)}`;
+  if (k.startsWith("away_")) return `home_${k.slice(5)}`;
+  if (k === "double_chance_1x") return "double_chance_x2";
+  if (k === "double_chance_x2") return "double_chance_1x";
+  if (k === "double_chance_1x_1up") return "double_chance_x2_1up";
+  if (k === "double_chance_x2_1up") return "double_chance_1x_1up";
+  return k;
+}
+const swapSide = (s: string | null): string | null =>
+  s === "home" ? "away" : s === "away" ? "home" : s === "1x" ? "x2" : s === "x2" ? "1x" : s;
+function swapVal(v: string | null): string | null {
+  if (!v) return v;
+  const pair = v.match(/^(\d+)(\s*\D\s*)(\d+)$/); // "2-1" / "1:0" score-shaped values mirror
+  if (pair) return `${pair[3]}${pair[2]}${pair[1]}`;
+  if (/^(home|away)([\s\d].*)?$/i.test(v)) return v.replace(/home|away/i, (w) => (w.toLowerCase() === "home" ? "away" : "home"));
+  const htft = v.match(/^(home|away|draw)\s*\/\s*(home|away|draw)$/i);
+  if (htft) { const f = (x: string) => (x.toLowerCase() === "home" ? "away" : x.toLowerCase() === "away" ? "home" : "draw"); return `${f(htft[1])}/${f(htft[2])}`; }
+  return v;
+}
+function swapLabel(l: string | null): string | null {
+  if (l == null) return l;
+  // two-step swap via placeholder tokens so Home/Away exchange cleanly, case preserved
+  return l
+    .replace(/\bHome\b/g, "@@H@@").replace(/\bAway\b/g, "Home").replace(/@@H@@/g, "Away")
+    .replace(/\bhome\b/g, "@@h@@").replace(/\baway\b/g, "home").replace(/@@h@@/g, "away");
+}
+let orientationFixes = 0;
+async function ensureOrientation(fx: any): Promise<void> {
+  const id = fx?.fixture?.id;
+  const apiHome = fx?.teams?.home?.id, apiAway = fx?.teams?.away?.id;
+  if (!id || apiHome == null || apiAway == null) return;
+  const stored = orientById.get(id);
+  if (!stored || stored.homeId == null || stored.awayId == null) return;
+  if (stored.homeId === apiHome) return; // aligned
+  // only handle a clean home/away SWAP of the same two teams; a different pairing is sync's problem
+  if (stored.homeId !== apiAway || stored.awayId !== apiHome) return;
+  orientationFixes++;
+  orientById.set(id, { homeId: apiHome, awayId: apiAway });
+  // 1) fixture row adopts the provider orientation; stored events (written in the old orientation)
+  //    mirror too. Fresh numbers arrive right after via fixtureUpdate in the same orientation.
+  const { data: row } = await sb.from("fixtures").select("events").eq("id", id).maybeSingle();
+  const events = Array.isArray(row?.events)
+    ? row!.events.map((e: any) => ({ ...e, side: e?.side === "home" ? "away" : "home", score: typeof e?.score === "string" ? swapVal(e.score) : e?.score }))
+    : row?.events ?? null;
+  const patch: Record<string, unknown> = { home_team_id: apiHome, away_team_id: apiAway, events };
+  if (fx.teams?.home?.name) patch.home_team = fx.teams.home.name;
+  if (fx.teams?.away?.name) patch.away_team = fx.teams.away.name;
+  await sb.from("fixtures").update(patch).eq("id", id);
+  // 2) sided stats snapshots mirror (momentum regenerates itself next poll)
+  const { data: st } = await sb.from("fixture_stats").select("corners_home,corners_away,corners_home_ht,corners_away_ht,shots_home,shots_away,xg_home,xg_away").eq("fixture_id", id).maybeSingle();
+  if (st) {
+    await sb.from("fixture_stats").update({
+      corners_home: st.corners_away, corners_away: st.corners_home,
+      corners_home_ht: st.corners_away_ht, corners_away_ht: st.corners_home_ht,
+      shots_home: st.shots_away, shots_away: st.shots_home,
+      xg_home: st.xg_away, xg_away: st.xg_home,
+    }).eq("fixture_id", id);
+  }
+  // 3) every OPEN bet flips side so it still tracks the team it was placed on (settled bets keep
+  //    their history — they were graded under the orientation shown at the time)
+  for (const [table, col] of [["tickets", "status"], ["agent_picks", "status"], ["deliveries", "result"]] as const) {
+    const q = sb.from(table).select("id,market_key,side,bet_value,market_label").eq("fixture_id", id);
+    const { data: rows } = col === "result" ? await q.eq(col, "pending") : await q.in(col, ["pending", "live"]);
+    for (const r of rows ?? []) {
+      await sb.from(table).update({
+        market_key: swapKey(r.market_key ?? ""),
+        side: swapSide(r.side ?? null),
+        bet_value: swapVal(r.bet_value ?? null),
+        market_label: swapLabel(r.market_label ?? null),
+      }).eq("id", r.id);
+    }
+  }
+}
+
 function liveValue(mk: string, hg: number, ag: number, corners: number): number {
   if (mk === "over_8_5_corners") return corners;
   if (mk === "home_to_score" || mk === "home_goals_ou") return hg;
@@ -674,6 +763,9 @@ async function poll() {
     }
   }
 
+  // stored home/away per fixture — lets every update spot a provider-side orientation swap
+  await loadOrientations(Array.from(new Set([...ourIds, ...earlyIds])));
+
   let updated = 0, finalized = 0, statsUpdated = 0, settledLive = 0, reconciled = 0, eventsUpdated = 0, reverted = 0;
   // per-pass caps so a busy slate drains over 20s ticks instead of overrunning one pass (skipped
   // fixtures stay pending/eligible and are handled next pass). Scores still update for ALL live games.
@@ -681,6 +773,7 @@ async function poll() {
 
   for (const [id, fx] of liveMap) {
     if (!ourIds.has(id) && !earlyIds.has(id)) continue;
+    await ensureOrientation(fx); // provider swapped home/away since we stored it → adopt + flip open bets
     await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", id);
     updated++;
     const hg = fx.goals?.home ?? 0, ag = fx.goals?.away ?? 0, tot = hg + ag;
@@ -733,6 +826,7 @@ async function poll() {
     for (const fx of results) {
       const short = fx.fixture?.status?.short;
       if (FINISHED.includes(short) && settleBudget <= 0) continue; // drain remaining settlements next pass
+      await ensureOrientation(fx); // reconcile fetches carry teams too — same swap guard as live
       await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", fx.fixture.id);
       if (FINISHED.includes(short)) { settleBudget--; await settle(fx.fixture.id); }
       else if (NOTPLAYED.includes(short)) {
@@ -770,7 +864,7 @@ async function poll() {
     if (liveMap.get(id)?.fixture?.status?.short === "HT") htSettled += await settleHalfTime(id);
   }
 
-  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted };
+  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted, orientationFixes };
 }
 Deno.serve(async () => {
   try {
