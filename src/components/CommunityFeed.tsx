@@ -5,6 +5,7 @@
 // by the community_post / join_community RPCs; likes go straight to community_reactions (RLS-scoped).
 // Phase E: live via Supabase realtime on community_posts, plus an own-only block list.
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -52,6 +53,14 @@ function PicksCard({ picks }: { picks: PickLine[] }) {
           )}
         </div>
       ))}
+      {/* one-line feature upsell on every published picks post — fancy a slip like this? */}
+      <div className="border-t border-ink/10 bg-white/60 px-3 py-2 text-[11px] text-ink-mute">
+        📸 Got your own slip?{" "}
+        <Link href="/add" className="font-bold text-flood-deep hover:underline">
+          Upload a screenshot
+        </Link>{" "}
+        — Onside tracks &amp; settles it live. No manual entry.
+      </div>
     </div>
   );
 }
@@ -94,6 +103,12 @@ export default function CommunityFeed({
   // keep a live ref of the block set so the realtime handler filters against the latest value
   const blockedRef = useRef(blocked);
   useEffect(() => { blockedRef.current = blocked; }, [blocked]);
+
+  // cursor pagination: the server sends the newest PAGE posts; older ones load on demand so the
+  // feed never becomes one endless server-rendered scroll as the community grows
+  const PAGE = 20;
+  const [hasMore, setHasMore] = useState(initialPosts.length >= PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [handleInput, setHandleInput] = useState("");
   const [body, setBody] = useState("");
@@ -138,6 +153,23 @@ export default function CommunityFeed({
     return () => { supabase.removeChannel(ch); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadMore() {
+    const oldest = posts[posts.length - 1]?.created_at;
+    if (!oldest) return;
+    setLoadingMore(true);
+    const { data } = await supabase
+      .from("community_posts")
+      .select("id, author_handle, author_color, body, kind, attachment, like_count, comment_count, created_at")
+      .eq("hidden", false)
+      .lt("created_at", oldest)
+      .order("created_at", { ascending: false })
+      .limit(PAGE);
+    setLoadingMore(false);
+    const older = (data ?? []) as CommunityPost[];
+    setHasMore(older.length >= PAGE);
+    if (older.length) setPosts((ps) => [...ps, ...older.filter((o) => !ps.some((x) => x.id === o.id))]);
+  }
 
   async function join() {
     setBusy(true); setMsg(null);
@@ -329,6 +361,17 @@ export default function CommunityFeed({
           );
         })}
       </div>
+
+      {/* older posts load on demand — no endless server-rendered page */}
+      {hasMore && visible.length > 0 && (
+        <button
+          onClick={loadMore}
+          disabled={loadingMore}
+          className="mt-3 w-full rounded-xl border border-white/15 bg-pitch-2 py-3 font-mono text-[12px] font-bold uppercase tracking-wide text-onpitch-mute transition-colors hover:border-white/30 hover:text-chalk disabled:opacity-50"
+        >
+          {loadingMore ? "Loading…" : "Load older posts"}
+        </button>
+      )}
 
       {/* blocked members — manage / unblock */}
       {blockedList.length > 0 && (

@@ -1,4 +1,4 @@
-// Onside live poller + settlement engine.
+﻿// Onside live poller + settlement engine.
 //  - ONE fixtures?live=all call updates every tracked game's score/status (free fan-out).
 //  - Monotonic goal/result bets early-settle live from that shared call (0 extra API).
 //  - fixtures/events fetched when a goal lands (ticker) and once at settlement for
@@ -162,7 +162,7 @@ function fixtureUpdate(fx: any): Record<string, unknown> {
 // ---------- fixture orientation guard ----------
 // The provider sometimes swaps a fixture's home/away AFTER we stored it (venue moves are common in
 // friendlies/cups). Scores and events always arrive in the provider's CURRENT orientation, so a
-// stale stored orientation mirrors every number — and a "home" bet silently grades against the
+// stale stored orientation mirrors every number â€” and a "home" bet silently grades against the
 // wrong team (this is how a correct pick can settle "missed"). On every update we adopt the
 // provider's orientation: swap the stored teams/events/stats AND flip the side of every open bet so
 // each bet keeps pointing at the TEAM that was actually picked when it was placed.
@@ -233,7 +233,7 @@ async function ensureOrientation(fx: any): Promise<void> {
     }).eq("fixture_id", id);
   }
   // 3) every OPEN bet flips side so it still tracks the team it was placed on (settled bets keep
-  //    their history — they were graded under the orientation shown at the time)
+  //    their history â€” they were graded under the orientation shown at the time)
   for (const [table, col] of [["tickets", "status"], ["agent_picks", "status"], ["deliveries", "result"]] as const) {
     const q = sb.from(table).select("id,market_key,side,bet_value,market_label").eq("fixture_id", id);
     const { data: rows } = col === "result" ? await q.eq(col, "pending") : await q.in(col, ["pending", "live"]);
@@ -256,8 +256,17 @@ function liveValue(mk: string, hg: number, ag: number, corners: number): number 
   if (["home_win", "away_win", "draw", "home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "draw_2up", "home_win_never_down", "away_win_never_down", "draw_never_down", "double_chance_1x_1up", "double_chance_x2_1up"].includes(mk)) return hg - ag;
   return hg + ag;
 }
-function earlyResult(mk: string, hg: number, ag: number, elapsed: number | null = null): "won" | "lost" | null {
+function earlyResult(t: { market_key: string; side?: string | null; line?: number | null }, hg: number, ag: number, elapsed: number | null = null): "won" | "lost" | null {
+  const mk = t.market_key;
   const tot = hg + ag;
+  // any-line goal totals lock the moment the count passes the line (side-aware); VAR reverts
+  // are handled by revertVarSettles like the fixed-line markets below
+  const line = t.line != null ? Number(t.line) : null;
+  if (line != null) {
+    if (mk === "total_goals_ou" && tot > line) return t.side === "under" ? "lost" : "won";
+    if (mk === "home_goals_ou" && hg > line) return t.side === "under" ? "lost" : "won";
+    if (mk === "away_goals_ou" && ag > line) return t.side === "under" ? "lost" : "won";
+  }
   switch (mk) {
     case "over_0_5": return tot >= 1 ? "won" : null;
     case "over_1_5": return tot >= 2 ? "won" : null;
@@ -290,7 +299,7 @@ async function updateRowsLive(table: string, rows: any[], liveFx: any, statusCol
   for (const t of rows) {
     if (t.market_key === "over_8_5_corners") continue;
     const value = liveValue(t.market_key, hg, ag, 0);
-    const early = regTime && t.period === "ft" ? earlyResult(t.market_key, hg, ag, elapsed) : null;
+    const early = regTime && t.period === "ft" ? earlyResult(t, hg, ag, elapsed) : null;
     if (early) { await sb.from(table).update({ [statusCol]: early, current_value: value, settled_at: new Date().toISOString() }).eq("id", t.id); settled++; }
     else await sb.from(table).update(statusCol === "status" ? { status: "live", current_value: value } : { current_value: value }).eq("id", t.id);
   }
@@ -301,7 +310,7 @@ async function updateCornerTickets(tickets: any[], corners: number, liveFx: any)
   let settled = 0;
   for (const t of tickets) {
     // over_8_5_corners (FT-only) early-pays once corners pass the line. corners_ou can be a
-    // 1st/2nd-half bet, so never early-settle it on cumulative corners — just keep current_value in
+    // 1st/2nd-half bet, so never early-settle it on cumulative corners â€” just keep current_value in
     // step with the live count (tracker + build-up alerts) and let HT/FT settlement grade the period.
     if (t.market_key === "over_8_5_corners") {
       if (regTime && corners > (t.line ?? 8.5)) { await sb.from("tickets").update({ status: "won", current_value: corners, settled_at: new Date().toISOString() }).eq("id", t.id); settled++; }
@@ -656,15 +665,15 @@ async function settleRows(table: string, rows: any[], facts: Facts, statusCol = 
     await sb.from(table).update({ [statusCol]: r, current_value: liveValue(t.market_key, facts.hg, facts.ag, corners), settled_at: now }).eq("id", t.id);
   }
 }
-const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "btts", "under_2_5", "under_3_5"]);
+const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou"]);
 async function revertVarSettles(table: string, statusCol: string, fixtureId: number, hg: number, ag: number, regTime: boolean): Promise<number> {
   if (!regTime) return 0;
-  const { data: rows } = await sb.from(table).select("id,market_key,period").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
+  const { data: rows } = await sb.from(table).select("id,market_key,side,line,period").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
   const openVal = statusCol === "status" ? "live" : "pending";
   let n = 0;
   for (const r of rows ?? []) {
     if ((r.period ?? "ft") !== "ft" || !EARLY_MARKETS.has(r.market_key)) continue;
-    if (earlyResult(r.market_key, hg, ag) === null) {
+    if (earlyResult(r, hg, ag) === null) {
       await sb.from(table).update({ [statusCol]: openVal, current_value: hg + ag, settled_at: null }).eq("id", r.id);
       n++;
     }
@@ -737,15 +746,15 @@ async function poll() {
   for (const fx of live) liveMap.set(fx.fixture.id, fx);
   const ourIds = new Set<number>([...(windowFx ?? []).map((f: any) => f.id), ...trackedIds]);
 
-  const { data: activeTickets } = await sb.from("tickets").select("id,market_key,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeTickets } = await sb.from("tickets").select("id,market_key,side,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
   const byFixture = new Map<number, any[]>();
   for (const t of activeTickets ?? []) { const arr = byFixture.get(t.fixture_id) ?? []; arr.push(t); byFixture.set(t.fixture_id, arr); }
 
-  const { data: activeAP } = await sb.from("agent_picks").select("id,market_key,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeAP } = await sb.from("agent_picks").select("id,market_key,side,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
   const apByFixture = new Map<number, any[]>();
   for (const t of activeAP ?? []) { const arr = apByFixture.get(t.fixture_id) ?? []; arr.push(t); apByFixture.set(t.fixture_id, arr); }
 
-  const { data: activeDL } = await sb.from("deliveries").select("id,market_key,line,period,fixture_id").eq("result", "pending").neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeDL } = await sb.from("deliveries").select("id,market_key,side,line,period,fixture_id").eq("result", "pending").neq("market_key", "custom").not("fixture_id", "is", null);
   const dlByFixture = new Map<number, any[]>();
   for (const t of activeDL ?? []) { const arr = dlByFixture.get(t.fixture_id) ?? []; arr.push(t); dlByFixture.set(t.fixture_id, arr); }
 
@@ -763,7 +772,7 @@ async function poll() {
     }
   }
 
-  // stored home/away per fixture — lets every update spot a provider-side orientation swap
+  // stored home/away per fixture â€” lets every update spot a provider-side orientation swap
   await loadOrientations(Array.from(new Set([...ourIds, ...earlyIds])));
 
   let updated = 0, finalized = 0, statsUpdated = 0, settledLive = 0, reconciled = 0, eventsUpdated = 0, reverted = 0;
@@ -773,7 +782,7 @@ async function poll() {
 
   for (const [id, fx] of liveMap) {
     if (!ourIds.has(id) && !earlyIds.has(id)) continue;
-    await ensureOrientation(fx); // provider swapped home/away since we stored it → adopt + flip open bets
+    await ensureOrientation(fx); // provider swapped home/away since we stored it â†’ adopt + flip open bets
     await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", id);
     updated++;
     const hg = fx.goals?.home ?? 0, ag = fx.goals?.away ?? 0, tot = hg + ag;
@@ -826,7 +835,7 @@ async function poll() {
     for (const fx of results) {
       const short = fx.fixture?.status?.short;
       if (FINISHED.includes(short) && settleBudget <= 0) continue; // drain remaining settlements next pass
-      await ensureOrientation(fx); // reconcile fetches carry teams too — same swap guard as live
+      await ensureOrientation(fx); // reconcile fetches carry teams too â€” same swap guard as live
       await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", fx.fixture.id);
       if (FINISHED.includes(short)) { settleBudget--; await settle(fx.fixture.id); }
       else if (NOTPLAYED.includes(short)) {

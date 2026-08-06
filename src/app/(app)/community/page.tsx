@@ -17,12 +17,13 @@ export default async function CommunityPage() {
 
   const [{ data: prof }, { data: rawPosts }, { data: myReacts }, { data: myBlocks }, { data: lb }, { data: recent }] = await Promise.all([
     supabase.from("profiles").select("handle, avatar_color, community_opt_in, leaderboard_opt_in, is_admin").eq("id", user.id).maybeSingle(),
+    // first page only — the feed cursor-paginates older posts on demand (see CommunityFeed)
     supabase
       .from("community_posts")
       .select("id, author_handle, author_color, body, kind, attachment, like_count, comment_count, created_at")
       .eq("hidden", false)
       .order("created_at", { ascending: false })
-      .limit(50),
+      .limit(20),
     supabase.from("community_reactions").select("post_id").eq("user_id", user.id),
     supabase.from("community_blocks").select("blocked_handle").eq("blocker_id", user.id),
     // cross-member leaderboard (only opted-in members appear; aggregate only)
@@ -102,9 +103,11 @@ export default async function CommunityPage() {
           </a>
         </div>
 
+        {/* min-w-0 on both columns: a grid child's min-width defaults to its CONTENT, so one wide
+            mono row (a picks post) would silently stretch the whole column past the viewport */}
         <div className="mt-6 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
           {/* shared feed */}
-          <div>
+          <div className="min-w-0">
             <SectionLabel>Shared this week</SectionLabel>
             <CommunityFeed
               userId={user.id}
@@ -117,7 +120,7 @@ export default async function CommunityPage() {
           </div>
 
           {/* this week's edge — cross-member leaderboard (opted-in members only) */}
-          <div>
+          <div className="min-w-0">
             <SectionLabel>This week&apos;s edge</SectionLabel>
             <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
               <div className="font-disp text-base font-bold text-chalk">Top agents · vs market</div>
