@@ -8,6 +8,7 @@ import LiveGamesFab from "@/components/LiveGamesFab";
 import PushChime from "@/components/PushChime";
 import InstallPushPrompt from "@/components/InstallPushPrompt";
 import UpdateWatcher from "@/components/UpdateWatcher";
+import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
 
 const NAV = [
@@ -58,6 +59,7 @@ export default async function AppLayout({
   const upgradeHref = profile?.plan === "pro" ? "/checkout?plan=pro_max" : "/checkout?plan=pro";
 
   return (
+    <ConfirmProvider>
     <div className="flex h-screen overflow-hidden">
       {/* fixed sidebar */}
       <aside className="no-scrollbar hidden w-[236px] shrink-0 flex-col gap-8 overflow-y-auto border-r border-white/10 p-6 md:flex">
@@ -121,5 +123,6 @@ export default async function AppLayout({
       {/* prompts a reload when an already-open app is behind a new deploy */}
       <UpdateWatcher />
     </div>
+    </ConfirmProvider>
   );
 }

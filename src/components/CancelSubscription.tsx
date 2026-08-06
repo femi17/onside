@@ -2,24 +2,26 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 // A quiet "Cancel subscription" action for the profile plan card. Confirms, hits the server (which
 // disables the Paystack subscription), then refreshes so the card reflects the change.
 export default function CancelSubscription() {
   const router = useRouter();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null); // non-error confirmation / info
   const [done, setDone] = useState(false); // hide the button once there's nothing left to do
 
   async function cancel() {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Cancel your subscription? You'll keep your current plan until the end of the paid period, then move to Free."
-      )
-    )
-      return;
+    if (!(await confirm({
+      title: "Cancel subscription?",
+      body: "You'll keep your current plan until the end of the paid period, then move to Free.",
+      confirmLabel: "Cancel subscription",
+      cancelLabel: "Keep plan",
+      tone: "danger",
+    }))) return;
     setBusy(true);
     setMsg(null);
     setNote(null);

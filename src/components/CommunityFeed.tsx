@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 export type Attachment = { match?: string; league?: string | null; market?: string; result?: string } | null;
 export type CommunityPost = {
@@ -61,6 +62,7 @@ export default function CommunityFeed({
 }) {
   const supabase = createClient();
   const router = useRouter();
+  const confirm = useConfirm();
   const [me, setMe] = useState<Me>(meProp);
   const [posts, setPosts] = useState<CommunityPost[]>(initialPosts);
   const [liked, setLiked] = useState<Set<string>>(() => new Set(myLikes));
@@ -148,13 +150,13 @@ export default function CommunityFeed({
   }
 
   async function report(p: CommunityPost) {
-    if (typeof window !== "undefined" && !window.confirm("Report this post? It'll be hidden from your feed.")) return;
+    if (!(await confirm({ title: "Report this post?", body: "It'll be hidden from your feed and sent to our moderators.", confirmLabel: "Report", tone: "danger" }))) return;
     setDismissed((s) => new Set(s).add(p.id));
     await supabase.from("community_reports").insert({ target_type: "post", target_id: p.id, reporter_id: userId });
   }
 
   async function block(handle: string) {
-    if (typeof window !== "undefined" && !window.confirm(`Block @${handle}? You won't see their posts or comments.`)) return;
+    if (!(await confirm({ title: `Block @${handle}?`, body: "You won't see their posts or comments.", confirmLabel: "Block", tone: "danger" }))) return;
     setBlocked((s) => new Set(s).add(handle)); // filters the feed immediately
     const { error } = await supabase.from("community_blocks").insert({ blocker_id: userId, blocked_handle: handle });
     if (error) setBlocked((s) => { const n = new Set(s); n.delete(handle); return n; });

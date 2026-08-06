@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 export type StrategyCard = {
   id: string;
@@ -23,6 +24,7 @@ export type StrategyCard = {
 export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyCard[]; maxAgents: number }) {
   const supabase = createClient();
   const router = useRouter();
+  const confirm = useConfirm();
   const [busy, setBusy] = useState<string | null>(null);
 
   async function setStatus(id: string, status: "running" | "paused") {
@@ -33,7 +35,7 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
   }
 
   async function remove(id: string, name: string) {
-    if (typeof window !== "undefined" && !window.confirm(`Delete "${name}"? This frees a slot. Its feed history is removed — any picks you added to your tracker stay.`)) return;
+    if (!(await confirm({ title: "Delete this agent?", body: `Delete “${name}”? This frees a slot. Its feed history is removed — any picks you added to your tracker stay.`, confirmLabel: "Delete", tone: "danger" }))) return;
     setBusy(id);
     await supabase.from("strategies").delete().eq("id", id);
     setBusy(null);

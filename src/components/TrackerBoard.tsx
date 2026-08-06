@@ -8,6 +8,7 @@ import { useMinuteTick } from "@/lib/useMinuteTick";
 import { usePulse } from "@/lib/usePulse";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
+import { useConfirm } from "@/components/ConfirmDialog";
 import {
   type TrackedTicket,
   type Group,
@@ -683,6 +684,7 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   const nowMs = useMinuteTick(); // ticks the live clock every minute
   const router = useRouter();
   const supabase = createClient();
+  const confirm = useConfirm();
 
   async function manualSettle(id: string, result: "won" | "lost") {
     setBusyId(id);
@@ -699,10 +701,10 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
     // accumulator, so we just hide it here; a standalone bet is deleted outright
     const leg = tickets.find((x) => x.id === id);
     const isAccaLeg = !!leg?.accumulator_id;
-    const prompt = isAccaLeg
-      ? "Hide this leg from your tracker? It stays part of your accumulator."
-      : "Remove this bet from your tracker?";
-    if (typeof window !== "undefined" && !window.confirm(prompt)) return;
+    const ok = isAccaLeg
+      ? await confirm({ title: "Hide this leg?", body: "It stays part of your accumulator — this only hides it from your tracker.", confirmLabel: "Hide" })
+      : await confirm({ title: "Remove this bet?", body: "This removes the bet from your tracker.", confirmLabel: "Remove", tone: "danger" });
+    if (!ok) return;
     setBusyId(id);
     const { error } = isAccaLeg
       ? await supabase.from("tickets").update({ tracker_hidden: true }).eq("id", id)

@@ -5,6 +5,7 @@
 // Every action clears the item's reports so it leaves the queue.
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useConfirm } from "@/components/ConfirmDialog";
 
 export type QueueItem = {
   target_type: "post" | "comment";
@@ -44,12 +45,13 @@ function Avatar({ handle, color }: { handle: string; color: string | null }) {
 
 export default function ModerationQueue({ initialItems }: { initialItems: QueueItem[] }) {
   const supabase = createClient();
+  const confirm = useConfirm();
   const [items, setItems] = useState<QueueItem[]>(initialItems);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   async function moderate(it: QueueItem, action: "hide" | "restore" | "delete") {
-    if (action === "delete" && typeof window !== "undefined" && !window.confirm("Permanently delete this content?")) return;
+    if (action === "delete" && !(await confirm({ title: "Delete content?", body: "Permanently delete this content? This can't be undone.", confirmLabel: "Delete", tone: "danger" }))) return;
     const key = `${it.target_type}:${it.target_id}`;
     setBusy(key); setErr(null);
     const { error } = await supabase.rpc("admin_moderate", {
