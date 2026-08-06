@@ -889,7 +889,17 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
   let room = strategyRoom;
   try {
     const { data: prof } = await sb.from("profiles").select("plan").eq("id", strategy.user_id).maybeSingle();
-    const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction").eq("plan", prof?.plan ?? "free").maybeSingle();
+    const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction, monthly_agent_runs").eq("plan", prof?.plan ?? "free").maybeSingle();
+    // plans with a monthly run allowance (free: 1) get that many delivery DAYS per calendar month;
+    // paid plans carry null = unlimited. This is also the backstop for a lapsed subscription: the
+    // downgrade cron pauses the strategies, and even a resumed one only runs on the free allowance.
+    if (lim?.monthly_agent_runs != null) {
+      const ms = new Date(); ms.setUTCDate(1); ms.setUTCHours(0, 0, 0, 0);
+      const { data: mdel } = await sb.from("deliveries").select("delivered_at").eq("user_id", strategy.user_id).gte("delivered_at", ms.toISOString()).limit(1000);
+      const runDays = new Set((mdel ?? []).map((d: any) => String(d.delivered_at).slice(0, 10)));
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      if (!runDays.has(todayUtc) && runDays.size >= Number(lim.monthly_agent_runs)) return 0;
+    }
     const dailyCap = (lim?.max_agents ?? 1) * (lim?.max_games_per_prediction ?? 8);
     const [dayStart] = tzDayBoundsISO(tz, 0);
     const { count: userToday } = await sb.from("deliveries").select("id", { count: "exact", head: true })
