@@ -34,7 +34,7 @@ export default async function PerformancePage() {
 
 async function PerfData() {
   const supabase = createClient();
-  const [{ data }, { data: events }] = await Promise.all([
+  const [{ data }, { data: events }, { data: learners }] = await Promise.all([
     supabase
       .from("deliveries")
       .select(
@@ -48,8 +48,18 @@ async function PerfData() {
       .select("id, strategy_id, prev_min_edge, new_min_edge, avg_roi, avg_clv, basis, sample_size, created_at, strategies(name)")
       .order("created_at", { ascending: false })
       .limit(200),
+    // which agents have Learning ON — so an empty tuning log reads as "collecting samples",
+    // never as "you haven't turned learning on"
+    supabase.from("strategies").select("name").eq("learning", true).eq("status", "running"),
   ]);
-  return <PerformanceBoard picks={(data ?? []) as never} events={(events ?? []) as never} hideHeader />;
+  return (
+    <PerformanceBoard
+      picks={(data ?? []) as never}
+      events={(events ?? []) as never}
+      learningAgents={(learners ?? []).map((s) => s.name as string).filter(Boolean)}
+      hideHeader
+    />
+  );
 }
 
 // KPI + panel skeleton so the streamed board doesn't shift layout

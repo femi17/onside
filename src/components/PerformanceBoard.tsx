@@ -103,7 +103,7 @@ const HELP: Record<HelpKey, { title: string; body: string[] }> = {
   },
 };
 
-export default function PerformanceBoard({ picks, events, hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; hideHeader?: boolean }) {
+export default function PerformanceBoard({ picks, events, learningAgents = [], hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; learningAgents?: string[]; hideHeader?: boolean }) {
   const [agent, setAgent] = useState<string | null>(null);
   const [days, setDays] = useState<14 | null>(null); // null = this season (all)
   const [help, setHelp] = useState<HelpKey | null>(null); // which KPI explainer modal is open
@@ -436,6 +436,29 @@ export default function PerformanceBoard({ picks, events, hideHeader = false }: 
                           {e.created_at ? ` · ${new Date(e.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}` : ""}
                         </div>
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : learningAgents.length ? (
+              // learning IS on — show honest progress toward the first adjustment instead of
+              // wrongly telling the user to go turn it on
+              <div className="flex flex-col gap-2.5">
+                {learningAgents.map((name) => {
+                  const NEED = 20; // learnAdjust's minimum CLV sample size before the first tune
+                  const n = Math.min(NEED, picks.filter((p) => agentOf(p) === name && p.clv != null).length);
+                  return (
+                    <div key={name} className="rounded-xl border border-white/10 bg-pitch-2 p-4">
+                      <div className="flex items-center justify-between gap-3 text-[13.5px] text-chalk">
+                        <span><b>{name}</b> — Learning is on</span>
+                        <span className="font-mono text-[11px] text-onpitch-mute">{n} / {NEED} price samples</span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                        <div className="h-full rounded-full bg-grass" style={{ width: `${(n / NEED) * 100}%` }} />
+                      </div>
+                      <p className="mt-2 font-mono text-[11px] leading-relaxed text-onpitch-mute">
+                        Each priced pick gets a closing-price snapshot before kickoff; the first self-tune lands once {NEED} have accrued.
+                      </p>
                     </div>
                   );
                 })}
