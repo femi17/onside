@@ -245,10 +245,24 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
   const lHomeSum = new Map<number, [number, number]>();
   const lAwaySum = new Map<number, [number, number]>();
   if (leagueIds.length) {
-    const { data } = await sb.from("fixtures")
-      .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
-      .in("league_id", leagueIds).in("status", FINISHED).order("kickoff_utc", { ascending: false }).limit(40000);
-    const rows = (data ?? []).slice().sort((a: any, b: any) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
+    // PostgREST caps every response at 1000 rows regardless of .limit(), so a single .limit(40000)
+    // silently returned only 1000 finished fixtures -> across many leagues every team was starved of
+    // history, NOTHING was ever "confident", and every pick came out unpriced. Page in 1000-row
+    // chunks (recency-bounded) to actually load the model.
+    const PAGE = 1000, MAX_ROWS = 40000;
+    const sinceIso = new Date(Date.now() - 365 * 86400000).toISOString();
+    const acc: any[] = [];
+    for (let off = 0; off < MAX_ROWS; off += PAGE) {
+      const { data, error } = await sb.from("fixtures")
+        .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+        .in("league_id", leagueIds).in("status", FINISHED).gte("kickoff_utc", sinceIso)
+        .order("kickoff_utc", { ascending: false }).order("id", { ascending: false })
+        .range(off, off + PAGE - 1);
+      if (error || !data || !data.length) break;
+      acc.push(...data);
+      if (data.length < PAGE) break;
+    }
+    const rows = acc.slice().sort((a: any, b: any) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
     const now = rows.length ? Date.parse(rows[rows.length - 1].kickoff_utc) : Date.now();
     const decay = Math.LN2 / (HALF_LIFE_DAYS * 86400000);
     const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
