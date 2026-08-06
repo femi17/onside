@@ -81,7 +81,7 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {cards.map((c) => (
-            <div key={c.id} className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
+            <div key={c.id} className="min-w-0 rounded-2xl bg-chalk p-5 text-ink shadow-xl">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate font-disp text-xl font-extrabold tracking-tight text-ink">{c.name}</div>
@@ -98,7 +98,7 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
                 )) : <span className="font-mono text-[11px] text-ink-mute">No results yet.</span>}
               </div>
 
-              <div className="mt-4 flex gap-6">
+              <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
                 <Stat k="Last 14d" v={c.last14.total ? `${c.last14.won}/${c.last14.total}` : "—"} />
                 <Stat k="vs market" v={c.vs_market == null ? "—" : `${c.vs_market > 0 ? "+" : ""}${c.vs_market.toFixed(1)}%`} tone={c.vs_market == null ? undefined : c.vs_market >= 0 ? "up" : "down"} />
                 <Stat k="Delivered" v={String(c.delivered)} />

@@ -96,7 +96,11 @@ export default async function AppLayout({
 
       {/* main column: scrollable content + fixed footer; mobile tab bar overlays the bottom */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="no-scrollbar flex-1 overflow-y-auto pb-[72px] md:pb-0">{children}</div>
+        {/* overflow-x-hidden: without an explicit x-rule, overflow-y-auto makes x resolve to auto too,
+            so any too-wide child (e.g. a long agent card) produced a horizontal scrollbar. Clipping x
+            here kills sideways scroll app-wide; sticky headers (this is their scroll container) and the
+            fixed nav/FAB/drawers are unaffected. */}
+        <div className="no-scrollbar flex-1 overflow-x-hidden overflow-y-auto pb-[72px] md:pb-0">{children}</div>
         <Footer className="hidden md:block" />
         <MobileNav
           items={mobileNav}
