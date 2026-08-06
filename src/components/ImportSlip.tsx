@@ -54,6 +54,7 @@ type Sel = {
   market_key: string;
   market_label: string;
   value?: string | null;
+  side?: string | null;
   line: number | null;
   confidence: "high" | "low";
   fixture_id: number | null;
@@ -305,7 +306,9 @@ export default function ImportSlip({
         market_label: s.market_label,
         custom_market: key === "custom" ? s.market_label : null,
         line: rec?.line ?? s.line,
-        side: rec?.side ?? null,
+        // team totals come from parse-slip as home_goals_ou/away_goals_ou with a side; the label is
+        // the team name so recognizeBet won't re-derive it — fall back to the parse-slip side/key.
+        side: rec?.side ?? s.side ?? null,
         period: rec?.period ?? "ft",
         bet_value: rec?.value ?? s.value ?? null,
         source: "screenshot",

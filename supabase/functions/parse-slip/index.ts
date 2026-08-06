@@ -44,11 +44,12 @@ const SCHEMA = {
           league: { type: "string" },
           market_key: { type: "string", enum: MARKET_KEYS },
           market_label: { type: "string" },
+          raw_market: { type: "string" },
           value: { type: "string" },
           line: { type: "number" },
           confidence: { type: "string", enum: ["high", "low"] },
         },
-        required: ["home", "away", "league", "market_key", "market_label", "value", "line", "confidence"],
+        required: ["home", "away", "league", "market_key", "market_label", "raw_market", "value", "line", "confidence"],
       },
     },
   },
@@ -65,6 +66,7 @@ EVERYTHING ELSE uses market_key "custom": set market_label to a short human name
 - Player markets (anytime/first/last goalscorer, player to be carded/booked/sent off, to score a header/free-kick, player shots/shots on target/saves/assists/fouls/offsides/passes, to score or assist, most goals/shots/assists): market_label = the market name (e.g. "Anytime goalscorer", "Player to be carded"), value = the PLAYER NAME exactly as printed (include an N+ line if shown, e.g. "Osorio, Jonathan 2+").
 - Correct score / HT-FT / handicap / multigoals / goal range / winning margin: market_label = the market name, value = the exact selection (e.g. "2-1", "1/2", "-1.5", "2-3").
 - Corners/cards/bookings/shots/fouls/offsides totals: market_label like "Over 9.5 corners", "Under 3.5 cards"; value = "".
+raw_market: copy the selection's market text EXACTLY as printed (verbatim), INCLUDING any team name shown beside the Over/Under or Total — e.g. the greyed subtitle "Kuopion Palloseura Over/Under" or "Man City Total". Do NOT paraphrase or drop the team name; this is used to detect single-team totals, so accuracy here matters more than market_label.
 When there is no extra value, set value to "". line: the numeric goal/corner line (e.g. 8.5) or 0 if none. confidence: "high" if clearly read, else "low".
 Return only the structured JSON.`;
 
@@ -95,6 +97,13 @@ function tokMatch(x: string, y: string): boolean {
   return i >= 4;
 }
 const overlap = (slip: string[], fx: string[]) => slip.filter((s) => fx.some((f) => tokMatch(s, f))).length;
+
+// total Over/Under key -> {side, line}; null for anything else (incl. corners). Used to remap a
+// total O/U to a TEAM total when the printed market text names one of the two teams.
+function ouParts(mk: string): { side: "over" | "under"; line: number } | null {
+  const m = mk.match(/^(over|under)_(\d)_5$/);
+  return m ? { side: m[1] === "under" ? "under" : "over", line: Number(`${m[2]}.5`) } : null;
+}
 
 async function loadAliases(): Promise<Map<string, string>> {
   const { data } = await sb.from("team_aliases").select("alias, canonical");
@@ -193,11 +202,31 @@ Deno.serve(async (req) => {
       const match = await matchFixture(s.home, s.away, winStart, aliases);
       const lg = match?.leagues ?? null;
       const value = (s.value ?? "").trim();
-      const label = value && s.market_key === "custom" ? `${s.market_label} — ${value}` : s.market_label;
+      let mk: string = s.market_key;
+      let label = value && s.market_key === "custom" ? `${s.market_label} — ${value}` : s.market_label;
+      let side: string | null = null;
+      let outLine: number | null = s.market_key === "over_8_5_corners" ? (s.line || 8.5) : null;
+      // Team total: a total Over/Under whose printed market text (raw_market) names ONE of the two
+      // teams — e.g. SportyBet's "Kuopion Palloseura Over/Under" subtitle with a bold "Over 0.5" — is
+      // that team's goals, not the match total. Detect it deterministically here rather than trusting
+      // the vision model's classification (which keeps flattening it to over_x_5).
+      const ou = ouParts(s.market_key);
+      if (ou && match) {
+        const rawToks = toks(`${s.raw_market ?? ""} ${s.market_label ?? ""}`);
+        const homeHit = overlap(toks(s.home), rawToks);
+        const awayHit = overlap(toks(s.away), rawToks);
+        if ((homeHit > 0 || awayHit > 0) && homeHit !== awayHit) {
+          const isHome = homeHit > awayHit;
+          mk = isHome ? "home_goals_ou" : "away_goals_ou";
+          side = ou.side;
+          outLine = ou.line;
+          label = `${isHome ? match.home_team : match.away_team} ${ou.side} ${ou.line}`;
+        }
+      }
       out.push({
         home: s.home, away: s.away, league: s.league,
-        market_key: s.market_key, market_label: label, value: value || null,
-        line: s.market_key === "over_8_5_corners" ? (s.line || 8.5) : null,
+        market_key: mk, market_label: label, value: value || null, side,
+        line: outLine,
         confidence: s.confidence,
         fixture_id: match?.id ?? null,
         matched: match ? `${match.home_team} v ${match.away_team}` : null,
