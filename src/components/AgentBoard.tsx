@@ -331,8 +331,13 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   // pending delivery.
   async function settleDelivery(id: string, result: "won" | "lost", score?: string) {
     setSettlingId(id);
-    await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
+    const { error } = await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
     setSettlingId(null);
+    if (error) {
+      // surface it instead of silently doing nothing
+      if (typeof window !== "undefined") window.alert(`Couldn't settle this pick: ${error.message}`);
+      return;
+    }
     router.refresh();
   }
 

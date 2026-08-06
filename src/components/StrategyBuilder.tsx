@@ -1040,8 +1040,10 @@ export default function StrategyBuilder({
         )}
       </button>
 
-      {/* mobile: agent-details as a slide-over from the right */}
-      <div className={`fixed inset-0 z-50 lg:hidden ${detailsOpen ? "" : "pointer-events-none"}`} aria-hidden={!detailsOpen}>
+      {/* mobile: agent-details as a slide-over from the right. overflow-hidden clips the off-canvas
+          panel while closed (translate-x-full) so it can't bleed past the right edge and create
+          horizontal scroll on mobile. */}
+      <div className={`fixed inset-0 z-50 overflow-hidden lg:hidden ${detailsOpen ? "" : "pointer-events-none"}`} aria-hidden={!detailsOpen}>
         <div
           onClick={() => setDetailsOpen(false)}
           className={`absolute inset-0 bg-ink/60 transition-opacity motion-reduce:transition-none ${detailsOpen ? "opacity-100" : "opacity-0"}`}
