@@ -125,7 +125,7 @@ function LegRow({ leg, nowMs }: { leg: TrackedTicket; nowMs: number }) {
   );
 }
 
-function AccaCard({ acca, nowMs }: { acca: Acca; nowMs: number }) {
+function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: number; plan: string; uploadsLeft: number | null }) {
   // order the legs by kickoff so the slip reads in start-time order (earliest game first)
   const legs = [...(acca.tickets ?? [])].sort(
     (a, b) => (a.fixtures?.kickoff_utc ?? "").localeCompare(b.fixtures?.kickoff_utc ?? "") || a.id.localeCompare(b.id)
@@ -187,10 +187,47 @@ function AccaCard({ acca, nowMs }: { acca: Acca; nowMs: number }) {
         {dead && (
           <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-brick/[0.08] px-3 py-2.5 text-[12.5px]">
             <span className="font-bold text-brick">This slip cut.</span>
-            <span className="text-ink-mute">Start another with an upgrade, or</span>
-            <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
-              pick a game to track by hand
-            </Link>
+            {/* only talk upgrades when the user is actually OUT of uploads — a paid user with
+                quota left just gets pointed at their next slip */}
+            {uploadsLeft != null && uploadsLeft > 0 ? (
+              <span className="text-ink-mute">
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                  Upload another slip
+                </Link>{" "}
+                ({uploadsLeft} left today), or{" "}
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                  pick a game to track by hand
+                </Link>
+              </span>
+            ) : uploadsLeft === 0 ? (
+              <span className="text-ink-mute">
+                Today&apos;s uploads are used
+                {plan === "pro_max" ? (
+                  <> — more tomorrow. Meanwhile,{" "}</>
+                ) : (
+                  <>
+                    {" — "}
+                    <Link href="/profile" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                      upgrade for more
+                    </Link>
+                    , or{" "}
+                  </>
+                )}
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                  pick a game to track by hand
+                </Link>
+              </span>
+            ) : (
+              <span className="text-ink-mute">
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                  Start another slip
+                </Link>{" "}
+                or{" "}
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                  pick a game to track by hand
+                </Link>
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -286,7 +323,7 @@ function AccaPill({ acca, active, onClick, nowMs }: { acca: Acca; active: boolea
   );
 }
 
-export default function AccumulatorsBoard({ accas, plan = "free", cap = null }: { accas: Acca[]; plan?: string; cap?: number | null }) {
+export default function AccumulatorsBoard({ accas, plan = "free", cap = null, uploadsLeft = null }: { accas: Acca[]; plan?: string; cap?: number | null; uploadsLeft?: number | null }) {
   const nowMs = useMinuteTick();
   const [selId, setSelId] = useState<string | null>(accas[0]?.id ?? null);
   const selected = useMemo(() => accas.find((a) => a.id === selId) ?? accas[0] ?? null, [accas, selId]);
@@ -353,7 +390,7 @@ export default function AccumulatorsBoard({ accas, plan = "free", cap = null }: 
       <div className="flex min-h-0 flex-1 gap-6">
         {/* detail — the selected slip, leg by leg */}
         <main className="no-scrollbar min-w-0 flex-1 lg:overflow-y-auto lg:pb-10">
-          {selected && <AccaCard acca={selected} nowMs={nowMs} />}
+          {selected && <AccaCard acca={selected} nowMs={nowMs} plan={plan} uploadsLeft={uploadsLeft} />}
         </main>
 
         {/* fixed sidebar (right) — pick a previous slip to open on the left */}

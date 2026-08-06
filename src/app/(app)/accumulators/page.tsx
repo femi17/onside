@@ -15,6 +15,15 @@ export default async function AccumulatorsPage() {
   const { data: lim } = await supabase.from("plan_limits").select("max_accas_history").eq("plan", plan).maybeSingle();
   const cap = (lim?.max_accas_history ?? null) as number | null;
 
+  // today's slip-upload quota (role-aware RPC, same as /add) — the cut-slip banner only
+  // talks upgrades when the user is actually out of uploads
+  let uploadsLeft: number | null = null;
+  if (user) {
+    const { data: q } = await supabase.rpc("slip_upload_quota", { uid: user.id });
+    const quota = (Array.isArray(q) ? q[0] : q) as { quota: number; used: number } | null;
+    if (quota) uploadsLeft = Math.max(0, Number(quota.quota) - Number(quota.used));
+  }
+
   let query = supabase
     .from("accumulators")
     .select(
@@ -38,7 +47,7 @@ export default async function AccumulatorsPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
-      <AccumulatorsBoard accas={accas} plan={plan} cap={cap} />
+      <AccumulatorsBoard accas={accas} plan={plan} cap={cap} uploadsLeft={uploadsLeft} />
     </>
   );
 }
