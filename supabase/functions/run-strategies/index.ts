@@ -329,7 +329,7 @@ function handicapLabel(side: string | null, line: number | null): string {
   return `Handicap ${side ?? ""} ${line != null && line > 0 ? "+" : ""}${line ?? ""}`.trim();
 }
 
-const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob"];
+const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob","home_score_prob","away_score_prob"];
 const RULE_MARKETS = ["home_win","away_win","draw","double_chance_1x","double_chance_x2","double_chance_12","over_1_5","over_2_5","over_3_5","under_2_5","under_3_5","btts","home_to_score","away_to_score"];
 const MK_LABEL: Record<string, string> = {
   home_win: "Home win", away_win: "Away win", draw: "Draw",
@@ -359,7 +359,7 @@ type RuleParsed = { filters: Cond[]; select: Branch[] };
 const COND_SCHEMA = { type: "object", additionalProperties: false, properties: { field: { type: "string", enum: RULE_FIELDS }, op: { type: "string", enum: ["lt", "lte", "gt", "gte", "eq", "between"] }, value: { type: "number" }, value2: { type: "number" } }, required: ["field", "op", "value", "value2"] };
 const BRANCH_SCHEMA = { type: "object", additionalProperties: false, properties: { when_field: { type: "string" }, when_op: { type: "string" }, when_value: { type: "number" }, when_value2: { type: "number" }, market_key: { type: "string", enum: RULE_MARKETS }, side: { type: "string" }, line: { type: "number" } }, required: ["when_field", "when_op", "when_value", "when_value2", "market_key", "side", "line"] };
 const RULE_SCHEMA = { type: "object", additionalProperties: false, properties: { filters: { type: "array", items: COND_SCHEMA }, select: { type: "array", items: BRANCH_SCHEMA } }, required: ["filters", "select"] };
-const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when_field/when_op/when_value(/when_value2 for 'between') and the market to use if it holds. A branch whose when_field is \"\" is the DEFAULT (always). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
+const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is. home_score_prob/away_score_prob = the model's probability that the home/away team scores at least one goal, 0-1 — compare the two to pick the team more likely to score.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when_field/when_op/when_value(/when_value2 for 'between') and the market to use if it holds. A branch whose when_field is \"\" is the DEFAULT (always). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
 
 async function parseRule(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<RuleParsed | null> {
   try {
@@ -389,7 +389,7 @@ function medianOdd(bms: any[], betId: number, value: string): number | null {
 }
 type Form = { wins5: number; draws5: number; losses5: number; pts5: number; ppg5: number; gf5: number; ga5: number; n: number };
 const round2 = (x: number) => Math.round(x * 100) / 100;
-function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null): Record<string, number | null> {
+function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null, homeScoreP?: number | null, awayScoreP?: number | null): Record<string, number | null> {
   const home = medianOdd(bms, 1, "Home"), away = medianOdd(bms, 1, "Away");
   return {
     home_odds: home, draw_odds: medianOdd(bms, 1, "Draw"), away_odds: away,
@@ -401,6 +401,7 @@ function signalsFor(bms: any[], modelP: number | null, marketP: number | null, e
     home_wins_last5: homeForm ? homeForm.wins5 : null, away_wins_last5: awayForm ? awayForm.wins5 : null,
     home_form_ppg: homeForm ? homeForm.ppg5 : null, away_form_ppg: awayForm ? awayForm.ppg5 : null,
     home_win_prob: homeWinP ?? null, away_win_prob: awayWinP ?? null,
+    home_score_prob: homeScoreP ?? null, away_score_prob: awayScoreP ?? null,
   };
 }
 function evalCond(c: { field: string; op: string; value: number; value2: number }, sig: Record<string, number | null>): boolean {
@@ -553,7 +554,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
       const bmp = (!baseFamily && cell.confident) ? modelProb(baseMk, baseSide, baseLine, cell.agg) : null;
       const bkp = !baseFamily ? marketProb(baseMk, baseSide, baseLine, bms) : null;
       const sig = signalsFor(bms, bmp, bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
-        homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null);
+        homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null,
+        cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null);
       let blocked = false;
       for (const c of rule.filters) if (!evalCond(c, sig)) { blocked = true; break; }
       if (blocked) continue;
