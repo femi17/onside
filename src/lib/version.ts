@@ -5,7 +5,7 @@ export const CURRENT_BUILD = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
 // Human-friendly release label shown in the UI — a simple incrementing release counter.
 // BUMP THIS BY 1 on every notable release/deploy (it can't auto-derive small sequential integers).
 // The build id above is what actually drives update detection; this is just what users read.
-export const APP_VERSION = "v5";
+export const APP_VERSION = "v6";
 
 export async function fetchLatestBuild(): Promise<string | null> {
   try {
