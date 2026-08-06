@@ -501,20 +501,7 @@ function Card({
                 {won ? "Landed" : lost ? "Missed" : "Full-time"}
               </span>
             ) : (
-              <>
-                {/* settled early (line already cleared/broken) but the game is still on —
-                    badge the verdict here; the card only files under Settled at full-time */}
-                {(won || lost) && (
-                  <span
-                    className={`rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase ${
-                      won ? "bg-grass/15 text-grass-deep" : "bg-brick/15 text-brick"
-                    }`}
-                  >
-                    {won ? "Landed" : "Missed"}
-                  </span>
-                )}
-                <LiveClock label={ms?.label ?? "Live"} />
-              </>
+              <LiveClock label={ms?.label ?? "Live"} />
             )}
             <RemoveBtn id={t.id} busy={busy} onRemove={onRemove} />
           </div>
@@ -794,10 +781,8 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
     return g;
   }, [tickets, since]);
 
-  // a bet that settled while its match is still live stays in the Live section, but it has
-  // a verdict — count it under Landed/Missed too so the tabs (and the flash) tell the truth
-  const landed = useMemo(() => [...grouped.live, ...grouped.settled].filter((t) => t.status === "won"), [grouped]);
-  const missed = useMemo(() => [...grouped.live, ...grouped.settled].filter((t) => t.status === "lost"), [grouped]);
+  const landed = useMemo(() => grouped.settled.filter((t) => t.status === "won"), [grouped]);
+  const missed = useMemo(() => grouped.settled.filter((t) => t.status === "lost"), [grouped]);
 
   const compactLive = grouped.live.length > LIVE_COMPACT_AT;
 

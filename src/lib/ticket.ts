@@ -108,14 +108,10 @@ export function stateOf(t: TrackedTicket, nowMs?: number): MatchState | null {
 }
 
 export function groupOf(t: TrackedTicket, ms: MatchState | null): Group {
-  // a LOST bet is dead — nothing left to watch, so it files under Settled (the Missed tab)
-  // the moment it settles, even mid-game. A WON/void bet on a still-running match stays with
-  // the live game (badged) until full-time: the win is worth watching out, and a match with
-  // sibling bets keeps its live card.
-  if (t.status === "lost") return "settled";
-  if (ms?.phase === "live") return "live";
-  if (t.status === "won" || t.status === "void" || ms?.phase === "done") return "settled";
-  if (t.status === "live") return "live";
+  // a settled bet clears off Live the moment it lands/misses, even mid-game — the Landed and
+  // Missed tabs are its home from then on (the live section only tracks bets still in play)
+  if (t.status === "won" || t.status === "lost" || t.status === "void" || ms?.phase === "done") return "settled";
+  if (t.status === "live" || ms?.phase === "live") return "live";
   return "upcoming";
 }
 
