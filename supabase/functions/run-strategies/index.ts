@@ -18,16 +18,29 @@ const FINISHED_LIVE = ["FT", "AET", "PEN", "1H", "2H", "HT", "ET", "BT", "P", "L
 const FINISHED = ["FT", "AET", "PEN"];
 const ODDS_FETCH_CAP = 90;
 const DEF_HOME = 1.45, DEF_AWAY = 1.15;
-// Forecast model (Elo + time-decayed rates). Params fitted on 171k finished fixtures via
-// perf/backtest.mts — beat the old flat independent-Poisson by ~1.5% log-loss / 1.6% Brier on 34k
-// held-out matches, well-calibrated. The user's rule engine still layers ON TOP of these probabilities.
-const SHRINK = 8;             // pseudo-matches pulling a team's rate toward its Elo prior
-const MIN_TEAM_MATCHES = 4;   // weighted-match floor for a "confident" (priced) fixture
+// Forecast model v2 (Elo + league-relative time-decayed rates + DC/temperature calibration).
+// Params fitted on ~172k finished fixtures via perf/backtest.mts (see fitted params there).
+// v2 structural fixes over v1: (1) goals normalised by the league each match was PLAYED in — v1
+// divided domestic goals by the predicted fixture's league mean, inflating minnows in cup/UEFA ties
+// (the source of implausible 30%+ "edges"); (2) venue record blended with overall record (doubles
+// the sample); (3) score-matrix temperature fixes tail overconfidence for every derived market.
+// The user's rule engine still layers ON TOP of these probabilities.
+const SHRINK = 12;            // pseudo-matches pulling a team's rate toward its Elo prior (fitted)
+const MIN_TEAM_MATCHES = 4;   // overall weighted-match floor for a "confident" (priced) fixture
 const HALF_LIFE_DAYS = 90;    // recency: a match's weight halves every 90 days
 const HOME_ADV_ELO = 40;      // Elo points added to the home side
 const ELO_K = 10;             // Elo update step
 const ELO_BASE = 1500;
 const ELO_PER_LOG_GOAL = 300; // Elo points ≈ one e-fold of goal strength (maps Elo → attack/defence prior)
+const VENUE_WEIGHT = 0;       // fitted: the overall record beats the venue-split one (venue is already in the league means)
+const LEAGUE_SHRINK = 30;     // fitted: pseudo-matches pulling a small league's means toward the global mean
+const RHO = 0;                // Dixon–Coles low-score correction (fitted: didn't help)
+// Score-matrix temperature. Backtest-fitted anchor is 1; the daily self-calibration loop
+// (maybeRecalibrate) nudges it from REALIZED pick outcomes, bounded [1, 1.3], evidence-gated.
+let TEMP = 1;
+// Beyond this, the model almost certainly disagrees with reality rather than beating the market —
+// the pick keeps its true edge in the row but is demoted to amber and ranked at the cap.
+const MAX_PLAUSIBLE_EDGE = 0.15;
 
 function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } }); }
 async function getSecret(name: string): Promise<string> {
@@ -130,20 +143,45 @@ type Fixture = { id: number; league_id: number; kickoff_utc: string; home_team_i
 
 const FACT = [1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800];
 const pois = (k: number, l: number) => Math.exp(-l) * Math.pow(l, k) / FACT[k];
+// Dixon–Coles low-score dependence correction (no-op at RHO = 0)
+function dcTau(x: number, y: number, l: number, m: number): number {
+  if (x === 0 && y === 0) return 1 - l * m * RHO;
+  if (x === 0 && y === 1) return 1 + l * RHO;
+  if (x === 1 && y === 0) return 1 + m * RHO;
+  if (x === 1 && y === 1) return 1 - RHO;
+  return 1;
+}
 type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[] };
+// Full score matrix (DC-corrected, temperature-calibrated, renormalised) → every market read off it,
+// so BTTS/team-to-score are proper matrix sums (not the old independent-Poisson product) and all
+// probabilities share the same calibration.
 function aggregate(lamH: number, lamA: number, N = 10): Agg {
   const ph: number[] = [], pa: number[] = [];
   for (let i = 0; i <= N; i++) { ph.push(pois(i, lamH)); pa.push(pois(i, lamA)); }
-  let hw = 0, dr = 0, aw = 0;
+  const invT = 1 / (TEMP || 1);
+  const cells: number[][] = [];
+  let total = 0;
+  for (let i = 0; i <= N; i++) {
+    cells[i] = [];
+    for (let j = 0; j <= N; j++) {
+      let p = Math.max(0, ph[i] * pa[j] * dcTau(i, j, lamH, lamA));
+      if (invT !== 1 && p > 0) p = Math.pow(p, invT);
+      cells[i][j] = p; total += p;
+    }
+  }
+  let hw = 0, dr = 0, aw = 0, btts = 0, homeScore = 0, awayScore = 0;
   const totalP = new Array(2 * N + 1).fill(0);
   const marg = new Array(2 * N + 1).fill(0);
   for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
-    const p = ph[i] * pa[j];
+    const p = cells[i][j] / total;
     if (i > j) hw += p; else if (i === j) dr += p; else aw += p;
+    if (i > 0 && j > 0) btts += p;
+    if (i > 0) homeScore += p;
+    if (j > 0) awayScore += p;
     totalP[i + j] += p;
     marg[i - j + N] += p;
   }
-  return { hw, dr, aw, totalP, homeScore: 1 - ph[0], awayScore: 1 - pa[0], btts: (1 - ph[0]) * (1 - pa[0]), marg };
+  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg };
 }
 const overP = (agg: Agg, line: number) => { let s = 0; for (let t = 0; t < agg.totalP.length; t++) if (t > line) s += agg.totalP[t]; return s; };
 function modelProb(mk: string, side: string | null, line: number | null, agg: Agg): number | null {
@@ -205,15 +243,41 @@ function ouProb(bet: any, line: number, sideWant: "over" | "under"): number | nu
 }
 function bookProb(mk: string, side: string | null, line: number | null, bets: any[]): number | null {
   const bet = (id: number) => bets.find((b) => Number(b.id) === id);
-  const dc = () => threeWay(bet(1));
+  // Double chance from the book's OWN double-chance market (id 12) when quoted — the three DC probs
+  // sum to 2, so de-vig by scaling the inverse odds to that. Falls back to deriving from 1X2.
+  const dc = (want: "1x" | "12" | "x2"): number | null => {
+    const b12 = bet(12);
+    if (b12) {
+      const hd = oddOf(b12, "Home/Draw"), ha = oddOf(b12, "Home/Away"), da = oddOf(b12, "Draw/Away");
+      if (hd && ha && da) {
+        const s = 1 / hd + 1 / ha + 1 / da;
+        const p = (want === "1x" ? 1 / hd : want === "12" ? 1 / ha : 1 / da) * (2 / s);
+        return Math.min(1, p);
+      }
+    }
+    const t = threeWay(bet(1));
+    return t ? Math.min(1, want === "1x" ? t.home + t.draw : want === "12" ? t.home + t.away : t.draw + t.away) : null;
+  };
   switch (mk) {
     case "home_win": { const t = threeWay(bet(1)); return t ? t.home : null; }
     case "away_win": { const t = threeWay(bet(1)); return t ? t.away : null; }
     case "draw": { const t = threeWay(bet(1)); return t ? t.draw : null; }
     case "result_1x2": { const t = threeWay(bet(1)); return t ? (side === "home" ? t.home : side === "away" ? t.away : t.draw) : null; }
-    case "double_chance_1x": { const t = dc(); return t ? Math.min(1, t.home + t.draw) : null; }
-    case "double_chance_x2": { const t = dc(); return t ? Math.min(1, t.draw + t.away) : null; }
-    case "double_chance_12": { const t = dc(); return t ? Math.min(1, t.home + t.away) : null; }
+    case "double_chance_1x": return dc("1x");
+    case "double_chance_x2": return dc("x2");
+    case "double_chance_12": return dc("12");
+    case "handicap": {
+      // Asian Handicap (id 4): the picked side at line L vs the other side at −L, de-vigged as a pair
+      if (line == null || (side !== "home" && side !== "away")) return null;
+      const b4 = bet(4);
+      if (!b4) return null;
+      const sgn = (x: number) => (x > 0 ? `+${x}` : `${x}`);
+      const mine = oddOf(b4, `${side === "home" ? "Home" : "Away"} ${sgn(line)}`);
+      const theirs = oddOf(b4, `${side === "home" ? "Away" : "Home"} ${sgn(-line)}`);
+      if (!mine || !theirs) return null;
+      const im = 1 / mine, it = 1 / theirs;
+      return im / (im + it);
+    }
     case "over_0_5": return ouProb(bet(5), 0.5, "over");
     case "over_1_5": return ouProb(bet(5), 1.5, "over");
     case "over_2_5": return ouProb(bet(5), 2.5, "over");
@@ -234,16 +298,20 @@ function marketProb(mk: string, side: string | null, line: number | null, bookma
   return ps.reduce((a, b) => a + b, 0) / ps.length;
 }
 
-type TeamRates = { hgf: number; hga: number; hn: number; agf: number; aga: number; an: number }; // time-decay-weighted
-type Model = { lHome: Map<number, number>; lAway: Map<number, number>; team: Map<number, TeamRates>; elo: Map<number, number> };
-// Build ratings from finished fixtures: time-decayed home/away goal rates per team + per-league means,
-// plus margin/home-adjusted Elo (processed chronologically). Elo also serves as the shrinkage prior for
-// thin-data teams (promoted sides / cups / friendlies). Uses the most recent ~40k in-scope results.
+type Rate = { gf: number; ga: number; n: number }; // time-decay-weighted LEAGUE-RELATIVE ratio sums
+type TeamRates = { home: Rate; away: Rate; all: Rate }; // venue split + overall (blended by VENUE_WEIGHT)
+type Model = { lHome: Map<number, number>; lAway: Map<number, number>; gHome: number; gAway: number; team: Map<number, TeamRates>; elo: Map<number, number> };
+// Build ratings from finished fixtures (two passes). Pass 1: time-decayed goal means per league +
+// global, so pass 2 can normalise every match by the league it was PLAYED in — the cross-league fix
+// (an Estonian side's domestic goals no longer read against the UEFA-competition mean). Pass 2:
+// margin/home-adjusted Elo (chronological) + league-relative attack/defence ratios, venue-split AND
+// overall. Elo doubles as the shrinkage prior for thin-data teams. Most recent ~40k in-scope results.
 async function buildModel(leagueIds: number[]): Promise<Model> {
   const team = new Map<number, TeamRates>();
   const elo = new Map<number, number>();
   const lHomeSum = new Map<number, [number, number]>();
   const lAwaySum = new Map<number, [number, number]>();
+  let gh = 0, ghn = 0, ga = 0, gan = 0;
   if (leagueIds.length) {
     // PostgREST caps every response at 1000 rows regardless of .limit(), so a single .limit(40000)
     // silently returned only 1000 finished fixtures -> across many leagues every team was starved of
@@ -265,61 +333,90 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
     const rows = acc.slice().sort((a: any, b: any) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
     const now = rows.length ? Date.parse(rows[rows.length - 1].kickoff_utc) : Date.now();
     const decay = Math.LN2 / (HALF_LIFE_DAYS * 86400000);
-    const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
+    // PASS 1 — time-decayed league + global goal means
     for (const f of rows) {
-      const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
-      if (hg == null || ag == null || f.home_team_id == null || f.away_team_id == null) continue;
+      const hg = f.ft_home ?? f.home_goals, ag2 = f.ft_away ?? f.away_goals;
+      if (hg == null || ag2 == null || f.home_team_id == null || f.away_team_id == null) continue;
+      const w = Math.exp(-decay * (now - Date.parse(f.kickoff_utc)));
+      const lh = lHomeSum.get(f.league_id) ?? [0, 0]; lh[0] += hg * w; lh[1] += w; lHomeSum.set(f.league_id, lh);
+      const la = lAwaySum.get(f.league_id) ?? [0, 0]; la[0] += ag2 * w; la[1] += w; lAwaySum.set(f.league_id, la);
+      gh += hg * w; ghn += w; ga += ag2 * w; gan += w;
+    }
+    const ghMean = ghn > 0 ? gh / ghn : DEF_HOME, gaMean = gan > 0 ? ga / gan : DEF_AWAY;
+    // small-league means lean on the global mean until they have LEAGUE_SHRINK matches of their own
+    const meanOf = (m: Map<number, [number, number]>, lg: number, g: number) => {
+      const e = m.get(lg); const n = e?.[1] ?? 0;
+      return Math.max(0.1, n + LEAGUE_SHRINK > 0 ? ((e?.[0] ?? 0) + g * LEAGUE_SHRINK) / (n + LEAGUE_SHRINK) : g);
+    };
+    // PASS 2 — Elo + league-relative ratios (venue + overall)
+    const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
+    const newRates = (): TeamRates => ({ home: { gf: 0, ga: 0, n: 0 }, away: { gf: 0, ga: 0, n: 0 }, all: { gf: 0, ga: 0, n: 0 } });
+    for (const f of rows) {
+      const hg = f.ft_home ?? f.home_goals, ag2 = f.ft_away ?? f.away_goals;
+      if (hg == null || ag2 == null || f.home_team_id == null || f.away_team_id == null) continue;
       // Elo update using ratings BEFORE this match (margin- and home-adjusted)
       const rH = getElo(f.home_team_id), rA = getElo(f.away_team_id);
       const exp = 1 / (1 + Math.pow(10, -((rH + HOME_ADV_ELO) - rA) / 400));
-      const s = hg > ag ? 1 : hg === ag ? 0.5 : 0;
+      const s = hg > ag2 ? 1 : hg === ag2 ? 0.5 : 0;
       const dr = (rH + HOME_ADV_ELO) - rA;
-      const gd = Math.abs(hg - ag);
+      const gd = Math.abs(hg - ag2);
       const mult = gd <= 1 ? 1 : Math.log(gd + 1) * (2.2 / (Math.abs(dr) * 0.001 + 2.2));
       const delta = ELO_K * mult * (s - exp);
       elo.set(f.home_team_id, rH + delta); elo.set(f.away_team_id, rA - delta);
-      // time-decayed goal rates (recent matches weigh more)
+      // goals relative to the league THIS match was played in
       const w = Math.exp(-decay * (now - Date.parse(f.kickoff_utc)));
-      const lh = lHomeSum.get(f.league_id) ?? [0, 0]; lh[0] += hg * w; lh[1] += w; lHomeSum.set(f.league_id, lh);
-      const la = lAwaySum.get(f.league_id) ?? [0, 0]; la[0] += ag * w; la[1] += w; lAwaySum.set(f.league_id, la);
-      const h = team.get(f.home_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
-      h.hgf += hg * w; h.hga += ag * w; h.hn += w; team.set(f.home_team_id, h);
-      const a = team.get(f.away_team_id) ?? { hgf: 0, hga: 0, hn: 0, agf: 0, aga: 0, an: 0 };
-      a.agf += ag * w; a.aga += hg * w; a.an += w; team.set(f.away_team_id, a);
+      const mh = meanOf(lHomeSum, f.league_id, ghMean), ma = meanOf(lAwaySum, f.league_id, gaMean);
+      const nh = hg / mh, na = ag2 / ma;
+      const h = team.get(f.home_team_id) ?? newRates();
+      h.home.gf += nh * w; h.home.ga += na * w; h.home.n += w;
+      h.all.gf += nh * w; h.all.ga += na * w; h.all.n += w;
+      team.set(f.home_team_id, h);
+      const a = team.get(f.away_team_id) ?? newRates();
+      a.away.gf += na * w; a.away.ga += nh * w; a.away.n += w;
+      a.all.gf += na * w; a.all.ga += nh * w; a.all.n += w;
+      team.set(f.away_team_id, a);
     }
+    const lHome = new Map<number, number>(), lAway = new Map<number, number>();
+    for (const [lg] of lHomeSum) lHome.set(lg, meanOf(lHomeSum, lg, ghMean));
+    for (const [lg] of lAwaySum) lAway.set(lg, meanOf(lAwaySum, lg, gaMean));
+    return { lHome, lAway, gHome: ghMean, gAway: gaMean, team, elo };
   }
-  const lHome = new Map<number, number>(), lAway = new Map<number, number>();
-  for (const [lg, gn] of lHomeSum) lHome.set(lg, gn[1] ? gn[0] / gn[1] : DEF_HOME);
-  for (const [lg, gn] of lAwaySum) lAway.set(lg, gn[1] ? gn[0] / gn[1] : DEF_AWAY);
-  return { lHome, lAway, team, elo };
+  return { lHome: new Map(), lAway: new Map(), gHome: DEF_HOME, gAway: DEF_AWAY, team, elo };
 }
 function lambdas(m: Model, f: Fixture): { lamH: number; lamA: number; confident: boolean } {
-  // floor league means so a tiny/zero-goal league can never divide to a NaN λ
-  const leagueHome = Math.max(0.1, m.lHome.get(f.league_id) ?? DEF_HOME);
-  const leagueAway = Math.max(0.1, m.lAway.get(f.league_id) ?? DEF_AWAY);
-  // Elo → attack/defence prior (relative to an average team); used as the shrinkage TARGET so a team
-  // with few recent games leans on Elo instead of a neutral 1.0.
-  const eloAttPrior = (id: number | null) => Math.exp((((id != null ? m.elo.get(id) : undefined) ?? ELO_BASE) - ELO_BASE) / ELO_PER_LOG_GOAL);
-  const eloDefPrior = (id: number | null) => Math.exp((-(((id != null ? m.elo.get(id) : undefined) ?? ELO_BASE) - ELO_BASE)) / ELO_PER_LOG_GOAL);
-  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined; // home team's HOME record
-  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined; // away team's AWAY record
-  const Hn = H?.hn ?? 0, An = A?.an ?? 0;
-  const rawHomeAtt = Hn > 0 ? (H!.hgf / Hn) / leagueHome : 1;
-  const rawHomeDef = Hn > 0 ? (H!.hga / Hn) / leagueAway : 1;
-  const rawAwayAtt = An > 0 ? (A!.agf / An) / leagueAway : 1;
-  const rawAwayDef = An > 0 ? (A!.aga / An) / leagueHome : 1;
-  const K = SHRINK;
-  const shrink = (raw: number, n: number, prior: number) => (raw * n + prior * K) / (n + K);
-  const homeAtt = shrink(rawHomeAtt, Hn, eloAttPrior(f.home_team_id));
-  const homeDef = shrink(rawHomeDef, Hn, eloDefPrior(f.home_team_id));
-  const awayAtt = shrink(rawAwayAtt, An, eloAttPrior(f.away_team_id));
-  const awayDef = shrink(rawAwayDef, An, eloDefPrior(f.away_team_id));
+  // the current fixture's league scoring environment (already shrunk toward global; floored vs NaN)
+  const leagueHome = Math.max(0.1, m.lHome.get(f.league_id) ?? m.gHome);
+  const leagueAway = Math.max(0.1, m.lAway.get(f.league_id) ?? m.gAway);
+  // Elo → attack/defence prior (relative to an average team); the shrinkage TARGET so a team with
+  // few recent games leans on Elo instead of a neutral 1.0.
+  const eloOf = (id: number | null) => (id != null ? m.elo.get(id) : undefined) ?? ELO_BASE;
+  const attPrior = (id: number | null) => Math.exp((eloOf(id) - ELO_BASE) / ELO_PER_LOG_GOAL);
+  const defPrior = (id: number | null) => Math.exp(-(eloOf(id) - ELO_BASE) / ELO_PER_LOG_GOAL);
+  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined;
+  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined;
+  // venue record and overall record are each shrunk toward the Elo prior with their OWN sample
+  // size, then blended by VENUE_WEIGHT (ratios are league-relative, so this is cross-league safe)
+  const shrink = (raw: number, n: number, prior: number) => (raw * n + prior * SHRINK) / (n + SHRINK);
+  const blend = (venue: Rate | undefined, all: Rate | undefined, pick: (x: Rate) => number, prior: number) => {
+    const vn = venue?.n ?? 0, an = all?.n ?? 0;
+    const v = shrink(vn > 0 ? pick(venue!) / vn : prior, vn, prior);
+    const o = shrink(an > 0 ? pick(all!) / an : prior, an, prior);
+    return VENUE_WEIGHT * v + (1 - VENUE_WEIGHT) * o;
+  };
+  const homeAtt = blend(H?.home, H?.all, (x) => x.gf, attPrior(f.home_team_id));
+  const homeDef = blend(H?.home, H?.all, (x) => x.ga, defPrior(f.home_team_id));
+  const awayAtt = blend(A?.away, A?.all, (x) => x.gf, attPrior(f.away_team_id));
+  const awayDef = blend(A?.away, A?.all, (x) => x.ga, defPrior(f.away_team_id));
   const clamp = (x: number) => Math.max(0.15, Math.min(6, x));
-  const hMatches = (H?.hn ?? 0) + (H?.an ?? 0), aMatches = (A?.hn ?? 0) + (A?.an ?? 0);
-  const confident = m.lHome.has(f.league_id) && hMatches >= MIN_TEAM_MATCHES && aMatches >= MIN_TEAM_MATCHES;
+  const confident = (H?.all.n ?? 0) >= MIN_TEAM_MATCHES && (A?.all.n ?? 0) >= MIN_TEAM_MATCHES;
   return { lamH: clamp(leagueHome * homeAtt * awayDef), lamA: clamp(leagueAway * awayAtt * homeDef), confident };
 }
-function tierOf(edge: number): string { return edge >= 0.05 ? "elite" : edge >= 0.04 ? "strong" : "wide"; }
+// rank on the CAPPED edge so an implausible number can't outrank a genuine one
+const rankEdge = (e: number | null) => (e == null ? -1 : Math.min(e, MAX_PLAUSIBLE_EDGE));
+function tierOf(edge: number): string {
+  if (edge > MAX_PLAUSIBLE_EDGE) return "wide"; // model vs reality, not model vs market — amber
+  return edge >= 0.05 ? "elite" : edge >= 0.04 ? "strong" : "wide";
+}
 
 const FAMILIES: Record<string, { mk: string; side: string | null; line: number | null }[]> = {
   result_best: [
@@ -516,6 +613,77 @@ async function bookmakersFor(fixtureId: number, key: string): Promise<any[]> {
     return bms;
   } catch { oddsCache.set(fixtureId, []); return []; }
 }
+// ---------- self-calibration: does reality agree with the model's confident calls? ----------
+// Loads the stored temperature every run; once a day, measures realized calibration of the last 30
+// days' PRICED settled picks in the confident band (model_prob >= 0.6) and nudges TEMP in small
+// bounded steps: predicted running hot vs actual → flatten (+0.05, cap 1.3); running cold → sharpen
+// back toward the fitted anchor (−0.05, floor 1). Evidence-gated at n >= 200 so it never reacts to
+// noise; the snapshot is stored on model_params.calibration for the admin to inspect.
+async function maybeRecalibrate(): Promise<void> {
+  const { data: mp } = await sb.from("model_params").select("temp,last_calib_at").eq("id", 1).maybeSingle();
+  if (mp?.temp != null && Number.isFinite(Number(mp.temp))) TEMP = Number(mp.temp) || 1;
+  if (mp?.last_calib_at && Date.now() - Date.parse(mp.last_calib_at) < 24 * 3600 * 1000) return;
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: rows } = await sb.from("deliveries").select("model_prob,result")
+    .in("result", ["won", "lost"]).not("model_prob", "is", null).gte("delivered_at", since).limit(2000);
+  const hi = (rows ?? []).filter((r: any) => Number(r.model_prob) >= 0.6);
+  const n = hi.length;
+  let snapshot: Record<string, unknown> = { n, checked_at: new Date().toISOString() };
+  let temp = TEMP;
+  if (n >= 200) {
+    const pred = hi.reduce((s: number, r: any) => s + Number(r.model_prob), 0) / n;
+    const act = hi.filter((r: any) => r.result === "won").length / n;
+    snapshot = { ...snapshot, pred_hi: Number(pred.toFixed(4)), actual_hi: Number(act.toFixed(4)), temp_before: temp };
+    if (pred - act > 0.03) temp = Math.min(1.3, temp + 0.05);
+    else if (act - pred > 0.03) temp = Math.max(1, temp - 0.05);
+  }
+  TEMP = temp;
+  try {
+    await sb.from("model_params").upsert({ id: 1, temp, last_calib_at: new Date().toISOString(), calibration: snapshot, updated_at: new Date().toISOString() });
+  } catch { /* knob store unavailable → keep running on the loaded/default temp */ }
+}
+
+// ---------- league memory: WHERE has the model actually been good? ----------
+// Global across all strategies (this measures the model + data quality per league, not user taste).
+// CLV-first like learnAdjust, realized fair-odds ROI as fallback, shrunk toward 0 so a league only
+// earns a reputation with sample size. Used to (a) nudge pick RANKING, (b) keep 🎲 surprise rolls
+// out of leagues we've measurably struggled in, (c) order unpriced picks — their first learning
+// signal (their leagues' priced track record generalises to them).
+type LeagueMem = { clvN: number; clvSum: number; roiN: number; roiSum: number };
+async function buildLeagueMemory(): Promise<Map<number, LeagueMem>> {
+  const mem = new Map<number, LeagueMem>();
+  const since = new Date(Date.now() - 60 * 86400000).toISOString();
+  const { data } = await sb.from("deliveries")
+    .select("clv,result,market_prob,fixtures(league_id)")
+    .gte("delivered_at", since).not("market_prob", "is", null).limit(3000);
+  for (const d of (data ?? []) as any[]) {
+    const lg = d.fixtures?.league_id;
+    if (lg == null) continue;
+    const m = mem.get(lg) ?? { clvN: 0, clvSum: 0, roiN: 0, roiSum: 0 };
+    if (d.clv != null && Number.isFinite(Number(d.clv))) { m.clvN++; m.clvSum += Number(d.clv); }
+    const kp = Number(d.market_prob);
+    if ((d.result === "won" || d.result === "lost") && kp > 0 && kp < 1) {
+      m.roiN++; m.roiSum += d.result === "won" ? 1 / kp - 1 : -1;
+    }
+    mem.set(lg, m);
+  }
+  return mem;
+}
+const MEM_SHRINK = 5;    // pseudo-samples pulling a league's score toward neutral
+const MEM_CLAMP = 0.03;  // a league's reputation can sway ranking by at most ±3% edge-equivalent
+function leagueScore(mem: Map<number, LeagueMem>, leagueId: number): number {
+  const m = mem.get(leagueId);
+  if (!m) return 0;
+  let s = 0;
+  if (m.clvN >= 5) s = m.clvSum / (m.clvN + MEM_SHRINK);
+  else if (m.roiN >= 5) s = (m.roiSum / (m.roiN + MEM_SHRINK)) * 0.2; // ROI (±1/pick) scaled into CLV units
+  return Math.max(-MEM_CLAMP, Math.min(MEM_CLAMP, s));
+}
+const memSamples = (mem: Map<number, LeagueMem>, lg: number): number => {
+  const m = mem.get(lg);
+  return m ? Math.max(m.clvN, m.roiN) : 0;
+};
+
 // stable shard bucket for a strategy id (parallel cron fan-out)
 function hashShard(id: string, shards: number): number {
   let h = 0;
@@ -536,7 +704,8 @@ async function pickFamily(fam: string, cell: Cell, f: Fixture, key: string, minE
     const kp = marketProb(c.mk, c.side, c.line, bms);
     if (kp != null && kp > 0 && kp < 1) {
       const edge = mp - kp;
-      if (!priced || edge > priced.edge) priced = { c, mp, kp, edge };
+      // compare CAPPED edges so one implausible number can't beat every sane option in the family
+      if (!priced || rankEdge(edge) > rankEdge(priced.edge)) priced = { c, mp, kp, edge };
     }
     if (mp >= 0.5 && (!model || mp > model.mp)) model = { c, mp };
   }
@@ -548,7 +717,7 @@ async function pickFamily(fam: string, cell: Cell, f: Fixture, key: string, minE
   }
   return null;
 }
-async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>): Promise<Scored[]> {
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>): Promise<Scored[]> {
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
   const baseFamily = isFamily(baseMk);
   const priced: Scored[] = [], unpriced: Scored[] = [];
@@ -595,8 +764,15 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
     const edge = mp - kp;
     priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });
   }
-  const overBar = priced.filter((p) => (p.edge ?? -1) >= (strategy.min_edge ?? 0)).sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0));
-  unpriced.sort((a, b) => new Date(a.f.kickoff_utc).getTime() - new Date(b.f.kickoff_utc).getTime());
+  // league memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test
+  const overBar = priced
+    .filter((p) => (p.edge ?? -1) >= (strategy.min_edge ?? 0))
+    .sort((a, b) => (rankEdge(b.edge) + leagueScore(mem, b.f.league_id)) - (rankEdge(a.edge) + leagueScore(mem, a.f.league_id)));
+  // unpriced picks get their first learning signal here: leagues with a good priced track record
+  // rise, struggling ones sink; ties keep the old soonest-kickoff order
+  unpriced.sort((a, b) =>
+    (leagueScore(mem, b.f.league_id) - leagueScore(mem, a.f.league_id)) ||
+    (new Date(a.f.kickoff_utc).getTime() - new Date(b.f.kickoff_utc).getTime()));
   return [...overBar, ...unpriced];
 }
 
@@ -607,6 +783,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
 async function learnAdjust(strategy: any): Promise<{ next: number; basis: string; metric: number; sample: number } | null> {
   if (!strategy.learning) return null;
   const cur = strategy.min_edge ?? 0;
+  // ADAPTIVE step: proportional to how strong the signal is (a barely-negative CLV crawls, a
+  // clearly-negative one moves decisively), bounded so one adjustment can never whipsaw the bar
+  const stepFor = (mag: number) => Math.min(0.01, Math.max(0.0025, mag * 0.5));
 
   const { data: clvRows } = await sb.from("deliveries").select("clv")
     .eq("strategy_id", strategy.id).not("clv", "is", null)
@@ -615,8 +794,8 @@ async function learnAdjust(strategy: any): Promise<{ next: number; basis: string
   if (clvs.length >= 20) {
     const avgClv = clvs.reduce((a, b) => a + b, 0) / clvs.length;
     let next = cur;
-    if (avgClv < -0.003) next = Math.min(0.08, cur + 0.005);       // taking worse-than-close prices → tighten
-    else if (avgClv > 0.008) next = Math.max(0, cur - 0.005);      // consistently beating the close → widen
+    if (avgClv < -0.003) next = Math.min(0.08, cur + stepFor(Math.abs(avgClv)));  // taking worse-than-close prices → tighten
+    else if (avgClv > 0.008) next = Math.max(0, cur - stepFor(avgClv));           // consistently beating the close → widen
     return { next: Number(next.toFixed(4)), basis: "clv", metric: Number(avgClv.toFixed(4)), sample: clvs.length };
   }
 
@@ -632,8 +811,8 @@ async function learnAdjust(strategy: any): Promise<{ next: number; basis: string
   if (cnt < 20) return null;
   const avgRoi = roi / cnt;
   let next = cur;
-  if (avgRoi < -0.05) next = Math.min(0.08, cur + 0.005);
-  else if (avgRoi > 0.05) next = Math.max(0, cur - 0.005);
+  if (avgRoi < -0.05) next = Math.min(0.08, cur + stepFor(Math.abs(avgRoi) * 0.1)); // ROI (±1/pick) scaled into CLV units
+  else if (avgRoi > 0.05) next = Math.max(0, cur - stepFor(avgRoi * 0.1));
   return { next: Number(next.toFixed(4)), basis: "roi", metric: Number(avgRoi.toFixed(4)), sample: cnt };
 }
 
@@ -658,7 +837,7 @@ async function windowLeagueIds(fromIso: string, toIso: string): Promise<number[]
     .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
   return Array.from(new Set((data ?? []).map((r: any) => r.league_id).filter((x: any) => x != null)));
 }
-async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string): Promise<number[] | "all"> {
+async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string, mem: Map<number, LeagueMem>): Promise<number[] | "all"> {
   // legacy rows without league_mode: empty league_ids historically meant "all", else "fixed"
   const mode = strategy.league_mode ?? (Array.isArray(strategy.league_ids) && strategy.league_ids.length ? "fixed" : "all");
   if (mode === "all") return "all";
@@ -667,14 +846,23 @@ async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string): 
   // strategy.id) so two runs of the same agent can roll different leagues.
   const active = await windowLeagueIds(fromIso, toIso);
   if (!active.length) return [];
+  // Friendlies are excluded from surprise rolls: their provider coverage is unreliable for
+  // settlement (venue/team swaps, mis-attributed goals, no scorer names) — a random agent
+  // shouldn't gamble on data quality. A user can still target them with fixed leagues.
+  const { data: fr } = await sb.from("leagues").select("id").ilike("name", "%friendl%");
+  const friendlies = new Set((fr ?? []).map((r: any) => r.id));
+  // ...and league memory keeps rolls out of leagues we've MEASURABLY struggled in (clearly
+  // negative score with enough samples). Cold today can warm back up as the memory window rolls.
+  const cold = (id: number) => leagueScore(mem, id) <= -0.015 && memSamples(mem, id) >= 8;
+  const trusted = active.filter((id) => !friendlies.has(id) && !cold(id));
   const maxLeagues = await planMaxLeagues(strategy.user_id);
   const count = maxLeagues; // widest net the plan allows; the shuffle below keeps WHICH leagues fresh each run
-  const pool = active.slice();
+  const pool = (trusted.length ? trusted : active).slice();
   for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
   return pool.slice(0, count);
 }
 
-async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Cell>, key: string): Promise<number> {
+async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Cell>, key: string, mem: Map<number, LeagueMem>): Promise<number> {
   const nowIso = new Date().toISOString();
   const tz = strategy.timezone || "Africa/Lagos";
   const learned = await learnAdjust(strategy);
@@ -729,7 +917,7 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
   else if (target === "future") { const [, e] = tzDayBoundsISO(tz, 3); fromIso = nowIso; toIso = e; }
 
   // Resolve leagues for THIS run (surprise re-rolls fresh from the window above).
-  const leagues = await resolveLeagueIds(strategy, fromIso, toIso);
+  const leagues = await resolveLeagueIds(strategy, fromIso, toIso, mem);
   const rolledLeagueIds = strategy.league_mode === "surprise" && leagues !== "all" ? leagues : null;
   if (leagues !== "all" && leagues.length === 0) return 0; // no in-window leagues to hunt this run
 
@@ -747,7 +935,7 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
     ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
     : [];
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
-  const ranked = (await scoreAndRank(strategy, candidates, model, aggCache, key, rule, formMap)).slice(0, room);
+  const ranked = (await scoreAndRank(strategy, candidates, model, aggCache, key, rule, formMap, mem)).slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this") from the SAME data that drove the call:
   // each team's last-5 form + goals, the head-to-head record, and the model's win/over probs.
@@ -774,7 +962,15 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
 
   const rows = ranked.map((r) => {
     const reasons = reasonsByFx.get(r.f.id) ?? null;
-    const criteria = { ...(rolledLeagueIds ? { rolled_league_ids: rolledLeagueIds } : {}), ...(reasons ? { reasons } : {}) };
+    const lmem = leagueScore(mem, r.f.league_id);
+    const criteria = {
+      // the selectivity bar in force when this pick was made — the raw material for per-bar
+      // performance analysis (a real bandit over min_edge) once enough history accrues
+      bar: Number(strategy.min_edge ?? 0),
+      ...(lmem ? { league_memory: Number(lmem.toFixed(4)) } : {}),
+      ...(rolledLeagueIds ? { rolled_league_ids: rolledLeagueIds } : {}),
+      ...(reasons ? { reasons } : {}),
+    };
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
       market_key: r.mk ?? "custom",
@@ -887,13 +1083,19 @@ Deno.serve(async (req) => {
         .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
       for (const r of up ?? []) leagueSet.add(r.league_id);
     }
+    // learning layer: load the calibrated temperature (daily self-check) + the league memory
+    // BEFORE any scoring, so every probability and every ranking this run reflects what the
+    // engine has learned from its own delivered picks.
+    await maybeRecalibrate();
+    const mem = await buildLeagueMemory();
+
     const model = await buildModel(Array.from(leagueSet));
     const aggCache = new Map<number, Cell>();
     const key = await getSecret("api_football_key");
 
     let inserted = 0;
-    for (const s of strategies) inserted += await runStrategy(s, model, aggCache, key);
-    return json({ strategies: strategies.length, inserted, oddsCalls });
+    for (const s of strategies) inserted += await runStrategy(s, model, aggCache, key, mem);
+    return json({ strategies: strategies.length, inserted, oddsCalls, temp: TEMP });
   } catch (e) {
     console.error("run-strategies failed:", e);
     return json({ error: String(e instanceof Error ? e.message : e) }, 500);
