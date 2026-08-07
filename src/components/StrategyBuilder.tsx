@@ -578,6 +578,30 @@ export default function StrategyBuilder({
       return next;
     });
   }
+  // One-tap quick pick: the big-five European leagues (tier 'top' in the catalog — Premier League,
+  // La Liga, Serie A, Bundesliga, Ligue 1). Toggles: tap again to remove the set.
+  const topEuroIds = useMemo(() => leagues.filter((l) => l.tier === "top").map((l) => l.id), [leagues]);
+  const topEuroAllPicked = topEuroIds.length > 0 && topEuroIds.every((id) => picked.has(id));
+  function toggleTopEuro() {
+    setLeagueSurprise(false);
+    setMsg(null);
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (topEuroAllPicked) {
+        for (const id of topEuroIds) next.delete(id);
+        return next;
+      }
+      for (const id of topEuroIds) {
+        if (next.has(id)) continue;
+        if (next.size >= maxLeagues) {
+          setMsg(`Your ${plan.replace("_", " ")} plan covers ${maxLeagues} leagues — added what fit.`);
+          break;
+        }
+        next.add(id);
+      }
+      return next;
+    });
+  }
   // clear every picked league at once (also leaves surprise mode) — works even for picks that aren't
   // visible in the current window/list
   function clearLeagues() {
@@ -996,14 +1020,23 @@ export default function StrategyBuilder({
 
           {/* 04 leagues */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <div className="mb-3.5 flex items-center gap-2.5">
+            <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
               <span className="rounded-md bg-flood/15 px-1.5 py-0.5 font-mono text-[11px] font-bold text-flood-deep">04</span>
               <span className="font-disp text-[16px] font-bold text-ink">Which leagues?</span>
               <span className="font-mono text-[10.5px] text-ink-mute">{plan.replace("_", " ")} · up to {maxLeagues}</span>
               <button
                 type="button"
-                onClick={surpriseLeagues}
+                onClick={toggleTopEuro}
                 className={`ml-auto rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
+                  topEuroAllPicked ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
+                }`}
+              >
+                🏆 Top Europe
+              </button>
+              <button
+                type="button"
+                onClick={surpriseLeagues}
+                className={`rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
                   leagueSurprise ? "border-flood bg-flood/15 text-flood-deep" : "border-ink/20 text-ink hover:border-ink/40"
                 }`}
               >
