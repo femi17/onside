@@ -15,10 +15,18 @@ export type StrategyCard = {
   league_count: number;
   status: string; // running | paused | draft
   has_rule: boolean;
+  deliver_at: string | null; // "HH:MM"
+  target_day: string; // same_day | tomorrow | saturday | sunday | weekend | future
   delivered: number;
   last14: { won: number; total: number };
   vs_market: number | null; // avg edge %, signed
   spark: ("won" | "lost" | "pending")[];
+};
+
+// compact window tag shown after the delivery time ("07:30 · Sat")
+const TARGET_TAG: Record<string, string> = {
+  same_day: " · same day", tomorrow: " · next day", saturday: " · Sat", sunday: " · Sun",
+  weekend: " · weekend", future: " · 3 days",
 };
 
 export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyCard[]; maxAgents: number }) {
@@ -101,6 +109,7 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
               </div>
 
               <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
+                <Stat k="Delivers" v={c.deliver_at ? `${c.deliver_at}${TARGET_TAG[c.target_day] ?? ""}` : "—"} />
                 <Stat k="Last 14d" v={c.last14.total ? `${c.last14.won}/${c.last14.total}` : "—"} />
                 <Stat k="vs market" v={c.vs_market == null ? "—" : `${c.vs_market > 0 ? "+" : ""}${c.vs_market.toFixed(1)}%`} tone={c.vs_market == null ? undefined : c.vs_market >= 0 ? "up" : "down"} />
                 <Stat k="Delivered" v={String(c.delivered)} />

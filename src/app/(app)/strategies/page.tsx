@@ -12,7 +12,7 @@ export default async function StrategiesPage() {
   const [{ data: strategies }, { data: deliveries }, { data: profile }] = await Promise.all([
     supabase
       .from("strategies")
-      .select("id, name, market_label, league_ids, status, rule_text")
+      .select("id, name, market_label, league_ids, status, rule_text, deliver_at, target_day")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -44,6 +44,8 @@ export default async function StrategiesPage() {
       league_count: Array.isArray(s.league_ids) ? (s.league_ids as number[]).length : 0,
       status: (s.status as string) ?? "draft",
       has_rule: !!(s.rule_text as string | null),
+      deliver_at: s.deliver_at ? String(s.deliver_at).slice(0, 5) : null,
+      target_day: (s.target_day as string) ?? "same_day",
       delivered: ds.length,
       last14: { won: last14.filter((d) => d.result === "won").length, total: last14.length },
       vs_market: edges.length ? (edges.reduce((a, b) => a + b, 0) / edges.length) * 100 : null,
