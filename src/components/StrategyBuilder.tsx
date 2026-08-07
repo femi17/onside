@@ -452,14 +452,30 @@ export default function StrategyBuilder({
     if (period && period !== "ft" && !/half/i.test(label)) label = `${label} (${period === "1h" ? "1st half" : "2nd half"})`;
     return label;
   }
+  // Sideless early-payout phrasings expand to BOTH team variants — "1x2 1up" means the agent
+  // weighs Home 1UP vs Away 1UP per game and sends the stronger side.
+  function expandOutcomes(text: string): MixItem[] | null {
+    const raw = text.toLowerCase();
+    if (!/\b(1x2|match result|full ?time result|result)\b/.test(raw)) return null;
+    const pair = (hk: string, hl: string, ak: string, al: string): MixItem[] => [
+      { market_key: hk, label: hl, side: "home", line: null, period: "ft", bet_value: null },
+      { market_key: ak, label: al, side: "away", line: null, period: "ft", bet_value: null },
+    ];
+    if (/\b1\s*-?up\b/.test(raw)) return pair("home_win_1up", "Home 1UP", "away_win_1up", "Away 1UP");
+    if (/\b2\s*-?up\b/.test(raw)) return pair("home_win_2up", "Home 2UP", "away_win_2up", "Away 2UP");
+    if (/never\s*down/.test(raw)) return pair("home_win_never_down", "Home Never Down", "away_win_never_down", "Away Never Down");
+    return null;
+  }
   // Several outcomes typed at once in the describe box ("over 2.5, btts, home win") — recognise
   // each part so "Add to mix" can add them all in one go, with per-part feedback.
-  type Seg = { text: string; ok: true; item: MixItem } | { text: string; ok: false; why: string };
+  type Seg = { text: string; ok: true; items: MixItem[] } | { text: string; ok: false; why: string };
   const customSegs = useMemo<Seg[]>(() => {
     if (mode !== "custom") return [];
     const parts = customText.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
-    if (parts.length < 2) return [];
-    return parts.map((text): Seg => {
+    if (!parts.length) return [];
+    const segs = parts.map((text): Seg => {
+      const ex = expandOutcomes(text);
+      if (ex) return { text, ok: true, items: ex };
       const p = recognizeBet(text);
       if (!p) return { text, ok: false, why: "not recognised" };
       if (!p.gradeable) return { text, ok: false, why: "can't be auto-graded yet" };
@@ -468,9 +484,13 @@ export default function StrategyBuilder({
       // spell out the whole outcome, and outcomeLabel only appends what's missing
       return {
         text, ok: true,
-        item: { market_key: p.marketKey, label: outcomeLabel(p.label, p.side, p.line, p.period), side: p.side, line: p.line, period: p.period ?? "ft", bet_value: p.value ?? null },
+        items: [{ market_key: p.marketKey, label: outcomeLabel(p.label, p.side, p.line, p.period), side: p.side, line: p.line, period: p.period ?? "ft", bet_value: p.value ?? null }],
       };
     });
+    // a single plain part stays in the normal single-market flow; a single EXPANDING part
+    // (e.g. just "1x2 1up") still gets the multi treatment because it IS several outcomes
+    if (parts.length < 2 && !(segs[0]?.ok && segs[0].items.length > 1)) return [];
+    return segs;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, customText]);
 
@@ -480,7 +500,7 @@ export default function StrategyBuilder({
     setMsg(null); setMixNote(null);
     if (customSegs.length) {
       const skipped = customSegs.filter((s) => !s.ok).map((s) => `“${s.text}” (${(s as { why: string }).why})`);
-      const items = customSegs.flatMap((s) => (s.ok ? [s.item] : []));
+      const items = customSegs.flatMap((s) => (s.ok ? s.items : []));
       if (!items.length) return setMsg(`Couldn't read any of those — ${skipped.join(", ")}.`);
       const next = [...mix];
       const added: string[] = [];
@@ -887,7 +907,7 @@ export default function StrategyBuilder({
                     <div className="mt-2 space-y-1">
                       {customSegs.map((s, i) => (
                         <p key={i} className={`font-mono text-[11px] font-bold ${s.ok ? "text-grass-deep" : "text-brick"}`}>
-                          {s.ok ? <>✓ {s.item.label}</> : <>✗ “{s.text}” — {s.why}</>}
+                          {s.ok ? <>✓ {s.items.map((it) => it.label).join(" + ")}</> : <>✗ “{s.text}” — {s.why}</>}
                         </p>
                       ))}
                       <p className="font-mono text-[10.5px] text-ink-mute">“Add to mix” below adds every ✓ in one go.</p>
@@ -930,7 +950,7 @@ export default function StrategyBuilder({
                   className="ml-auto rounded-md border border-ink/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink transition hover:border-ink/40"
                 >
                   ＋ Add {customSegs.length
-                    ? `${customSegs.filter((s) => s.ok).length} outcomes`
+                    ? `${customSegs.reduce((n, s) => n + (s.ok ? s.items.length : 0), 0)} outcomes`
                     : market
                       ? `“${outcomeLabel(market.label, market.side, market.line, market.period)}”`
                       : "market"} to mix

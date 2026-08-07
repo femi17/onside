@@ -955,14 +955,23 @@ function marketFor(c: Cand, bms: any[]): number | null {
 // numbers at the TOP of the set — a 1X2 "28% edge" in a data-thin league outranked every honest
 // team-goals edge, and a mix delivered home win on every game.
 const setRank = (e: number) => (e <= MAX_PLAUSIBLE_EDGE ? e : Math.max(0, 2 * MAX_PLAUSIBLE_EDGE - e));
+// Early-payout variants (1UP/2UP/Never Down) can't be priced from a final-score matrix, but their
+// BASE result market can — so when several land in the fallback bucket ("1x2 1up" = Home 1UP +
+// Away 1UP), the stronger side by win model gets sent instead of whichever was listed first.
+const FALLBACK_PROXY: Record<string, { mk: string; side: string }> = {
+  home_win_1up: { mk: "home_win", side: "home" }, away_win_1up: { mk: "away_win", side: "away" },
+  home_win_2up: { mk: "home_win", side: "home" }, away_win_2up: { mk: "away_win", side: "away" },
+  home_win_never_down: { mk: "home_win", side: "home" }, away_win_never_down: { mk: "away_win", side: "away" },
+  double_chance_1x_1up: { mk: "double_chance_1x", side: "1x" }, double_chance_x2_1up: { mk: "double_chance_x2", side: "x2" },
+};
 async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minEdge: number): Promise<Scored | null> {
   const bms = await bookmakersFor(f.id, key);
   let priced: { c: Cand; mp: number; kp: number; edge: number } | null = null;
   let model: { c: Cand; mp: number } | null = null;
-  let fallback: Cand | null = null;
+  const fallbacks: Cand[] = [];
   for (const c of cands) {
     const mp = modelFor(cell, c);
-    if (mp == null) { fallback = fallback ?? c; continue; }
+    if (mp == null) { fallbacks.push(c); continue; }
     const kp = marketFor(c, bms);
     if (kp != null && kp > 0 && kp < 1) {
       const edge = mp - kp;
@@ -976,7 +985,18 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   });
   if (priced && priced.edge >= minEdge) return out(priced.c, { edge: priced.edge, tier: tierOf(priced.edge), model_prob: priced.mp, market_prob: priced.kp });
   if (model) return out(model.c, { model_prob: model.mp });
-  if (fallback) return out(fallback, {});
+  if (fallbacks.length) {
+    let best = fallbacks[0];
+    if (cell.confident && fallbacks.length > 1) {
+      let bestP = -1;
+      for (const c of fallbacks) {
+        const pr = FALLBACK_PROXY[c.mk];
+        const p = pr ? modelProb(pr.mk, pr.side, null, aggFor(cell, periodOf(c))) : null;
+        if (p != null && p > bestP) { bestP = p; best = c; }
+      }
+    }
+    return out(best, {});
+  }
   return null;
 }
 async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>): Promise<Scored[]> {
