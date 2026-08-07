@@ -390,17 +390,25 @@ export default function StrategyBuilder({
     return () => { cancelled = true; clearTimeout(id); };
   }, [picked, target, supabase]);
 
-  // keep the delivery time sensible: for a same-day-style target it must still be ahead today, and
-  // it must beat the first kickoff so picks always arrive before the matches start
+  // A same-day time that's already passed is FINE — the engine simply fires at its next chance
+  // (right away if the agent hasn't run today, else tomorrow at that time). The old hard block here
+  // pushed people to switch to "Tomorrow", which delivers the WRONG day's slate; now it's a note.
+  const sameDayLater = useMemo<boolean>(() => {
+    if (target !== "same_day") return false;
+    const [hh, mm] = time.split(":").map(Number);
+    if (Number.isNaN(hh)) return false;
+    const now = new Date();
+    const dt = new Date(now); dt.setHours(hh, mm, 0, 0);
+    return dt.getTime() <= now.getTime();
+  }, [target, time]);
+
+  // keep the delivery time ahead of the first kickoff so picks arrive before the matches start
+  // (skipped when today's time already passed — the delivery is tomorrow, so today's kickoff
+  // doesn't constrain it)
   const deliveryWarn = useMemo<string | null>(() => {
     const [hh, mm] = time.split(":").map(Number);
     if (Number.isNaN(hh)) return null;
-    if (target === "same_day") {
-      const now = new Date();
-      const dt = new Date(now); dt.setHours(hh, mm, 0, 0);
-      if (dt.getTime() <= now.getTime()) return "That time already passed today — pick a later time, or choose Tomorrow.";
-    }
-    if (DAY_MATCHED.has(target) && earliestKickoff) {
+    if (DAY_MATCHED.has(target) && !sameDayLater && earliestKickoff) {
       const ko = new Date(earliestKickoff);
       const dt = new Date(ko); dt.setHours(hh, mm, 0, 0);
       if (dt.getTime() >= ko.getTime()) {
@@ -409,7 +417,7 @@ export default function StrategyBuilder({
       }
     }
     return null;
-  }, [target, time, earliestKickoff]);
+  }, [target, time, earliestKickoff, sameDayLater]);
 
   // surprise element — roll from the whole pool (incl. markets with no button on the page) so the
   // pick is genuinely unknown until it lands, then reveal it
@@ -982,6 +990,11 @@ export default function StrategyBuilder({
             </div>
             {deliveryWarn ? (
               <p className="mt-2 text-[12.5px] font-semibold text-brick">{deliveryWarn}</p>
+            ) : sameDayLater ? (
+              <p className="mt-2 text-[12px] text-ink-mute">
+                {time} already passed today — the agent runs at its next chance: right away if it
+                hasn&apos;t delivered today, otherwise tomorrow at {time}.
+              </p>
             ) : DAY_MATCHED.has(target) && earliestKickoff ? (
               <p className="mt-2 text-[12px] text-ink-mute">
                 First match at {new Date(earliestKickoff).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — you&apos;ll get picks before then.
