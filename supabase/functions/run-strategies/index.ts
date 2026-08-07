@@ -717,6 +717,12 @@ type Cand = { mk: string; side: string | null; line: number | null; period?: str
 // edge, model-only ones on probability, and a model-less outcome (corners, cards, non-FT periods)
 // is the unpriced fallback — so a mix like "home win + corners + 1st-half over 0.5" still delivers
 // something honest when the model can't price anything.
+// Within a set, an edge past the plausibility cap ranks LOWER the further past it goes (mirrored
+// around the cap, floored at 0): past MAX_PLAUSIBLE_EDGE the model is almost certainly wrong about
+// reality, so a sane candidate must be able to beat it. Merely capping (rankEdge) put implausible
+// numbers at the TOP of the set — a 1X2 "28% edge" in a data-thin league outranked every honest
+// team-goals edge, and a mix delivered home win on every game.
+const setRank = (e: number) => (e <= MAX_PLAUSIBLE_EDGE ? e : Math.max(0, 2 * MAX_PLAUSIBLE_EDGE - e));
 async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minEdge: number): Promise<Scored | null> {
   const bms = await bookmakersFor(f.id, key);
   let priced: { c: Cand; mp: number; kp: number; edge: number } | null = null;
@@ -729,8 +735,7 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
     const kp = marketProb(c.mk, c.side, c.line, bms);
     if (kp != null && kp > 0 && kp < 1) {
       const edge = mp - kp;
-      // compare CAPPED edges so one implausible number can't beat every sane option in the set
-      if (!priced || rankEdge(edge) > rankEdge(priced.edge)) priced = { c, mp, kp, edge };
+      if (!priced || setRank(edge) > setRank(priced.edge)) priced = { c, mp, kp, edge };
     }
     if (mp >= 0.5 && (!model || mp > model.mp)) model = { c, mp };
   }
