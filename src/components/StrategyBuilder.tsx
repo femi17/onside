@@ -578,23 +578,36 @@ export default function StrategyBuilder({
       return next;
     });
   }
-  // One-tap quick pick: the big-five European leagues (tier 'top' in the catalog — Premier League,
-  // La Liga, Serie A, Bundesliga, Ligue 1). Toggles: tap again to remove the set.
-  const topEuroIds = useMemo(() => leagues.filter((l) => l.tier === "top").map((l) => l.id), [leagues]);
-  const topEuroAllPicked = topEuroIds.length > 0 && topEuroIds.every((id) => picked.has(id));
-  function toggleTopEuro() {
+  // One-tap quick picks: 🏆 Top Europe = every European country's TOP division (tier 'top'),
+  // 🥈 Mid tier = their second divisions (tier 'mid'). Ordered by football-country strength so
+  // a plan's league cap fills with the strongest competitions first. Tap again to remove the set.
+  const EURO_RANK = ["England","Spain","Italy","Germany","France","Netherlands","Portugal","Belgium","Scotland","Turkey","Austria","Switzerland","Greece","Denmark","Norway","Sweden","Poland","Croatia","Czech-Republic","Ukraine","Russia","Romania","Serbia","Hungary","Finland","Iceland","Ireland","Wales","Northern-Ireland","Slovakia","Slovenia","Bulgaria","Israel","Cyprus"];
+  const tierSet = (tier: string) =>
+    leagues
+      .filter((l) => l.tier === tier)
+      .sort((a, b) => {
+        const ra = EURO_RANK.indexOf(a.country ?? ""), rb = EURO_RANK.indexOf(b.country ?? "");
+        return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb) || a.name.localeCompare(b.name);
+      })
+      .map((l) => l.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const topEuroIds = useMemo(() => tierSet("top"), [leagues]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const midTierIds = useMemo(() => tierSet("mid"), [leagues]);
+  const allPicked = (ids: number[]) => ids.length > 0 && ids.every((id) => picked.has(id));
+  function toggleTierSet(ids: number[]) {
     setLeagueSurprise(false);
     setMsg(null);
     setPicked((prev) => {
       const next = new Set(prev);
-      if (topEuroAllPicked) {
-        for (const id of topEuroIds) next.delete(id);
+      if (ids.length && ids.every((id) => next.has(id))) {
+        for (const id of ids) next.delete(id);
         return next;
       }
-      for (const id of topEuroIds) {
+      for (const id of ids) {
         if (next.has(id)) continue;
         if (next.size >= maxLeagues) {
-          setMsg(`Your ${plan.replace("_", " ")} plan covers ${maxLeagues} leagues — added what fit.`);
+          setMsg(`Your ${plan.replace("_", " ")} plan covers ${maxLeagues} leagues — added the strongest that fit.`);
           break;
         }
         next.add(id);
@@ -1026,12 +1039,21 @@ export default function StrategyBuilder({
               <span className="font-mono text-[10.5px] text-ink-mute">{plan.replace("_", " ")} · up to {maxLeagues}</span>
               <button
                 type="button"
-                onClick={toggleTopEuro}
+                onClick={() => toggleTierSet(topEuroIds)}
                 className={`ml-auto rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
-                  topEuroAllPicked ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
+                  allPicked(topEuroIds) ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
                 }`}
               >
                 🏆 Top Europe
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleTierSet(midTierIds)}
+                className={`rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
+                  allPicked(midTierIds) ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
+                }`}
+              >
+                🥈 Mid tier
               </button>
               <button
                 type="button"
