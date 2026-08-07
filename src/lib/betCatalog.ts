@@ -171,9 +171,9 @@ const D = (aliases: string[], label: string, side: string | null = null) => A(al
 A(["1", "home", "home win", "home to win", "1x2 home", "1x2 1", "match result home", "full time result home", "ft result home", "result home"], "home_win", "Home win", "home");
 A(["2", "away", "away win", "away to win", "1x2 away", "1x2 2", "match result away", "full time result away", "ft result away", "result away"], "away_win", "Away win", "away");
 A(["x", "draw", "tie", "1x2 draw", "1x2 x", "match result draw", "full time result draw", "ft result draw", "result draw"], "draw", "Draw", "draw");
-A(["1x", "home or draw", "draw or home", "home/draw"], "double_chance_1x", "Home or draw (1X)", "1x");
-A(["x2", "away or draw", "draw or away", "draw/away"], "double_chance_x2", "Draw or away (X2)", "x2");
-A(["12", "home or away", "away or home"], "double_chance_12", "Home or away (12)", "12");
+A(["1x", "home or draw", "draw or home", "home/draw", "double chance 1x", "double chance home"], "double_chance_1x", "Home or draw (1X)", "1x");
+A(["x2", "away or draw", "draw or away", "draw/away", "double chance x2", "double chance away"], "double_chance_x2", "Draw or away (X2)", "x2");
+A(["12", "home or away", "away or home", "double chance 12"], "double_chance_12", "Home or away (12)", "12");
 A(["home dnb", "1 dnb", "home draw no bet"], "dnb", "Home (draw no bet)", "home");
 A(["away dnb", "2 dnb", "away draw no bet"], "dnb", "Away (draw no bet)", "away");
 D(["home no bet"], "Home no bet", "home"); // needs a draw/away sub-pick we don't capture

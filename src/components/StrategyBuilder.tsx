@@ -227,6 +227,7 @@ export default function StrategyBuilder({
   const [detailsOpen, setDetailsOpen] = useState(false); // mobile agent-details slide-over
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [mixNote, setMixNote] = useState<string | null>(null);
   // mixed-outcome agent: several markets in one strategy; non-empty overrides the single market
   const [mix, setMix] = useState<MixItem[]>(existing?.markets ?? []);
 
@@ -434,9 +435,66 @@ export default function StrategyBuilder({
     return null;
   }, [target, time, earliestKickoff, sameDayLater]);
 
-  // add the currently-selected market to the mix (same side/value resolution as saving a single)
+  // Human-readable outcome label: always spells out WHICH selection was chosen (side/line/period),
+  // so a mix chip is never ambiguous — "Match result (1X2)" alone doesn't tell you the pick.
+  function outcomeLabel(base: string, side: string | null, line: number | null, period?: string | null): string {
+    const SIDE_TXT: Record<string, string> = { home: "Home", away: "Away", draw: "Draw", yes: "Yes", no: "No", odd: "Odd", even: "Even", "1x": "Home or draw", "12": "Home or away", x2: "Draw or away" };
+    let label = base;
+    const low = label.toLowerCase();
+    if (side === "over" || side === "under") {
+      if (!(low.includes(side) && (line == null || label.includes(String(line))))) {
+        label = `${label} — ${side === "over" ? "Over" : "Under"}${line != null ? ` ${line}` : ""}`;
+      }
+    } else if (side) {
+      const t = SIDE_TXT[side] ?? side;
+      if (!low.includes(t.toLowerCase())) label = `${label} — ${t}`;
+    }
+    if (period && period !== "ft" && !/half/i.test(label)) label = `${label} (${period === "1h" ? "1st half" : "2nd half"})`;
+    return label;
+  }
+  // Several outcomes typed at once in the describe box ("over 2.5, btts, home win") — recognise
+  // each part so "Add to mix" can add them all in one go, with per-part feedback.
+  type Seg = { text: string; ok: true; item: MixItem } | { text: string; ok: false; why: string };
+  const customSegs = useMemo<Seg[]>(() => {
+    if (mode !== "custom") return [];
+    const parts = customText.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length < 2) return [];
+    return parts.map((text): Seg => {
+      const p = recognizeBet(text);
+      if (!p) return { text, ok: false, why: "not recognised" };
+      if (!p.gradeable) return { text, ok: false, why: "can't be auto-graded yet" };
+      if (p.needsValue) return { text, ok: false, why: `needs ${p.needsValue.label.toLowerCase().replace(/[.?]$/, "")} — add it on its own` };
+      // full label (no " — " split): recognised labels like "1st half — Over 0.5 goals" already
+      // spell out the whole outcome, and outcomeLabel only appends what's missing
+      return {
+        text, ok: true,
+        item: { market_key: p.marketKey, label: outcomeLabel(p.label, p.side, p.line, p.period), side: p.side, line: p.line, period: p.period ?? "ft", bet_value: p.value ?? null },
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, customText]);
+
+  // add the currently-selected market to the mix (same side/value resolution as saving a single);
+  // a comma-separated describe box adds every recognised outcome at once
   function addToMix() {
-    setMsg(null);
+    setMsg(null); setMixNote(null);
+    if (customSegs.length) {
+      const skipped = customSegs.filter((s) => !s.ok).map((s) => `“${s.text}” (${(s as { why: string }).why})`);
+      const items = customSegs.flatMap((s) => (s.ok ? [s.item] : []));
+      if (!items.length) return setMsg(`Couldn't read any of those — ${skipped.join(", ")}.`);
+      const next = [...mix];
+      const added: string[] = [];
+      for (const item of items) {
+        if (next.some((m) => m.market_key === item.market_key && m.side === item.side && m.line === item.line && m.period === item.period && m.bet_value === item.bet_value)) continue;
+        if (next.length >= MIX_MAX) { skipped.push(`“${item.label}” (mix is full at ${MIX_MAX})`); continue; }
+        next.push(item); added.push(item.label);
+      }
+      setMix(next);
+      if (added.length) setMixNote(`Added: ${added.join(" · ")}`);
+      if (skipped.length) setMsg(`Skipped ${skipped.join(", ")}.`);
+      else if (!added.length) setMixNote("Those outcomes are already in the mix.");
+      return;
+    }
     if (!market) return setMsg("Pick or describe a market first, then add it to the mix.");
     if (!market.gradeable) return setMsg("That market can't be auto-graded yet — pick a supported outcome.");
     if (mode === "family") return setMsg("Families already pick the best option per game — mix individual outcomes instead.");
@@ -449,12 +507,14 @@ export default function StrategyBuilder({
         side = sm[rawv.toLowerCase()] ?? rawv.toLowerCase();
       } else { value = rawv; label = `${label} — ${rawv}`; }
     }
+    label = outcomeLabel(label, side, market.line, market.period);
     const item: MixItem = { market_key: market.key, label, side, line: market.line, period: market.period ?? "ft", bet_value: value };
     if (mix.some((m) => m.market_key === item.market_key && m.side === item.side && m.line === item.line && m.period === item.period && m.bet_value === item.bet_value)) {
       return setMsg("That outcome is already in the mix.");
     }
     if (mix.length >= MIX_MAX) return setMsg(`Up to ${MIX_MAX} outcomes per mix.`);
     setMix((xs) => [...xs, item]);
+    setMixNote(`Added: ${label}`);
   }
 
   // surprise element — roll from the whole pool (incl. markets with no button on the page) so the
@@ -822,14 +882,27 @@ export default function StrategyBuilder({
                   className="w-full rounded-xl border border-flood-deep bg-white px-3.5 py-3 text-sm font-semibold text-ink"
                 />
                 {customText.trim() && (
-                  customParsed?.gradeable ? (
-                    <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">✓ Hunting {market?.label}</p>
+                  customSegs.length ? (
+                    // comma-separated list → show exactly what each part resolved to
+                    <div className="mt-2 space-y-1">
+                      {customSegs.map((s, i) => (
+                        <p key={i} className={`font-mono text-[11px] font-bold ${s.ok ? "text-grass-deep" : "text-brick"}`}>
+                          {s.ok ? <>✓ {s.item.label}</> : <>✗ “{s.text}” — {s.why}</>}
+                        </p>
+                      ))}
+                      <p className="font-mono text-[10.5px] text-ink-mute">“Add to mix” below adds every ✓ in one go.</p>
+                    </div>
+                  ) : customParsed?.gradeable ? (
+                    <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">
+                      ✓ Recognised: {market ? outcomeLabel(market.label, market.side, market.line, market.period) : ""}
+                      {market?.needsValue ? " — fill the box below to complete it" : ""}
+                    </p>
                   ) : customParsed ? (
                     <p className="mt-2 font-mono text-[11px] font-bold text-brick">Recognised, but not auto-gradeable yet — pick another.</p>
                   ) : familyFromText(customText) ? (
                     <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">✓ Hunting the best {familyFromText(customText)!.label} per game</p>
                   ) : (
-                    <p className="mt-2 font-mono text-[11px] text-ink-mute">Not recognised yet — try a clearer market name.</p>
+                    <p className="mt-2 font-mono text-[11px] text-ink-mute">Not recognised yet — try a clearer market name. Tip: separate several outcomes with commas.</p>
                   )
                 )}
                 {market?.needsValue && (
@@ -856,16 +929,21 @@ export default function StrategyBuilder({
                   onClick={addToMix}
                   className="ml-auto rounded-md border border-ink/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink transition hover:border-ink/40"
                 >
-                  ＋ Add {market ? `“${market.label}”` : "market"} to mix
+                  ＋ Add {customSegs.length
+                    ? `${customSegs.filter((s) => s.ok).length} outcomes`
+                    : market
+                      ? `“${outcomeLabel(market.label, market.side, market.line, market.period)}”`
+                      : "market"} to mix
                 </button>
               </div>
+              {mixNote && <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">{mixNote}</p>}
               {mix.length > 0 && (
                 <>
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {mix.map((m, i) => (
                       <span key={`${m.market_key}:${m.side}:${m.line}:${m.period}:${m.bet_value}:${i}`} className="inline-flex items-center gap-2 rounded-full border border-flood-deep bg-flood/10 px-3 py-1.5 font-mono text-[11.5px] font-bold text-ink">
                         {m.label}
-                        {m.period && m.period !== "ft" ? ` · ${m.period === "1h" ? "1st half" : "2nd half"}` : ""}
+                        {m.period && m.period !== "ft" && !/half/i.test(m.label) ? ` · ${m.period === "1h" ? "1st half" : "2nd half"}` : ""}
                         <button type="button" onClick={() => setMix((xs) => xs.filter((_, j) => j !== i))} aria-label="Remove from mix" className="text-ink-mute transition-colors hover:text-brick">×</button>
                       </span>
                     ))}
