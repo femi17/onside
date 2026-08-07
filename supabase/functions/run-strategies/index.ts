@@ -526,6 +526,10 @@ function evalCond(c: { field: string; op: string; value: number; value2: number 
   }
 }
 type Eff = { mk: string; side: string | null; line: number | null };
+// Fields a FAMILY strategy ("best of" markets) can only test AFTER the family has chosen its
+// concrete market — before that there is no base market, so these signals are null and a rule
+// like "odds not lower than 1.20" would silently block every game.
+const FAMILY_DEFERRED = new Set(["market_odds", "model_prob", "market_prob", "edge"]);
 // Pick a market from the rule's ordered branches; first matching (or default) wins, else null.
 function applySelect(select: Branch[], sig: Record<string, number | null>): Eff | null {
   for (const b of select) {
@@ -727,6 +731,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
 
     let eff: Eff = { mk: baseMk, side: baseSide, line: baseLine };
     let useFamily = baseFamily;
+    const deferred: Cond[] = []; // base-market filters a family can only test after choosing
 
     // Rules apply to EVERY strategy, including "best"/family markets: filters gate the game,
     // select branches choose the market. Form + opponent-strength signals are available here.
@@ -740,7 +745,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
         homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null,
         cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null);
       let blocked = false;
-      for (const c of rule.filters) if (!evalCond(c, sig)) { blocked = true; break; }
+      for (const c of rule.filters) {
+        // family bases have no base market yet — its odds/edge fields are tested post-pick
+        if (baseFamily && FAMILY_DEFERRED.has(c.field)) { deferred.push(c); continue; }
+        if (!evalCond(c, sig)) { blocked = true; break; }
+      }
       if (blocked) continue;
       if (rule.select.length) {
         const picked = applySelect(rule.select, sig);
@@ -749,19 +758,36 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
       }
     }
 
+    // deferred filters run against the CONCRETE pick's numbers (family choice or select override);
+    // a pick with no odds can't prove it satisfies an odds rule, so it fails closed
+    const passesDeferred = (mp2: number | null, kp2: number | null, e2: number | null): boolean => {
+      if (!deferred.length) return true;
+      const dsig: Record<string, number | null> = {
+        model_prob: mp2, market_prob: kp2, edge: e2,
+        market_odds: kp2 != null && kp2 > 0 ? 1 / kp2 : null,
+      };
+      return deferred.every((c) => evalCond(c, dsig));
+    };
+
     if (useFamily) {
       const chosen = await pickFamily(baseMk, cell, f, key, strategy.min_edge ?? 0);
       if (!chosen) continue;
+      if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
       continue;
     }
 
     const mp = cell.confident ? modelProb(eff.mk, eff.side, eff.line, cell.agg) : null;
-    if (mp == null) { unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null }); continue; }
+    if (mp == null) {
+      if (!passesDeferred(null, null, null)) continue;
+      unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null });
+      continue;
+    }
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketProb(eff.mk, eff.side, eff.line, bms2);
     if (kp == null) continue;
     const edge = mp - kp;
+    if (!passesDeferred(mp, kp, edge)) continue;
     priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });
   }
   // league memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test
