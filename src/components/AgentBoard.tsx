@@ -60,7 +60,7 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
 
     if (r.h2h && r.h2h.n) {
       const s = (n: number) => (n === 1 ? "" : "s");
-      body.push(`When these two met before (last ${r.h2h.n} game${s(r.h2h.n)}): ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}.`);
+      body.push(`When these two met before (last ${r.h2h.n} game${s(r.h2h.n)}): ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)} — shown for context; a couple of old meetings is too little to predict from.`);
     }
 
     // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other
@@ -75,12 +75,16 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
     } else if (r.model) {
       body.push(`Our computer model's ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)}.`);
     }
+    if (r.model) {
+      body.push(`(The rating comes from a full year of each team's results — recent games count most — plus home advantage and how strong their opponents were. That's why a home team can still be favourite when both sides are struggling: it's about who's LESS weak, at home.)`);
+    }
   }
 
   if (p.market_prob != null) body.push(`The bookies' odds say about ${pct(p.market_prob)} (their built-in profit removed, so it's a fair comparison).`);
   if (p.edge != null) {
+    // p.edge is ALREADY a percentage here (the page converts the stored fraction once)
     body.push(
-      `So the model sees a better chance than the odds are paying for — about ${p.edge > 0 ? "+" : ""}${(p.edge * 100).toFixed(1)}% in your favour. The agent only sends picks that clear your bar.`,
+      `So the model sees a better chance than the odds are paying for — about ${p.edge > 0 ? "+" : ""}${p.edge.toFixed(1)}% in your favour. The agent only sends picks that clear your bar.`,
     );
   } else if (!r) {
     body.push(`No odds were available for this game, so the agent went on its model and your rules alone. Treat this one as lower confidence.`);
