@@ -141,8 +141,11 @@ function isDue(s: any, now: Date): boolean {
 
 type Fixture = { id: number; league_id: number; kickoff_utc: string; home_team_id: number | null; away_team_id: number | null };
 
-const FACT = [1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800];
+// factorials to 30 — corners/cards Poissons run to ~14 events, well past the goals matrix's 10
+const FACT: number[] = [1];
+for (let i = 1; i <= 30; i++) FACT.push(FACT[i - 1] * i);
 const pois = (k: number, l: number) => Math.exp(-l) * Math.pow(l, k) / FACT[k];
+const poisOver = (lam: number, line: number) => { let s = 0; for (let k = 0; k <= 30; k++) if (k > line) s += pois(k, lam); return Math.min(1, s); };
 // Dixon–Coles low-score dependence correction (no-op at RHO = 0)
 function dcTau(x: number, y: number, l: number, m: number): number {
   if (x === 0 && y === 0) return 1 - l * m * RHO;
@@ -151,7 +154,7 @@ function dcTau(x: number, y: number, l: number, m: number): number {
   if (x === 1 && y === 1) return 1 - RHO;
   return 1;
 }
-type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[]; hDist: number[]; aDist: number[] };
+type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[]; hDist: number[]; aDist: number[]; hwNil: number; awNil: number };
 // Full score matrix (DC-corrected, temperature-calibrated, renormalised) → every market read off it,
 // so BTTS/team-to-score are proper matrix sums (not the old independent-Poisson product) and all
 // probabilities share the same calibration.
@@ -169,7 +172,7 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
       cells[i][j] = p; total += p;
     }
   }
-  let hw = 0, dr = 0, aw = 0, btts = 0, homeScore = 0, awayScore = 0;
+  let hw = 0, dr = 0, aw = 0, btts = 0, homeScore = 0, awayScore = 0, hwNil = 0, awNil = 0;
   const totalP = new Array(2 * N + 1).fill(0);
   const marg = new Array(2 * N + 1).fill(0);
   const hDist = new Array(N + 1).fill(0); // per-team goal marginals — price team-total lines
@@ -180,15 +183,31 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
     if (i > 0 && j > 0) btts += p;
     if (i > 0) homeScore += p;
     if (j > 0) awayScore += p;
+    if (i > 0 && j === 0) hwNil += p; // win-to-nil needs the joint, so tally it here
+    if (j > 0 && i === 0) awNil += p;
     totalP[i + j] += p;
     marg[i - j + N] += p;
     hDist[i] += p;
     aDist[j] += p;
   }
-  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg, hDist, aDist };
+  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg, hDist, aDist, hwNil, awNil };
 }
 const overP = (agg: Agg, line: number) => { let s = 0; for (let t = 0; t < agg.totalP.length; t++) if (t > line) s += agg.totalP[t]; return s; };
-function modelProb(mk: string, side: string | null, line: number | null, agg: Agg): number | null {
+// bet_value range grammar shared with the settlement grader: "2-3", "4+", bare "2"
+function parseRange(val: string | null | undefined): [number, number] | null {
+  if (!val) return null;
+  const s = String(val).trim();
+  let m = s.match(/^(\d+)\s*-\s*(\d+)$/); if (m) return [Number(m[1]), Number(m[2])];
+  m = s.match(/^(\d+)\s*\+$/); if (m) return [Number(m[1]), 99];
+  m = s.match(/^(\d+)$/); if (m) return [Number(m[1]), Number(m[1])];
+  return null;
+}
+function rangeProb(dist: number[], val: string | null | undefined): number | null {
+  const r = parseRange(val); if (!r) return null;
+  let s = 0; for (let n = 0; n < dist.length; n++) if (n >= r[0] && n <= r[1]) s += dist[n];
+  return s;
+}
+function modelProb(mk: string, side: string | null, line: number | null, agg: Agg, val?: string | null): number | null {
   switch (mk) {
     case "home_win": return agg.hw;
     case "away_win": return agg.aw;
@@ -215,6 +234,32 @@ function modelProb(mk: string, side: string | null, line: number | null, agg: Ag
       for (let n = 0; n < dist.length; n++) if (n > line) over += dist[n];
       return side === "under" ? 1 - over : over;
     }
+    case "dnb": { // draw-no-bet: win prob conditioned on no draw
+      const d = agg.hw + agg.aw;
+      if (d <= 0) return null;
+      return side === "away" ? agg.aw / d : agg.hw / d;
+    }
+    case "odd_even": {
+      let odd = 0; for (let t = 1; t < agg.totalP.length; t += 2) odd += agg.totalP[t];
+      return side === "even" ? 1 - odd : odd;
+    }
+    case "home_odd_even":
+    case "away_odd_even": {
+      const dist = mk === "home_odd_even" ? agg.hDist : agg.aDist;
+      let odd = 0; for (let n = 1; n < dist.length; n += 2) odd += dist[n];
+      return side === "even" ? 1 - odd : odd;
+    }
+    case "exact_goals": {
+      const n = parseRange(val)?.[0] ?? (line != null ? Math.round(line) : null);
+      return n == null ? null : (agg.totalP[n] ?? 0);
+    }
+    case "goal_range": case "multigoals": return rangeProb(agg.totalP, val);
+    case "home_goal_range": case "home_multigoals": return rangeProb(agg.hDist, val);
+    case "away_goal_range": case "away_multigoals": return rangeProb(agg.aDist, val);
+    case "home_clean_sheet": { const p = agg.aDist[0]; return side === "no" ? 1 - p : p; }
+    case "away_clean_sheet": { const p = agg.hDist[0]; return side === "no" ? 1 - p : p; }
+    case "home_win_to_nil": return agg.hwNil;
+    case "away_win_to_nil": return agg.awNil;
     case "handicap": {
       if (line == null || !side) return null;
       const N = (agg.marg.length - 1) / 2;
@@ -253,35 +298,59 @@ function ouProb(bet: any, line: number, sideWant: "over" | "under"): number | nu
   const over = io / (io + iu);
   return sideWant === "over" ? over : 1 - over;
 }
-function bookProb(mk: string, side: string | null, line: number | null, bets: any[]): number | null {
-  const bet = (id: number) => bets.find((b) => Number(b.id) === id);
-  // Double chance from the book's OWN double-chance market (id 12) when quoted — the three DC probs
-  // sum to 2, so de-vig by scaling the inverse odds to that. Falls back to deriving from 1X2.
+// period → API-Football bet id, per market group. null = that market isn't quoted for the period.
+const P_ID = {
+  x1x2: { ft: 1, "1h": 13, "2h": 3 },
+  dc: { ft: 12, "1h": 20, "2h": 33 },
+  totals: { ft: 5, "1h": 6, "2h": 26 },
+  homeTotal: { ft: 16, "1h": 105, "2h": 107 },
+  awayTotal: { ft: 17, "1h": 106, "2h": 108 },
+  btts: { ft: 8, "1h": 34, "2h": 35 },
+  ah: { ft: 4, "1h": 19, "2h": null },
+  oddEven: { ft: 21, "1h": 22, "2h": 63 },
+  dnb: { ft: null, "1h": 109, "2h": 182 }, // FT DNB derived from 1X2 instead
+  corners: { ft: 45, "1h": 77, "2h": 127 },
+} as const;
+type Period = "ft" | "1h" | "2h";
+function bookProb(mk: string, side: string | null, line: number | null, bets: any[], period: Period = "ft"): number | null {
+  const bet = (id: number | null) => (id == null ? undefined : bets.find((b) => Number(b.id) === id));
+  const ftOnly = (id: number) => (period === "ft" ? bet(id) : undefined);
+  // Double chance from the book's OWN double-chance market when quoted — the three DC probs sum
+  // to 2, so de-vig by scaling the inverse odds to that. Falls back to deriving from 1X2.
   const dc = (want: "1x" | "12" | "x2"): number | null => {
-    const b12 = bet(12);
-    if (b12) {
-      const hd = oddOf(b12, "Home/Draw"), ha = oddOf(b12, "Home/Away"), da = oddOf(b12, "Draw/Away");
+    const bdc = bet(P_ID.dc[period]);
+    if (bdc) {
+      const hd = oddOf(bdc, "Home/Draw"), ha = oddOf(bdc, "Home/Away"), da = oddOf(bdc, "Draw/Away");
       if (hd && ha && da) {
         const s = 1 / hd + 1 / ha + 1 / da;
         const p = (want === "1x" ? 1 / hd : want === "12" ? 1 / ha : 1 / da) * (2 / s);
         return Math.min(1, p);
       }
     }
-    const t = threeWay(bet(1));
+    const t = threeWay(bet(P_ID.x1x2[period]));
     return t ? Math.min(1, want === "1x" ? t.home + t.draw : want === "12" ? t.home + t.away : t.draw + t.away) : null;
   };
   switch (mk) {
-    case "home_win": { const t = threeWay(bet(1)); return t ? t.home : null; }
-    case "away_win": { const t = threeWay(bet(1)); return t ? t.away : null; }
-    case "draw": { const t = threeWay(bet(1)); return t ? t.draw : null; }
-    case "result_1x2": { const t = threeWay(bet(1)); return t ? (side === "home" ? t.home : side === "away" ? t.away : t.draw) : null; }
+    case "home_win": { const t = threeWay(bet(P_ID.x1x2[period])); return t ? t.home : null; }
+    case "away_win": { const t = threeWay(bet(P_ID.x1x2[period])); return t ? t.away : null; }
+    case "draw": { const t = threeWay(bet(P_ID.x1x2[period])); return t ? t.draw : null; }
+    case "result_1x2": { const t = threeWay(bet(P_ID.x1x2[period])); return t ? (side === "home" ? t.home : side === "away" ? t.away : t.draw) : null; }
     case "double_chance_1x": return dc("1x");
     case "double_chance_x2": return dc("x2");
     case "double_chance_12": return dc("12");
+    case "dnb": {
+      const b = bet(P_ID.dnb[period]);
+      if (b) { const p = twoWay(b, "Home", "Away"); return p == null ? null : (side === "away" ? 1 - p : p); }
+      if (period !== "ft") return null;
+      const t = threeWay(bet(1));
+      if (!t) return null;
+      const p = t.home / (t.home + t.away);
+      return side === "away" ? 1 - p : p;
+    }
     case "handicap": {
-      // Asian Handicap (id 4): the picked side at line L vs the other side at −L, de-vigged as a pair
+      // Asian Handicap: the picked side at line L vs the other side at −L, de-vigged as a pair
       if (line == null || (side !== "home" && side !== "away")) return null;
-      const b4 = bet(4);
+      const b4 = bet(P_ID.ah[period]);
       if (!b4) return null;
       const sgn = (x: number) => (x > 0 ? `+${x}` : `${x}`);
       const mine = oddOf(b4, `${side === "home" ? "Home" : "Away"} ${sgn(line)}`);
@@ -290,24 +359,38 @@ function bookProb(mk: string, side: string | null, line: number | null, bets: an
       const im = 1 / mine, it = 1 / theirs;
       return im / (im + it);
     }
-    case "over_0_5": return ouProb(bet(5), 0.5, "over");
-    case "over_1_5": return ouProb(bet(5), 1.5, "over");
-    case "over_2_5": return ouProb(bet(5), 2.5, "over");
-    case "over_3_5": return ouProb(bet(5), 3.5, "over");
-    case "under_2_5": return ouProb(bet(5), 2.5, "under");
-    case "under_3_5": return ouProb(bet(5), 3.5, "under");
-    case "total_goals_ou": return line == null ? null : ouProb(bet(5), line, side === "under" ? "under" : "over");
-    case "btts": { const p = twoWay(bet(8), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
-    case "home_to_score": return twoWay(bet(43), "Yes", "No");
-    case "away_to_score": return twoWay(bet(44), "Yes", "No");
-    case "home_goals_ou": return line == null ? null : ouProb(bet(16), line, side === "under" ? "under" : "over"); // Total - Home
-    case "away_goals_ou": return line == null ? null : ouProb(bet(17), line, side === "under" ? "under" : "over"); // Total - Away
+    case "over_0_5": return ouProb(bet(P_ID.totals[period]), 0.5, "over");
+    case "over_1_5": return ouProb(bet(P_ID.totals[period]), 1.5, "over");
+    case "over_2_5": return ouProb(bet(P_ID.totals[period]), 2.5, "over");
+    case "over_3_5": return ouProb(bet(P_ID.totals[period]), 3.5, "over");
+    case "under_2_5": return ouProb(bet(P_ID.totals[period]), 2.5, "under");
+    case "under_3_5": return ouProb(bet(P_ID.totals[period]), 3.5, "under");
+    case "total_goals_ou": return line == null ? null : ouProb(bet(P_ID.totals[period]), line, side === "under" ? "under" : "over");
+    case "btts": { const p = twoWay(bet(P_ID.btts[period]), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
+    case "home_to_score": return period === "ft" ? twoWay(bet(43), "Yes", "No") : null;
+    case "away_to_score": return period === "ft" ? twoWay(bet(44), "Yes", "No") : null;
+    case "home_goals_ou": return line == null ? null : ouProb(bet(P_ID.homeTotal[period]), line, side === "under" ? "under" : "over");
+    case "away_goals_ou": return line == null ? null : ouProb(bet(P_ID.awayTotal[period]), line, side === "under" ? "under" : "over");
+    case "odd_even": { const p = twoWay(bet(P_ID.oddEven[period]), "Odd", "Even"); return p == null ? null : (side === "even" ? 1 - p : p); }
+    case "home_odd_even": { const p = twoWay(ftOnly(23), "Odd", "Even"); return p == null ? null : (side === "even" ? 1 - p : p); }
+    case "away_odd_even": { const p = twoWay(ftOnly(60), "Odd", "Even"); return p == null ? null : (side === "even" ? 1 - p : p); }
+    case "home_clean_sheet": { const p = twoWay(ftOnly(27), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
+    case "away_clean_sheet": { const p = twoWay(ftOnly(28), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
+    case "home_win_to_nil": return twoWay(ftOnly(29), "Yes", "No");
+    case "away_win_to_nil": return twoWay(ftOnly(30), "Yes", "No");
+    case "corners_ou": return line == null ? null : ouProb(bet(P_ID.corners[period]), line, side === "under" ? "under" : "over");
+    case "home_corners_ou": return line == null ? null : ouProb(ftOnly(57), line, side === "under" ? "under" : "over");
+    case "away_corners_ou": return line == null ? null : ouProb(ftOnly(58), line, side === "under" ? "under" : "over");
+    case "corners_1x2": { const t = threeWay(ftOnly(55)); return t ? (side === "home" ? t.home : side === "away" ? t.away : t.draw) : null; }
+    case "cards_ou": return line == null ? null : ouProb(ftOnly(80), line, side === "under" ? "under" : "over");
+    case "home_cards_ou": return line == null ? null : ouProb(ftOnly(82), line, side === "under" ? "under" : "over");
+    case "away_cards_ou": return line == null ? null : ouProb(ftOnly(83), line, side === "under" ? "under" : "over");
     default: return null;
   }
 }
-function marketProb(mk: string, side: string | null, line: number | null, bookmakers: any[]): number | null {
+function marketProb(mk: string, side: string | null, line: number | null, bookmakers: any[], period: Period = "ft"): number | null {
   const ps: number[] = [];
-  for (const bm of bookmakers) { const p = bookProb(mk, side, line, bm.bets ?? []); if (p != null && p > 0 && p < 1) ps.push(p); }
+  for (const bm of bookmakers) { const p = bookProb(mk, side, line, bm.bets ?? [], period); if (p != null && p > 0 && p < 1) ps.push(p); }
   if (!ps.length) return null;
   return ps.reduce((a, b) => a + b, 0) / ps.length;
 }
@@ -425,6 +508,127 @@ function lambdas(m: Model, f: Fixture): { lamH: number; lamA: number; confident:
   const confident = (H?.all.n ?? 0) >= MIN_TEAM_MATCHES && (A?.all.n ?? 0) >= MIN_TEAM_MATCHES;
   return { lamH: clamp(leagueHome * homeAtt * awayDef), lamA: clamp(leagueAway * awayAtt * homeDef), confident };
 }
+// ---------- corners/cards stat models (fed by the collect-stats pipeline) ----------
+// Same shape as the goals model but lighter: league home/away means + per-team for/against ratios
+// (decayed, shrunk toward neutral). fixture_stats only holds what the collector/poll captured, so
+// the model self-activates per team as data accrues — under STAT_MIN_N matches a fixture's stat
+// markets simply stay unpriced (the mix fallback), exactly the pre-model behaviour.
+const STAT_SHRINK = 6, STAT_MIN_N = 3, STAT_HALF_LIFE = 120;
+type StatRates = { forr: number; ag: number; n: number };
+type StatModel = { lgH: Map<number, number>; lgA: Map<number, number>; gH: number; gA: number; team: Map<number, StatRates> } | null;
+async function buildStatModels(): Promise<{ corners: StatModel; cards: StatModel }> {
+  const PAGE = 1000, MAX_ROWS = 15000;
+  const acc: any[] = [];
+  for (let off = 0; off < MAX_ROWS; off += PAGE) {
+    const { data, error } = await sb.from("fixture_stats")
+      .select("corners_home,corners_away,stats,fixtures!inner(league_id,home_team_id,away_team_id,kickoff_utc,status)")
+      .in("fixtures.status", FINISHED)
+      .order("fixture_id", { ascending: false })
+      .range(off, off + PAGE - 1);
+    if (error || !data || !data.length) break;
+    acc.push(...data);
+    if (data.length < PAGE) break;
+  }
+  const decay = Math.LN2 / (STAT_HALF_LIFE * 86400000);
+  const now = Date.now();
+  const build = (get: (r: any) => [number, number] | null): StatModel => {
+    const lgHSum = new Map<number, [number, number]>(), lgASum = new Map<number, [number, number]>();
+    let gh = 0, ga = 0, gn = 0;
+    const rows: { lg: number; h: number; a: number; hid: number; aid: number; w: number }[] = [];
+    for (const r of acc) {
+      const fx = r.fixtures;
+      if (!fx || fx.home_team_id == null || fx.away_team_id == null) continue;
+      const v = get(r);
+      if (!v) continue;
+      const w = Math.exp(-decay * Math.max(0, now - Date.parse(fx.kickoff_utc)));
+      rows.push({ lg: fx.league_id, h: v[0], a: v[1], hid: fx.home_team_id, aid: fx.away_team_id, w });
+      const lh = lgHSum.get(fx.league_id) ?? [0, 0]; lh[0] += v[0] * w; lh[1] += w; lgHSum.set(fx.league_id, lh);
+      const la = lgASum.get(fx.league_id) ?? [0, 0]; la[0] += v[1] * w; la[1] += w; lgASum.set(fx.league_id, la);
+      gh += v[0] * w; ga += v[1] * w; gn += w;
+    }
+    if (gn <= 0) return null;
+    const gH = gh / gn, gA = ga / gn;
+    // small leagues lean on the global mean (same shrinkage idea as the goals model)
+    const mean = (m: Map<number, [number, number]>, lg: number, g: number) => {
+      const e = m.get(lg); const n = e?.[1] ?? 0;
+      return Math.max(0.1, ((e?.[0] ?? 0) + g * STAT_SHRINK) / (n + STAT_SHRINK));
+    };
+    const lgH = new Map<number, number>(), lgA = new Map<number, number>();
+    for (const [lg] of lgHSum) lgH.set(lg, mean(lgHSum, lg, gH));
+    for (const [lg] of lgASum) lgA.set(lg, mean(lgASum, lg, gA));
+    const team = new Map<number, StatRates>();
+    for (const r of rows) {
+      const mh = lgH.get(r.lg) ?? gH, ma = lgA.get(r.lg) ?? gA;
+      const H = team.get(r.hid) ?? { forr: 0, ag: 0, n: 0 };
+      H.forr += (r.h / mh) * r.w; H.ag += (r.a / ma) * r.w; H.n += r.w; team.set(r.hid, H);
+      const A = team.get(r.aid) ?? { forr: 0, ag: 0, n: 0 };
+      A.forr += (r.a / ma) * r.w; A.ag += (r.h / mh) * r.w; A.n += r.w; team.set(r.aid, A);
+    }
+    return { lgH, lgA, gH, gA, team };
+  };
+  const corners = build((r) => (r.corners_home != null && r.corners_away != null ? [Number(r.corners_home), Number(r.corners_away)] : null));
+  const cards = build((r) => {
+    const y = r.stats?.["Yellow Cards"];
+    if (!Array.isArray(y)) return null;
+    const rd = Array.isArray(r.stats?.["Red Cards"]) ? r.stats["Red Cards"] : [0, 0];
+    return [Number(y[0] ?? 0) + Number(rd[0] ?? 0), Number(y[1] ?? 0) + Number(rd[1] ?? 0)];
+  });
+  return { corners, cards };
+}
+type StatLam = { lh: number; la: number; ok: boolean };
+function statLams(m: StatModel, f: Fixture): StatLam | null {
+  if (!m) return null;
+  const lgH = m.lgH.get(f.league_id) ?? m.gH, lgA = m.lgA.get(f.league_id) ?? m.gA;
+  const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined;
+  const A = f.away_team_id != null ? m.team.get(f.away_team_id) : undefined;
+  const sh = (raw: number, n: number) => (raw * n + STAT_SHRINK) / (n + STAT_SHRINK); // shrink toward 1
+  const att = (r?: StatRates) => sh(r && r.n > 0 ? r.forr / r.n : 1, r?.n ?? 0);
+  const def = (r?: StatRates) => sh(r && r.n > 0 ? r.ag / r.n : 1, r?.n ?? 0);
+  const clampL = (x: number) => Math.max(0.3, Math.min(20, x));
+  const ok = (H?.n ?? 0) >= STAT_MIN_N && (A?.n ?? 0) >= STAT_MIN_N;
+  return { lh: clampL(lgH * att(H) * def(A)), la: clampL(lgA * att(A) * def(H)), ok };
+}
+const CORNER_MKS = new Set(["corners_ou", "home_corners_ou", "away_corners_ou", "corners_1x2", "corner_range", "home_corner_range", "away_corner_range"]);
+const CARD_MKS = new Set(["cards_ou", "home_cards_ou", "away_cards_ou"]);
+function statProb(mk: string, side: string | null, line: number | null, val: string | null, lh: number, la: number): number | null {
+  const ou = (lam: number) => (line == null ? null : (side === "under" ? 1 - poisOver(lam, line) : poisOver(lam, line)));
+  switch (mk) {
+    case "corners_ou": case "cards_ou": return ou(lh + la);
+    case "home_corners_ou": case "home_cards_ou": return ou(lh);
+    case "away_corners_ou": case "away_cards_ou": return ou(la);
+    case "corners_1x2": {
+      let h = 0, d = 0, a = 0;
+      for (let x = 0; x <= 25; x++) for (let y = 0; y <= 25; y++) { const p = pois(x, lh) * pois(y, la); if (x > y) h += p; else if (x === y) d += p; else a += p; }
+      const tot = h + d + a;
+      if (tot <= 0) return null;
+      return side === "home" ? h / tot : side === "away" ? a / tot : d / tot;
+    }
+    case "corner_range": { let s = 0; const r = parseRange(val); if (!r) return null; for (let k = 0; k <= 30; k++) if (k >= r[0] && k <= r[1]) s += pois(k, lh + la); return s; }
+    case "home_corner_range": { let s = 0; const r = parseRange(val); if (!r) return null; for (let k = 0; k <= 30; k++) if (k >= r[0] && k <= r[1]) s += pois(k, lh); return s; }
+    case "away_corner_range": { let s = 0; const r = parseRange(val); if (!r) return null; for (let k = 0; k <= 30; k++) if (k >= r[0] && k <= r[1]) s += pois(k, la); return s; }
+    default: return null;
+  }
+}
+// Canonical form for the market-catalog keys the builder can emit — users pick ANY outcome in ANY
+// order, so specific keys (over_2_5, over_8_5_corners, double_chance…) fold into the generic
+// pricers' vocabulary. Unknown keys pass through and simply price as null (= honest fallback).
+function canon(mk: string, side: string | null, line: number | null): { mk: string; side: string | null; line: number | null } {
+  let m = mk.match(/^(over|under)_(\d)_5$/);
+  if (m) return { mk: "total_goals_ou", side: m[1], line: Number(m[2]) + 0.5 };
+  m = mk.match(/^(over|under)_(\d+)_5_corners$/);
+  if (m) return { mk: "corners_ou", side: m[1], line: Number(m[2]) + 0.5 };
+  if (mk === "double_chance") {
+    const s = (side ?? "1x").toLowerCase();
+    return { mk: s === "x2" ? "double_chance_x2" : s === "12" ? "double_chance_12" : "double_chance_1x", side: s, line: null };
+  }
+  if (mk === "teams_to_score") return { mk: "btts", side: side ?? "yes", line: null };
+  if (mk === "home_no_bet") return { mk: "dnb", side: "away", line: null };
+  if (mk === "away_no_bet") return { mk: "dnb", side: "home", line: null };
+  return { mk, side, line };
+}
+// halves as independently thinned Poissons: goals skew slightly to the 2nd half, corners a bit more
+const H1_GOALS = 0.45;
+const H1_CORNERS = 0.44;
 // rank on the CAPPED edge so an implausible number can't outrank a genuine one
 const rankEdge = (e: number | null) => (e == null ? -1 : Math.min(e, MAX_PLAUSIBLE_EDGE));
 function tierOf(edge: number): string {
@@ -709,10 +913,38 @@ function hashShard(id: string, shards: number): number {
   return Math.abs(h) % shards;
 }
 
-type Cell = { agg: Agg; confident: boolean };
+type Cell = { lamH: number; lamA: number; agg: Agg; agg1h?: Agg; agg2h?: Agg; confident: boolean; corn: StatLam | null; card: StatLam | null };
 type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null };
 // one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
 type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
+// the score matrix for the requested period, thinned lazily and cached on the cell
+function aggFor(cell: Cell, period: Period): Agg {
+  if (period === "1h") { if (!cell.agg1h) cell.agg1h = aggregate(cell.lamH * H1_GOALS, cell.lamA * H1_GOALS); return cell.agg1h; }
+  if (period === "2h") { if (!cell.agg2h) cell.agg2h = aggregate(cell.lamH * (1 - H1_GOALS), cell.lamA * (1 - H1_GOALS)); return cell.agg2h; }
+  return cell.agg;
+}
+const periodOf = (c: Cand): Period => (c.period === "1h" || c.period === "2h" ? c.period : "ft");
+// Model probability for ANY candidate outcome: corners/cards route to the stat models, everything
+// else reads off the (period-appropriate) score matrix. null = the model can't price it (honest).
+function modelFor(cell: Cell, c: Cand): number | null {
+  const k = canon(c.mk, c.side, c.line);
+  const period = periodOf(c);
+  if (CORNER_MKS.has(k.mk)) {
+    if (!cell.corn?.ok) return null;
+    const share = period === "1h" ? H1_CORNERS : period === "2h" ? 1 - H1_CORNERS : 1;
+    return statProb(k.mk, k.side, k.line, c.bet_value ?? null, cell.corn.lh * share, cell.corn.la * share);
+  }
+  if (CARD_MKS.has(k.mk)) {
+    if (!cell.card?.ok || period !== "ft") return null; // cards skew heavily late — FT only
+    return statProb(k.mk, k.side, k.line, c.bet_value ?? null, cell.card.lh, cell.card.la);
+  }
+  if (!cell.confident) return null;
+  return modelProb(k.mk, k.side, k.line, aggFor(cell, period), c.bet_value ?? null);
+}
+function marketFor(c: Cand, bms: any[]): number | null {
+  const k = canon(c.mk, c.side, c.line);
+  return marketProb(k.mk, k.side, k.line, bms, periodOf(c));
+}
 // Weigh a SET of outcomes for one game and return the best: priced candidates compete on (capped)
 // edge, model-only ones on probability, and a model-less outcome (corners, cards, non-FT periods)
 // is the unpriced fallback — so a mix like "home win + corners + 1st-half over 0.5" still delivers
@@ -729,10 +961,9 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   let model: { c: Cand; mp: number } | null = null;
   let fallback: Cand | null = null;
   for (const c of cands) {
-    const ftModel = !c.period || c.period === "ft"; // the score-matrix model prices FT markets only
-    const mp = ftModel && cell.confident ? modelProb(c.mk, c.side, c.line, cell.agg) : null;
+    const mp = modelFor(cell, c);
     if (mp == null) { fallback = fallback ?? c; continue; }
-    const kp = marketProb(c.mk, c.side, c.line, bms);
+    const kp = marketFor(c, bms);
     if (kp != null && kp > 0 && kp < 1) {
       const edge = mp - kp;
       if (!priced || setRank(edge) > setRank(priced.edge)) priced = { c, mp, kp, edge };
@@ -748,7 +979,7 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   if (fallback) return out(fallback, {});
   return null;
 }
-async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>): Promise<Scored[]> {
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>): Promise<Scored[]> {
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
   // a mixed-outcome strategy carries its own candidate set — treated exactly like a family
   const mixCands: Cand[] | null = Array.isArray(strategy.markets) && strategy.markets.length
@@ -761,7 +992,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
-    if (!cell) { const ls = lambdas(model, f); cell = { agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident }; aggCache.set(f.id, cell); }
+    if (!cell) {
+      const ls = lambdas(model, f);
+      cell = { lamH: ls.lamH, lamA: ls.lamA, agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident, corn: statLams(statM.corners, f), card: statLams(statM.cards, f) };
+      aggCache.set(f.id, cell);
+    }
 
     let eff: Eff = { mk: baseMk, side: baseSide, line: baseLine };
     let useSet = baseSet;
@@ -811,14 +1046,17 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
       continue;
     }
 
-    const mp = cell.confident ? modelProb(eff.mk, eff.side, eff.line, cell.agg) : null;
+    // single-market path prices through the same router as sets, so periods (1st/2nd half),
+    // corners, cards and every canonicalised catalog key work here too
+    const baseCand: Cand = { mk: eff.mk, side: eff.side, line: eff.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value ?? null };
+    const mp = modelFor(cell, baseCand);
     if (mp == null) {
       if (!passesDeferred(null, null, null)) continue;
       unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null });
       continue;
     }
     const bms2 = await bookmakersFor(f.id, key);
-    const kp = marketProb(eff.mk, eff.side, eff.line, bms2);
+    const kp = marketFor(baseCand, bms2);
     if (kp == null) continue;
     const edge = mp - kp;
     if (!passesDeferred(mp, kp, edge)) continue;
@@ -922,7 +1160,7 @@ async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string, m
   return pool.slice(0, count);
 }
 
-async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Cell>, key: string, mem: Map<number, LeagueMem>): Promise<number> {
+async function runStrategy(strategy: any, model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, mem: Map<number, LeagueMem>): Promise<number> {
   const nowIso = new Date().toISOString();
   const tz = strategy.timezone || "Africa/Lagos";
   const learned = await learnAdjust(strategy);
@@ -1005,7 +1243,7 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
     ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
     : [];
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
-  const ranked = (await scoreAndRank(strategy, candidates, model, aggCache, key, rule, formMap, mem)).slice(0, room);
+  const ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem)).slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this") from the SAME data that drove the call:
   // each team's last-5 form + goals, the head-to-head record, and the model's win/over probs.
@@ -1198,11 +1436,12 @@ Deno.serve(async (req) => {
     const mem = await buildLeagueMemory();
 
     const model = await buildModel(Array.from(leagueSet));
+    const statM = await buildStatModels(); // corners/cards rates from the collect-stats pipeline
     const aggCache = new Map<number, Cell>();
     const key = await getSecret("api_football_key");
 
     let inserted = 0;
-    for (const s of strategies) inserted += await runStrategy(s, model, aggCache, key, mem);
+    for (const s of strategies) inserted += await runStrategy(s, model, statM, aggCache, key, mem);
     return json({ strategies: strategies.length, inserted, oddsCalls, temp: TEMP });
   } catch (e) {
     console.error("run-strategies failed:", e);

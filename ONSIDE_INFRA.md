@@ -33,6 +33,7 @@ project ref **`mbrtpetpgsggnlcazhqd`** on 2026-08-04. Keep this current when inf
 | **classify-bet** (v1) | ❌ | Free-text bet → gradeable `market_key` (Haiku fallback to `betCatalog.ts`). Logs to `bet_misses`. |
 | **telegram** (v1) | ❌ | Inbound Telegram webhook (link chat, commands). Guarded by `telegram_webhook_secret`. |
 | **probe-odds** (v3) | ✅ | Dev utility to inspect odds for a fixture. |
+| **collect-stats** (v1) | ✅ | Corners/cards backfill for FINISHED fixtures → `fixture_stats` (batch 20 fixtures/call via `/fixtures?ids=`; candidates from `stats_backfill_candidates` RPC, 1000-row cap per run; `{"no_stats":true}` marker = attempted once). Feeds run-strategies' corners/cards models. Daily cron 04:40 UTC; seed with `{max_calls, days_back}`. Repo copy at `supabase/functions/collect-stats/index.ts`. |
 | **run-agents** (v1) | ❌ | ⚠️ Older/likely-superseded agent runner (v1, untouched). `run-strategies` is the live engine — confirm before reusing. |
 | **community-broadcast** (v1) | ✅ | Auto-posts to the public Telegram channel `@onsideai` 6x/day. Fired by 6 cron jobs via `invoke_community_broadcast(slot)`; per-slot data brief → Claude (`claude-haiku-4-5`) drafts under strict guardrails → BANNED-phrase filter → footer → `sendMessage`. Logs to `channel_posts`. Env-first Anthropic key; bot token from vault. |
 | **channel-test** (v2) | — | Inert 410 no-op (leftover channel-posting verification scaffold). Safe to delete. |
@@ -50,6 +51,7 @@ project ref **`mbrtpetpgsggnlcazhqd`** on 2026-08-04. Keep this current when inf
 | 6 | `0 * * * *` | `downgrade_expired_plans()` | hourly plan expiry |
 | 7 | `30 3 * * *` | `refresh_community_leaderboard()` | nightly cross-member leaderboard rebuild |
 | 8–13 | `30 6 / 30 9 / 30 12 / 30 15 / 0 19 / 30 21 * * *` (UTC) | `invoke_community_broadcast('<slot>')` | 6 daily Telegram channel posts: morning_slate / top_picks / education / kickoff_buzz / community_spotlight / results_recap |
+| 14 | `40 4 * * *` | `invoke_collect_stats()` | daily corners/cards stats collection (~50 calls, 3-day window) |
 
 The `invoke_*` SQL wrappers post to the edge functions with the service-role JWT.
 
