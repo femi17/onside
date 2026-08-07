@@ -151,7 +151,13 @@ export type RecognizedBet = {
   valueTarget?: "bet_value" | "side"; // where the collected value goes (default bet_value)
 };
 
-const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").replace(/\.$/, "").trim();
+// Lowercase + collapse whitespace, and drop SEPARATOR dashes ("1X2 - Home" → "1x2 home") the way
+// bookmakers punctuate market names. A dash between two digits ("2 - 1" correct score) is kept.
+const norm = (s: string) =>
+  s.toLowerCase()
+    .replace(/([^0-9\s])\s+[-–—·|]\s+/g, "$1 ")
+    .replace(/\s+[-–—·|]\s+([^0-9\s])/g, " $1")
+    .replace(/\s+/g, " ").replace(/\.$/, "").trim();
 const cap = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 // exact-phrase alias table
@@ -162,9 +168,9 @@ const A = (aliases: string[], marketKey: string, label: string, side: string | n
 const D = (aliases: string[], label: string, side: string | null = null) => A(aliases, "custom", label, side, false);
 
 // ---- Result ----
-A(["1", "home", "home win", "home to win", "1x2 home"], "home_win", "Home win", "home");
-A(["2", "away", "away win", "away to win", "1x2 away"], "away_win", "Away win", "away");
-A(["x", "draw", "tie", "1x2 draw"], "draw", "Draw", "draw");
+A(["1", "home", "home win", "home to win", "1x2 home", "1x2 1", "match result home", "full time result home", "ft result home", "result home"], "home_win", "Home win", "home");
+A(["2", "away", "away win", "away to win", "1x2 away", "1x2 2", "match result away", "full time result away", "ft result away", "result away"], "away_win", "Away win", "away");
+A(["x", "draw", "tie", "1x2 draw", "1x2 x", "match result draw", "full time result draw", "ft result draw", "result draw"], "draw", "Draw", "draw");
 A(["1x", "home or draw", "draw or home", "home/draw"], "double_chance_1x", "Home or draw (1X)", "1x");
 A(["x2", "away or draw", "draw or away", "draw/away"], "double_chance_x2", "Draw or away (X2)", "x2");
 A(["12", "home or away", "away or home"], "double_chance_12", "Home or away (12)", "12");
@@ -173,7 +179,7 @@ A(["away dnb", "2 dnb", "away draw no bet"], "dnb", "Away (draw no bet)", "away"
 D(["home no bet"], "Home no bet", "home"); // needs a draw/away sub-pick we don't capture
 D(["away no bet"], "Away no bet", "away");
 // ---- Both teams / team to score ----
-A(["gg", "btts", "both teams to score", "both team to score", "goal goal", "both to score"], "btts", "Both teams to score", "yes");
+A(["gg", "btts", "btts yes", "both teams to score", "both teams to score yes", "both team to score", "goal goal", "both to score"], "btts", "Both teams to score", "yes");
 A(["ng", "no goal", "btts no", "both teams to score no", "no goal ng"], "btts", "No goal (NG)", "no");
 A(["home to score", "home scores", "home team to score", "home yes"], "home_to_score", "Home team to score", "home");
 A(["away to score", "away scores", "away team to score", "away yes"], "away_to_score", "Away team to score", "away");
@@ -657,6 +663,17 @@ export function recognizeBet(input: string): RecognizedBet | null {
   const plus = s.match(/^([0-9])\s*\+\s*goals?$/);
   if (plus) return wp({ marketKey: "goal_range", label: `${plus[1]}+ goals`, line: null, side: null, gradeable: true, period, value: `${plus[1]}+` });
   if (/^no goal$/.test(s)) return wp({ marketKey: "goal_range", label: "No goal", line: null, side: null, gradeable: true, period, value: "0" });
+
+  // keyword-first Goal Bounds / Goal Range / Multigoals — the way books label it ("Goal Bounds -
+  // Home 2-3") and people type it ("goals 2-3", "multigoals 2-4", "home goals 4+"). The team can
+  // sit before or after the keyword; away grades as goal_range with side=away.
+  const kwRange = s.match(/^(?:(home|away)\s+)?(?:goals?\s*(?:range|bounds?)|multi\s*goals?|goals?)\s*(?:(home|away)\s+)?([0-9]\s*(?:-|to)\s*[0-9]|[0-9]\s*\+)$/);
+  if (kwRange) {
+    const team = kwRange[1] ?? kwRange[2] ?? null;
+    const val = kwRange[3].replace(/\s+/g, "").replace("to", "-");
+    const key = team === "home" ? "home_goal_range" : "goal_range";
+    return wp({ marketKey: key, label: `${team ? cap(team) + " " : ""}goals ${val}`, line: null, side: team, gradeable: true, period, value: val });
+  }
 
   // ---- correct score, e.g. "2-1", "2:1" ----
   const cs = s.match(/^([0-9]{1,2})\s*[-:]\s*([0-9]{1,2})$/);
