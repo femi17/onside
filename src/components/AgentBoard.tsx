@@ -60,7 +60,7 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
 
     if (r.h2h && r.h2h.n) {
       const s = (n: number) => (n === 1 ? "" : "s");
-      body.push(`Head-to-head — we have ${r.h2h.n} meeting${s(r.h2h.n)} on record: ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}. Context only: a handful of old meetings says little, so the model rates the teams on their full recent seasons instead.`);
+      body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}. Context only: old meetings between different squads say little, so the model rates the teams on their full recent seasons instead.`);
     }
 
     // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other

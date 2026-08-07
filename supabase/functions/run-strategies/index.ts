@@ -787,9 +787,67 @@ async function buildFormMap(teamIds: number[]): Promise<Map<number, Form>> {
   for (const v of map.values()) v.ppg5 = v.n ? v.pts5 / v.n : 0;
   return map;
 }
-// Head-to-head record between two teams (last up-to-6 finished meetings), normalised to the
-// CURRENT home team's perspective, so the feed can say "X of the last Y went the home team's way".
+// ---------- API-enriched reasons: real recent form + head-to-head from API-Football ----------
+// Our fixtures table only holds ~a season of synced leagues, so DB-derived form/H2H can be thin
+// (2 meetings, missing cup games). For the FEW ranked picks per run we fetch the true last-5 form
+// (all competitions) and last-10 H2H from the API, DB fallback when the cap bites or a call fails.
+// Caches are day-keyed so a warm isolate never serves yesterday's form.
+const REASON_FETCH_CAP = 40;
+let reasonCalls = 0;
+const apiFormCache = new Map<string, Form | null>();
+const apiH2HCache = new Map<string, H2H | null>();
+const dayKey = () => new Date().toISOString().slice(0, 10);
+async function apiTeamForm(teamId: number, key: string): Promise<Form | null> {
+  const ck = `${teamId}:${dayKey()}`;
+  if (apiFormCache.has(ck)) return apiFormCache.get(ck)!;
+  if (reasonCalls >= REASON_FETCH_CAP) return null;
+  reasonCalls++;
+  try {
+    const res = await fetch(`https://v3.football.api-sports.io/fixtures?team=${teamId}&last=5&status=FT-AET-PEN`, { headers: { "x-apisports-key": key } });
+    await sb.rpc("bump_api_usage");
+    const body = await res.json();
+    const f: Form = { wins5: 0, draws5: 0, losses5: 0, pts5: 0, ppg5: 0, gf5: 0, ga5: 0, n: 0 };
+    for (const it of body?.response ?? []) {
+      const gh = it?.goals?.home, ga = it?.goals?.away;
+      if (gh == null || ga == null) continue;
+      const isHome = it?.teams?.home?.id === teamId;
+      const gf = isHome ? gh : ga, against = isHome ? ga : gh;
+      if (gf > against) { f.wins5++; f.pts5 += 3; } else if (gf === against) { f.draws5++; f.pts5 += 1; } else f.losses5++;
+      f.gf5 += gf; f.ga5 += against; f.n++;
+    }
+    f.ppg5 = f.n ? f.pts5 / f.n : 0;
+    const out = f.n ? f : null;
+    apiFormCache.set(ck, out);
+    return out;
+  } catch { return null; }
+}
+// Head-to-head record between two teams, normalised to the CURRENT home team's perspective, so
+// the feed can say "X of the last Y went the home team's way".
 type H2H = { n: number; homeWins: number; draws: number; awayWins: number };
+async function apiH2H(homeId: number, awayId: number, key: string): Promise<H2H | null> {
+  const ck = `${homeId}-${awayId}:${dayKey()}`;
+  if (apiH2HCache.has(ck)) return apiH2HCache.get(ck)!;
+  if (reasonCalls >= REASON_FETCH_CAP) return null;
+  reasonCalls++;
+  try {
+    const res = await fetch(`https://v3.football.api-sports.io/fixtures/headtohead?h2h=${homeId}-${awayId}&last=10&status=FT-AET-PEN`, { headers: { "x-apisports-key": key } });
+    await sb.rpc("bump_api_usage");
+    const body = await res.json();
+    let homeWins = 0, draws = 0, awayWins = 0, n = 0;
+    for (const it of body?.response ?? []) {
+      const gh = it?.goals?.home, ga = it?.goals?.away;
+      if (gh == null || ga == null) continue;
+      const curHome = it?.teams?.home?.id === homeId ? gh : ga;
+      const curAway = it?.teams?.home?.id === homeId ? ga : gh;
+      if (curHome > curAway) homeWins++; else if (curHome === curAway) draws++; else awayWins++;
+      n++;
+    }
+    const out = n ? { n, homeWins, draws, awayWins } : null;
+    apiH2HCache.set(ck, out);
+    return out;
+  } catch { return null; }
+}
+// DB fallback (last up-to-6 finished meetings we have synced).
 async function buildH2H(homeId: number, awayId: number): Promise<H2H> {
   const { data } = await sb.from("fixtures")
     .select("home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
@@ -1269,18 +1327,19 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
   const ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem)).slice(0, room);
 
-  // Per-pick reasoning ("why did the agent pick this") from the SAME data that drove the call:
-  // each team's last-5 form + goals, the head-to-head record, and the model's win/over probs.
-  // Stored on the delivery so the feed can narrate the real signals, not a generic blurb.
+  // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
+  // head-to-head pulled live from API-Football (all competitions, not just what we've synced),
+  // falling back to our own fixtures table when the per-run cap bites. Stored on the delivery so
+  // the feed narrates real signals, not a generic blurb.
   const reasonsByFx = new Map<number, unknown>();
   if (ranked.length) {
     const rTeamIds = Array.from(new Set(ranked.flatMap((r) => [r.f.home_team_id, r.f.away_team_id]).filter((x): x is number => x != null)));
     const rForm = rTeamIds.length ? await buildFormMap(rTeamIds) : new Map<number, Form>();
     for (const r of ranked) {
       const hId = r.f.home_team_id, aId = r.f.away_team_id;
-      const hf = hId != null ? rForm.get(hId) : undefined;
-      const af = aId != null ? rForm.get(aId) : undefined;
-      const h2h = (hId != null && aId != null) ? await buildH2H(hId, aId) : null;
+      const hf = hId != null ? (await apiTeamForm(hId, key)) ?? rForm.get(hId) : undefined;
+      const af = aId != null ? (await apiTeamForm(aId, key)) ?? rForm.get(aId) : undefined;
+      const h2h = (hId != null && aId != null) ? (await apiH2H(hId, aId, key)) ?? await buildH2H(hId, aId) : null;
       const agg = aggCache.get(r.f.id)?.agg;
       const conf = aggCache.get(r.f.id)?.confident ?? false;
       reasonsByFx.set(r.f.id, {
