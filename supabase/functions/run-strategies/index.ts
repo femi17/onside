@@ -1304,42 +1304,8 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     );
   }
 
-  // Community publish: the "Publish my agents here" toggle shares each run's TOP picks to the
-  // community feed under the user's handle — short and precise (max 5 games, market + edge, no
-  // prose). One post per agent per day; the whole block is non-fatal.
-  if (rows.length) {
-    try {
-      const { data: prof } = await sb.from("profiles").select("handle, avatar_color, community_opt_in, leaderboard_opt_in").eq("id", strategy.user_id).maybeSingle();
-      if (prof?.leaderboard_opt_in && prof?.community_opt_in && prof?.handle) {
-        const [dayStartIso] = tzDayBoundsISO(tz, 0);
-        const { data: already } = await sb.from("community_posts").select("id")
-          .eq("user_id", strategy.user_id).eq("kind", "picks").gte("created_at", dayStartIso)
-          .contains("attachment", { agent: strategy.name }).limit(1);
-        if (!already?.length) {
-          const top = rows.slice(0, 5); // ranked best-first by scoreAndRank
-          const { data: fx2 } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc").in("id", top.map((r) => r.fixture_id));
-          const fmap = new Map((fx2 ?? []).map((g: any) => [g.id, g]));
-          const picks = top.map((r) => {
-            const g: any = fmap.get(r.fixture_id);
-            return {
-              match: g ? `${g.home_team} v ${g.away_team}` : `Fixture ${r.fixture_id}`,
-              market: r.market_label ?? r.market_key,
-              edge: r.edge != null ? Number((r.edge * 100).toFixed(1)) : null,
-              ko: g?.kickoff_utc ? new Date(g.kickoff_utc).toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" }) : null,
-            };
-          });
-          await sb.from("community_posts").insert({
-            user_id: strategy.user_id,
-            author_handle: prof.handle,
-            author_color: prof.avatar_color ?? null,
-            kind: "picks",
-            body: `${strategy.name} — today's picks`,
-            attachment: { agent: strategy.name, picks },
-          });
-        }
-      }
-    } catch { /* non-fatal */ }
-  }
+  // NOTE: agent picks are NOT auto-posted to the community feed (removed by request — the
+  // "Publish my agents here" toggle now only feeds the aggregate leaderboard, never game lists).
 
   if (rows.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
     const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
