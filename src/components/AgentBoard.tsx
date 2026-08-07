@@ -60,7 +60,7 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
 
     if (r.h2h && r.h2h.n) {
       const s = (n: number) => (n === 1 ? "" : "s");
-      body.push(`When these two met before (last ${r.h2h.n} game${s(r.h2h.n)}): ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)} — shown for context; a couple of old meetings is too little to predict from.`);
+      body.push(`Head-to-head — we have ${r.h2h.n} meeting${s(r.h2h.n)} on record: ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}. Context only: a handful of old meetings says little, so the model rates the teams on their full recent seasons instead.`);
     }
 
     // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other
@@ -83,16 +83,29 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
   if (p.market_prob != null) body.push(`The bookies' odds say about ${pct(p.market_prob)} (their built-in profit removed, so it's a fair comparison).`);
   if (p.edge != null) {
     // p.edge is ALREADY a percentage here (the page converts the stored fraction once)
-    body.push(
-      `So the model sees a better chance than the odds are paying for — about ${p.edge > 0 ? "+" : ""}${p.edge.toFixed(1)}% in your favour. The agent only sends picks that clear your bar.`,
-    );
+    body.push(`So the model sees a better chance than the odds are paying for — about ${p.edge > 0 ? "+" : ""}${p.edge.toFixed(1)}% in your favour.`);
+    if (p.model_prob != null && p.market_prob != null && p.model_prob > 0 && p.market_prob > 0) {
+      body.push(`In odds terms: the model's fair price for this is ≈${(1 / p.model_prob).toFixed(2)}, while the bookies are paying ≈${(1 / p.market_prob).toFixed(2)}.`);
+    }
   } else if (!r) {
     body.push(`No odds were available for this game, so the agent went on its model and your rules alone. Treat this one as lower confidence.`);
   }
 
-  const tierText: Record<string, string> = { elite: "🟢 strong value", strong: "🟡 solid value", wide: "🟠 thinner value" };
-  if (p.tier && tierText[p.tier]) body.push(`Confidence: ${tierText[p.tier]}.`);
-  body.push(`One thing to remember: no single game is a sure thing. Value shows over many bets, not one.`);
+  // Confidence tail is graded per pick — no boilerplate; each tier says what THIS grade means,
+  // and an implausibly large edge explains why it was marked cautious rather than celebrated.
+  if (p.tier === "elite") {
+    body.push(`Confidence: 🟢 strong — ${p.edge != null ? `a +${p.edge.toFixed(1)}% edge clears the bar with room to spare` : "clears the bar with room to spare"}.`);
+  } else if (p.tier === "strong") {
+    body.push(`Confidence: 🟡 solid — a real but modest edge; this grade pays off across many picks rather than any single one.`);
+  } else if (p.tier === "wide") {
+    body.push(
+      p.edge != null && p.edge > 15
+        ? `Confidence: 🟠 cautious — the edge looks too big to fully trust. Odds this far from the model usually mean the bookies know something it can't see (line-ups, motivation, a B-team), so it's graded down, not up.`
+        : `Confidence: 🟠 thin — a small or uncertain edge; expect bigger swings on picks like this.`,
+    );
+  } else if (p.model_prob != null) {
+    body.push(`Confidence: 🟠 model-only — no odds to check the model against on this one.`);
+  }
   return { title: "Why the agent picked this", body };
 }
 
