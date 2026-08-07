@@ -139,7 +139,20 @@ export type ExistingStrategy = {
   target_day: string | null;
   channels: string[] | null;
   learning: boolean | null;
+  markets: MixItem[] | null;
 };
+
+// one outcome inside a mixed-outcome agent — the engine weighs every entry per game and
+// delivers the best one
+export type MixItem = {
+  market_key: string;
+  label: string;
+  side: string | null;
+  line: number | null;
+  period: string | null;
+  bet_value: string | null;
+};
+const MIX_MAX = 6;
 
 export default function StrategyBuilder({
   userId,
@@ -214,6 +227,8 @@ export default function StrategyBuilder({
   const [detailsOpen, setDetailsOpen] = useState(false); // mobile agent-details slide-over
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // mixed-outcome agent: several markets in one strategy; non-empty overrides the single market
+  const [mix, setMix] = useState<MixItem[]>(existing?.markets ?? []);
 
   const [previewN, setPreviewN] = useState<number | null>(null);
   const [previewFx, setPreviewFx] = useState<{ home_team: string; away_team: string }[]>([]);
@@ -419,6 +434,29 @@ export default function StrategyBuilder({
     return null;
   }, [target, time, earliestKickoff, sameDayLater]);
 
+  // add the currently-selected market to the mix (same side/value resolution as saving a single)
+  function addToMix() {
+    setMsg(null);
+    if (!market) return setMsg("Pick or describe a market first, then add it to the mix.");
+    if (!market.gradeable) return setMsg("That market can't be auto-graded yet — pick a supported outcome.");
+    if (mode === "family") return setMsg("Families already pick the best option per game — mix individual outcomes instead.");
+    let side = market.side, value = market.value, label = market.label;
+    if (market.needsValue) {
+      const rawv = customValue.trim();
+      if (!rawv) return setMsg(`${market.needsValue.label} (e.g. ${market.needsValue.placeholder})`);
+      if (market.valueTarget === "side") {
+        const sm: Record<string, string> = { home: "home", "1": "home", draw: "draw", x: "draw", away: "away", "2": "away" };
+        side = sm[rawv.toLowerCase()] ?? rawv.toLowerCase();
+      } else { value = rawv; label = `${label} — ${rawv}`; }
+    }
+    const item: MixItem = { market_key: market.key, label, side, line: market.line, period: market.period ?? "ft", bet_value: value };
+    if (mix.some((m) => m.market_key === item.market_key && m.side === item.side && m.line === item.line && m.period === item.period && m.bet_value === item.bet_value)) {
+      return setMsg("That outcome is already in the mix.");
+    }
+    if (mix.length >= MIX_MAX) return setMsg(`Up to ${MIX_MAX} outcomes per mix.`);
+    setMix((xs) => [...xs, item]);
+  }
+
   // surprise element — roll from the whole pool (incl. markets with no button on the page) so the
   // pick is genuinely unknown until it lands, then reveal it
   function surpriseMarket() {
@@ -494,6 +532,44 @@ export default function StrategyBuilder({
     // scanning every competition (empty selection) is a Pro Max perk; capped plans must choose
     if (plan !== "pro_max" && picked.size === 0 && !leagueSurprise) return { ok: false, err: "Pick your leagues — or hit 🎲 Surprise me. Scanning every competition is a Pro Max perk." };
     if (deliveryWarn) return { ok: false, err: deliveryWarn };
+
+    const base = {
+      user_id: userId,
+      name: name.trim(),
+      rule_text: rule.trim() || null,
+      // surprise persists NO frozen leagues — the engine re-rolls each run from that day's slate.
+      // fixed persists the picks; empty-on-pro_max = "all" (scan every competition).
+      league_ids: leagueSurprise ? [] : picked.size ? Array.from(picked) : [],
+      league_mode: leagueSurprise ? "surprise" : picked.size ? "fixed" : "all",
+      selectivity: SELECT[selIdx].key,
+      min_edge: SELECT[selIdx].min_edge,
+      max_per_prediction: cap,
+      deliver_at: jitteredDeliverAt(time),
+      target_day: target,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
+      channels: Array.from(channels),
+      learning: canLearn ? learning : false,
+    };
+
+    // a MIX overrides the single market: the engine weighs every outcome per game and sends
+    // the best one (market_key 'mix'; the list itself lives in `markets`)
+    if (mix.length) {
+      return {
+        ok: true,
+        row: {
+          ...base,
+          market_key: "mix",
+          market_label: `Mix · ${mix.length} outcome${mix.length === 1 ? "" : "s"}`,
+          custom_market: null,
+          side: null,
+          line: null,
+          period: "ft",
+          bet_value: null,
+          markets: mix,
+        },
+      };
+    }
+
     if (!market) return { ok: false, err: "Pick a market to hunt (or describe one we recognise)." };
     if (!market.gradeable) return { ok: false, err: "That market can't be auto-graded yet — pick a preset or a supported outcome." };
 
@@ -514,8 +590,7 @@ export default function StrategyBuilder({
     return {
       ok: true,
       row: {
-        user_id: userId,
-        name: name.trim(),
+        ...base,
         market_key: market.key,
         market_label: label,
         custom_market: mode === "custom" ? customText.trim() : null,
@@ -523,19 +598,7 @@ export default function StrategyBuilder({
         line: market.line,
         period: market.period,
         bet_value: value,
-        rule_text: rule.trim() || null,
-        // surprise persists NO frozen leagues — the engine re-rolls each run from that day's slate.
-        // fixed persists the picks; empty-on-pro_max = "all" (scan every competition).
-        league_ids: leagueSurprise ? [] : picked.size ? Array.from(picked) : [],
-        league_mode: leagueSurprise ? "surprise" : picked.size ? "fixed" : "all",
-        selectivity: SELECT[selIdx].key,
-        min_edge: SELECT[selIdx].min_edge,
-        max_per_prediction: cap,
-        deliver_at: jitteredDeliverAt(time),
-        target_day: target,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
-        channels: Array.from(channels),
-        learning: canLearn ? learning : false,
+        markets: null,
       },
     };
   }
@@ -595,7 +658,9 @@ export default function StrategyBuilder({
     <>
       <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">Your agent · preview</div>
       <div className="mt-1 font-disp text-2xl font-extrabold tracking-tight text-ink">{name || "Untitled agent"}</div>
-      <div className="mt-0.5 font-mono text-xs font-bold uppercase tracking-wide text-flood-deep">{market?.label ?? "Pick a market"}</div>
+      <div className="mt-0.5 font-mono text-xs font-bold uppercase tracking-wide text-flood-deep">
+        {mix.length ? `Mix · ${mix.map((m) => m.label).join(" / ")}` : market?.label ?? "Pick a market"}
+      </div>
       {rule.trim() && <div className="mt-2 border-l-2 border-flood pl-2.5 text-[12.5px] italic text-ink-mute">“{rule.trim().length > 90 ? rule.trim().slice(0, 90) + "…" : rule.trim()}”</div>}
 
       <div className="my-4 flex flex-col gap-2.5 border-t border-dashed border-ink/15 pt-3.5 text-[13px]">
@@ -780,6 +845,37 @@ export default function StrategyBuilder({
                 )}
               </div>
             )}
+
+            {/* MIX — combine several outcomes into ONE agent (e.g. home win + home over 1.5 +
+                corners + 1st-half over 0.5): per game it weighs every outcome and sends the best */}
+            <div className="mt-4 border-t border-dashed border-ink/15 pt-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Mix outcomes · optional</span>
+                <button
+                  type="button"
+                  onClick={addToMix}
+                  className="ml-auto rounded-md border border-ink/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink transition hover:border-ink/40"
+                >
+                  ＋ Add {market ? `“${market.label}”` : "market"} to mix
+                </button>
+              </div>
+              {mix.length > 0 && (
+                <>
+                  <div className="mt-2.5 flex flex-wrap gap-2">
+                    {mix.map((m, i) => (
+                      <span key={`${m.market_key}:${m.side}:${m.line}:${m.period}:${m.bet_value}:${i}`} className="inline-flex items-center gap-2 rounded-full border border-flood-deep bg-flood/10 px-3 py-1.5 font-mono text-[11.5px] font-bold text-ink">
+                        {m.label}
+                        {m.period && m.period !== "ft" ? ` · ${m.period === "1h" ? "1st half" : "2nd half"}` : ""}
+                        <button type="button" onClick={() => setMix((xs) => xs.filter((_, j) => j !== i))} aria-label="Remove from mix" className="text-ink-mute transition-colors hover:text-brick">×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[12.5px] leading-snug text-ink-mute">
+                    Your agent hunts <b className="text-ink">all of these</b> — for each game it weighs every outcome in the mix and sends the one that clears your bar. Remove every chip to go back to a single market.
+                  </p>
+                </>
+              )}
+            </div>
           </section>
 
           {/* 03 rule */}

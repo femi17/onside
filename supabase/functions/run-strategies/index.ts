@@ -151,7 +151,7 @@ function dcTau(x: number, y: number, l: number, m: number): number {
   if (x === 1 && y === 1) return 1 - RHO;
   return 1;
 }
-type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[] };
+type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[]; hDist: number[]; aDist: number[] };
 // Full score matrix (DC-corrected, temperature-calibrated, renormalised) → every market read off it,
 // so BTTS/team-to-score are proper matrix sums (not the old independent-Poisson product) and all
 // probabilities share the same calibration.
@@ -172,6 +172,8 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
   let hw = 0, dr = 0, aw = 0, btts = 0, homeScore = 0, awayScore = 0;
   const totalP = new Array(2 * N + 1).fill(0);
   const marg = new Array(2 * N + 1).fill(0);
+  const hDist = new Array(N + 1).fill(0); // per-team goal marginals — price team-total lines
+  const aDist = new Array(N + 1).fill(0);
   for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
     const p = cells[i][j] / total;
     if (i > j) hw += p; else if (i === j) dr += p; else aw += p;
@@ -180,8 +182,10 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
     if (j > 0) awayScore += p;
     totalP[i + j] += p;
     marg[i - j + N] += p;
+    hDist[i] += p;
+    aDist[j] += p;
   }
-  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg };
+  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg, hDist, aDist };
 }
 const overP = (agg: Agg, line: number) => { let s = 0; for (let t = 0; t < agg.totalP.length; t++) if (t > line) s += agg.totalP[t]; return s; };
 function modelProb(mk: string, side: string | null, line: number | null, agg: Agg): number | null {
@@ -203,6 +207,14 @@ function modelProb(mk: string, side: string | null, line: number | null, agg: Ag
     case "btts": return side === "no" ? 1 - agg.btts : agg.btts;
     case "home_to_score": return agg.homeScore;
     case "away_to_score": return agg.awayScore;
+    case "home_goals_ou":
+    case "away_goals_ou": {
+      if (line == null) return null;
+      const dist = mk === "home_goals_ou" ? agg.hDist : agg.aDist;
+      let over = 0;
+      for (let n = 0; n < dist.length; n++) if (n > line) over += dist[n];
+      return side === "under" ? 1 - over : over;
+    }
     case "handicap": {
       if (line == null || !side) return null;
       const N = (agg.marg.length - 1) / 2;
@@ -288,6 +300,8 @@ function bookProb(mk: string, side: string | null, line: number | null, bets: an
     case "btts": { const p = twoWay(bet(8), "Yes", "No"); return p == null ? null : (side === "no" ? 1 - p : p); }
     case "home_to_score": return twoWay(bet(43), "Yes", "No");
     case "away_to_score": return twoWay(bet(44), "Yes", "No");
+    case "home_goals_ou": return line == null ? null : ouProb(bet(16), line, side === "under" ? "under" : "over"); // Total - Home
+    case "away_goals_ou": return line == null ? null : ouProb(bet(17), line, side === "under" ? "under" : "over"); // Total - Away
     default: return null;
   }
 }
@@ -696,65 +710,80 @@ function hashShard(id: string, shards: number): number {
 }
 
 type Cell = { agg: Agg; confident: boolean };
-type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null };
-async function pickFamily(fam: string, cell: Cell, f: Fixture, key: string, minEdge: number): Promise<Scored | null> {
-  const cands = FAMILIES[fam] ?? [];
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null };
+// one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
+type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
+// Weigh a SET of outcomes for one game and return the best: priced candidates compete on (capped)
+// edge, model-only ones on probability, and a model-less outcome (corners, cards, non-FT periods)
+// is the unpriced fallback — so a mix like "home win + corners + 1st-half over 0.5" still delivers
+// something honest when the model can't price anything.
+async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minEdge: number): Promise<Scored | null> {
   const bms = await bookmakersFor(f.id, key);
-  let priced: { c: { mk: string; side: string | null; line: number | null }; mp: number; kp: number; edge: number } | null = null;
-  let model: { c: { mk: string; side: string | null; line: number | null }; mp: number } | null = null;
+  let priced: { c: Cand; mp: number; kp: number; edge: number } | null = null;
+  let model: { c: Cand; mp: number } | null = null;
+  let fallback: Cand | null = null;
   for (const c of cands) {
-    const mp = cell.confident ? modelProb(c.mk, c.side, c.line, cell.agg) : null;
-    if (mp == null) continue;
+    const ftModel = !c.period || c.period === "ft"; // the score-matrix model prices FT markets only
+    const mp = ftModel && cell.confident ? modelProb(c.mk, c.side, c.line, cell.agg) : null;
+    if (mp == null) { fallback = fallback ?? c; continue; }
     const kp = marketProb(c.mk, c.side, c.line, bms);
     if (kp != null && kp > 0 && kp < 1) {
       const edge = mp - kp;
-      // compare CAPPED edges so one implausible number can't beat every sane option in the family
+      // compare CAPPED edges so one implausible number can't beat every sane option in the set
       if (!priced || rankEdge(edge) > rankEdge(priced.edge)) priced = { c, mp, kp, edge };
     }
     if (mp >= 0.5 && (!model || mp > model.mp)) model = { c, mp };
   }
-  if (priced && priced.edge >= minEdge) {
-    return { f, mk: priced.c.mk, side: priced.c.side, line: priced.c.line, edge: priced.edge, tier: tierOf(priced.edge), model_prob: priced.mp, market_prob: priced.kp };
-  }
-  if (model) {
-    return { f, mk: model.c.mk, side: model.c.side, line: model.c.line, edge: null, tier: null, model_prob: model.mp, market_prob: null };
-  }
+  const out = (c: Cand, rest: Partial<Scored>): Scored => ({
+    f, mk: c.mk, side: c.side, line: c.line, edge: null, tier: null, model_prob: null, market_prob: null,
+    label: c.label ?? null, period: c.period ?? null, bet_value: c.bet_value ?? null, ...rest,
+  });
+  if (priced && priced.edge >= minEdge) return out(priced.c, { edge: priced.edge, tier: tierOf(priced.edge), model_prob: priced.mp, market_prob: priced.kp });
+  if (model) return out(model.c, { model_prob: model.mp });
+  if (fallback) return out(fallback, {});
   return null;
 }
 async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>): Promise<Scored[]> {
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
-  const baseFamily = isFamily(baseMk);
+  // a mixed-outcome strategy carries its own candidate set — treated exactly like a family
+  const mixCands: Cand[] | null = Array.isArray(strategy.markets) && strategy.markets.length
+    ? strategy.markets.map((m: any) => ({
+        mk: m.market_key, side: m.side ?? null, line: m.line != null ? Number(m.line) : null,
+        period: m.period ?? "ft", bet_value: m.bet_value ?? null, label: m.label ?? null,
+      }))
+    : null;
+  const baseSet = isFamily(baseMk) || !!mixCands; // "best of a set": built-in family or user mix
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
     if (!cell) { const ls = lambdas(model, f); cell = { agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident }; aggCache.set(f.id, cell); }
 
     let eff: Eff = { mk: baseMk, side: baseSide, line: baseLine };
-    let useFamily = baseFamily;
-    const deferred: Cond[] = []; // base-market filters a family can only test after choosing
+    let useSet = baseSet;
+    const deferred: Cond[] = []; // base-market filters a set can only test after choosing
 
-    // Rules apply to EVERY strategy, including "best"/family markets: filters gate the game,
+    // Rules apply to EVERY strategy, including sets (families/mixes): filters gate the game,
     // select branches choose the market. Form + opponent-strength signals are available here.
     if (rule && (rule.filters.length || rule.select.length)) {
       const bms = await bookmakersFor(f.id, key);
       const homeForm = f.home_team_id != null ? formMap.get(f.home_team_id) : undefined;
       const awayForm = f.away_team_id != null ? formMap.get(f.away_team_id) : undefined;
-      const bmp = (!baseFamily && cell.confident) ? modelProb(baseMk, baseSide, baseLine, cell.agg) : null;
-      const bkp = !baseFamily ? marketProb(baseMk, baseSide, baseLine, bms) : null;
+      const bmp = (!baseSet && cell.confident) ? modelProb(baseMk, baseSide, baseLine, cell.agg) : null;
+      const bkp = !baseSet ? marketProb(baseMk, baseSide, baseLine, bms) : null;
       const sig = signalsFor(bms, bmp, bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
         homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null,
         cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null);
       let blocked = false;
       for (const c of rule.filters) {
-        // family bases have no base market yet — its odds/edge fields are tested post-pick
-        if (baseFamily && FAMILY_DEFERRED.has(c.field)) { deferred.push(c); continue; }
+        // set bases have no base market yet — its odds/edge fields are tested post-pick
+        if (baseSet && FAMILY_DEFERRED.has(c.field)) { deferred.push(c); continue; }
         if (!evalCond(c, sig)) { blocked = true; break; }
       }
       if (blocked) continue;
       if (rule.select.length) {
         const picked = applySelect(rule.select, sig);
         if (!picked) continue; // no branch matched and no default → skip this game
-        eff = picked; useFamily = false;
+        eff = picked; useSet = false;
       }
     }
 
@@ -769,8 +798,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, ag
       return deferred.every((c) => evalCond(c, dsig));
     };
 
-    if (useFamily) {
-      const chosen = await pickFamily(baseMk, cell, f, key, strategy.min_edge ?? 0);
+    if (useSet) {
+      const chosen = await pickBest(mixCands ?? FAMILIES[baseMk] ?? [], cell, f, key, strategy.min_edge ?? 0);
       if (!chosen) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
@@ -1010,8 +1039,9 @@ async function runStrategy(strategy: any, model: Model, aggCache: Map<number, Ce
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
       market_key: r.mk ?? "custom",
-      market_label: r.mk === "handicap" ? handicapLabel(r.side, r.line) : (r.mk === strategy.market_key ? strategy.market_label : (MK_LABEL[r.mk] ?? strategy.market_label)),
-      side: r.side, line: r.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value,
+      // a mix entry carries its own label/period/value; families and singles keep the old derivation
+      market_label: r.label ?? (r.mk === "handicap" ? handicapLabel(r.side, r.line) : (r.mk === strategy.market_key ? strategy.market_label : (MK_LABEL[r.mk] ?? strategy.market_label))),
+      side: r.side, line: r.line, period: r.period ?? strategy.period ?? "ft", bet_value: r.bet_value ?? strategy.bet_value,
       model_prob: r.model_prob, market_prob: r.market_prob, edge: r.edge, tier: r.tier, result: "pending", delivered_at: nowIso,
       ...(Object.keys(criteria).length ? { criteria } : {}),
     };
