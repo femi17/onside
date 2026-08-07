@@ -24,7 +24,7 @@ export default async function NewStrategyPage() {
     .eq("plan", plan)
     .maybeSingle();
 
-  const TIER = ["uefa", "top", "mid", "lower"];
+  const TIER = ["uefa", "top", "sa_top", "as_top", "mid", "lower"];
   const leagues = ((leaguesRaw ?? []) as LeagueOpt[]).sort(
     (a, b) => TIER.indexOf(a.tier ?? "lower") - TIER.indexOf(b.tier ?? "lower") || a.name.localeCompare(b.name)
   );

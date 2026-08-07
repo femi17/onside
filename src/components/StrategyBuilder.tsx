@@ -578,22 +578,30 @@ export default function StrategyBuilder({
       return next;
     });
   }
-  // One-tap quick picks: 🏆 Top Europe = every European country's TOP division (tier 'top'),
-  // 🥈 Mid tier = their second divisions (tier 'mid'). Ordered by football-country strength so
-  // a plan's league cap fills with the strongest competitions first. Tap again to remove the set.
+  // One-tap quick picks by catalog tier: 🏆 Top Europe = every European country's TOP division
+  // ('top'), 🥈 Mid tier = their second divisions ('mid'), 🌎 S. America ('sa_top') and 🌏 Asia
+  // ('as_top') top flights. Each set is ordered by football-country strength so a plan's league
+  // cap fills with the strongest competitions first. Tap again to remove the set.
   const EURO_RANK = ["England","Spain","Italy","Germany","France","Netherlands","Portugal","Belgium","Scotland","Turkey","Austria","Switzerland","Greece","Denmark","Norway","Sweden","Poland","Croatia","Czech-Republic","Ukraine","Russia","Romania","Serbia","Hungary","Finland","Iceland","Ireland","Wales","Northern-Ireland","Slovakia","Slovenia","Bulgaria","Israel","Cyprus"];
-  const tierSet = (tier: string) =>
+  const SA_RANK = ["Brazil","Argentina","Colombia","Chile","Uruguay","Ecuador","Paraguay","Peru","Bolivia","Venezuela"];
+  // "South Korea" appears both with a space and a dash in the catalog
+  const ASIA_RANK = ["Japan","South Korea","South-Korea","Saudi-Arabia","China","Qatar","United-Arab-Emirates","Iran","Australia","Uzbekistan","Thailand","India","Vietnam","Indonesia","Malaysia","Iraq","Bahrain","Kuwait","Jordan","Oman"];
+  const tierSet = (tier: string, rank: string[]) =>
     leagues
       .filter((l) => l.tier === tier)
       .sort((a, b) => {
-        const ra = EURO_RANK.indexOf(a.country ?? ""), rb = EURO_RANK.indexOf(b.country ?? "");
+        const ra = rank.indexOf(a.country ?? ""), rb = rank.indexOf(b.country ?? "");
         return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb) || a.name.localeCompare(b.name);
       })
       .map((l) => l.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const topEuroIds = useMemo(() => tierSet("top"), [leagues]);
+  const topEuroIds = useMemo(() => tierSet("top", EURO_RANK), [leagues]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const midTierIds = useMemo(() => tierSet("mid"), [leagues]);
+  const midTierIds = useMemo(() => tierSet("mid", EURO_RANK), [leagues]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const saTopIds = useMemo(() => tierSet("sa_top", SA_RANK), [leagues]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const asiaTopIds = useMemo(() => tierSet("as_top", ASIA_RANK), [leagues]);
   const allPicked = (ids: number[]) => ids.length > 0 && ids.every((id) => picked.has(id));
   function toggleTierSet(ids: number[]) {
     setLeagueSurprise(false);
@@ -1039,26 +1047,8 @@ export default function StrategyBuilder({
               <span className="font-mono text-[10.5px] text-ink-mute">{plan.replace("_", " ")} · up to {maxLeagues}</span>
               <button
                 type="button"
-                onClick={() => toggleTierSet(topEuroIds)}
-                className={`ml-auto rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
-                  allPicked(topEuroIds) ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
-                }`}
-              >
-                🏆 Top Europe
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleTierSet(midTierIds)}
-                className={`rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
-                  allPicked(midTierIds) ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/20 text-ink hover:border-ink/40"
-                }`}
-              >
-                🥈 Mid tier
-              </button>
-              <button
-                type="button"
                 onClick={surpriseLeagues}
-                className={`rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
+                className={`ml-auto rounded-md border px-2 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
                   leagueSurprise ? "border-flood bg-flood/15 text-flood-deep" : "border-ink/20 text-ink hover:border-ink/40"
                 }`}
               >
@@ -1092,6 +1082,27 @@ export default function StrategyBuilder({
             <p className="mb-3 text-[12px] leading-snug text-ink-mute">
               Showing leagues that play {TARGETS.find((t) => t.k === target)?.h}. Your agent hunts this window at each delivery.
             </p>
+
+            {/* one-tap region sets — each toggles its whole tier (cap-aware, strongest first) */}
+            <div className="mb-3 flex flex-wrap gap-2">
+              {([
+                ["🏆 Top Europe", topEuroIds],
+                ["🥈 Europe 2nd tier", midTierIds],
+                ["🌎 S. America", saTopIds],
+                ["🌏 Asia", asiaTopIds],
+              ] as [string, number[]][]).map(([label, ids]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => toggleTierSet(ids)}
+                  className={`rounded-lg border px-2.5 py-1.5 font-mono text-[11px] font-bold transition ${
+                    allPicked(ids) ? "border-grass-deep bg-grass/15 text-grass-deep" : "border-ink/15 bg-white text-ink hover:border-ink/30"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
             {/* pinned selected leagues — always visible + removable, even ones that don't play in the
                 current window (so an edited agent's saved leagues can always be cleared) */}
