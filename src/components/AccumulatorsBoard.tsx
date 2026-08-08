@@ -95,8 +95,14 @@ function LegRow({ leg, nowMs, onDetach, onTrack, busy }: { leg: AccaLeg; nowMs: 
   } else if (cat === "soon") {
     sc = ms?.label ?? "—";
   } else if (cat === "live") {
-    sc = track ? `${track.big}${track.of}` : ms?.score ?? "live";
-    mn = ms?.label ?? "";
+    // under lines show the running count AGAINST the line ("2 / 3.5") so you can see how
+    // near/far the game is from breaking it — "3.5 under" alone said nothing about the goals
+    sc = track
+      ? track.under && track.count != null
+        ? `${track.count} / ${track.big}`
+        : `${track.big}${track.of}`
+      : ms?.score ?? "live";
+    mn = track?.under ? (track.busted ? "line broken" : `${ms?.label ?? ""} · under`) : ms?.label ?? "";
   } else if (cat === "safe") {
     sc = ms?.score ?? "✓";
     mn = leg.status === "won" ? "landed" : "FT";

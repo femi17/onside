@@ -129,6 +129,7 @@ export type Track = {
   needT: string;
   under?: boolean; // under bet: the LINE is the big figure, goals scored the small one
   busted?: boolean; // under bet already broken (scored past the line) — a live loss
+  count?: number; // the raw running count toward the line (goals/corners/cards so far)
 };
 
 // A single team's corner count for the bet's period, from the live fixture-stats snapshot. Corner
@@ -221,6 +222,7 @@ export function liveTrack(t: TrackedTicket): Track | null {
       fillPct: Math.min(100, (count / max) * 100),
       flagPct: (line / max) * 100,
       hit,
+      count,
       needN: hit ? "✓ Landed" : `${more} more`,
       needT: hit ? "cleared the line" : "to clear the line",
     };
@@ -239,6 +241,7 @@ export function liveTrack(t: TrackedTicket): Track | null {
       hit: won,
       busted,
       under: true,
+      count,
       needN: unit === "goals" ? `${count} scored` : `${count} ${count === 1 ? one : unit}`,
       needT: busted ? "line broken" : won ? "stayed under" : left === 1 ? `1 ${one} ends it` : `${left} ${unit} end it`,
     };
