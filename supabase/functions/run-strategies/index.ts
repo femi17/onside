@@ -182,10 +182,12 @@ type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: nu
 // Full score matrix (DC-corrected, temperature-calibrated, renormalised) → every market read off it,
 // so BTTS/team-to-score are proper matrix sums (not the old independent-Poisson product) and all
 // probabilities share the same calibration.
-function aggregate(lamH: number, lamA: number, N = 10): Agg {
+function aggregate(lamH: number, lamA: number, N = 10, raw = false): Agg {
   const ph: number[] = [], pa: number[] = [];
   for (let i = 0; i <= N; i++) { ph.push(pois(i, lamH)); pa.push(pois(i, lamA)); }
-  const invT = 1 / (TEMP || 1);
+  // raw = plain Poisson (no calibration temperature) — used for the bookies' implied matrix,
+  // which represents THEIR beliefs and must not inherit the model's calibration knob
+  const invT = raw ? 1 : 1 / (TEMP || 1);
   const cells: number[][] = [];
   let total = 0;
   for (let i = 0; i <= N; i++) {
@@ -425,12 +427,12 @@ function marketProb(mk: string, side: string | null, line: number | null, bookma
   if (!ps.length) return null;
   return ps.reduce((a, b) => a + b, 0) / ps.length;
 }
-// ---------- market-implied pricing for markets bookmakers never quote (1UP/2UP/Never Down) ----------
-// Books don't offer these through the odds feed, but their de-vigged 1X2 (+ over 2.5 when quoted)
-// pins down THEIR implied goal rates. Fit lamH/lamA to reproduce those numbers, rebuild the
-// bookies' score matrix, and read the early-payout price off it with the same path maths the
-// model uses — so edge stays a genuine model-vs-market comparison.
-const EARLY_PRICED = new Set<string>(EARLY_KEYS as unknown as string[]);
+// ---------- market-implied pricing for EVERY goals-derived market the books don't quote ----------
+// Books quote 1X2 (+ over 2.5) for nearly every priced game, and those numbers pin down THEIR
+// implied goal rates. Fit lamH/lamA to reproduce them, rebuild the bookies' score matrix, and any
+// matrix-derived market — 1UP/2UP/Never Down, goal ranges, exact goals, clean sheets, win to nil,
+// odd/even, team totals, halves — can be priced off it with the SAME maths the model uses, so edge
+// stays a genuine model-vs-market comparison even where the specific bet was never offered.
 const marketLamCache = new Map<string, { lh: number; la: number } | null>();
 function plainProbs(lh: number, la: number, N = 10): { hw: number; aw: number; over25: number } {
   const ph: number[] = [], pa: number[] = [];
@@ -459,24 +461,22 @@ function fitLams(hwT: number, awT: number, o25T: number | null): { lh: number; l
   if (best) scan(Math.max(0.1, best.lh - 0.2), best.lh + 0.2, Math.max(0.1, best.la - 0.2), best.la + 0.2, 0.05);
   return best && bestE < 0.01 ? best : null; // reject when no lambda pair reproduces the odds
 }
-function earlyMarketProb(mk: string, bms: any[]): number | null {
+function marketLams(bms: any[]): { lh: number; la: number } | null {
   const hw = marketProb("home_win", "home", null, bms), aw = marketProb("away_win", "away", null, bms);
   if (hw == null || aw == null) return null;
   const o25 = marketProb("total_goals_ou", "over", 2.5, bms);
   const ck = `${hw.toFixed(3)}|${aw.toFixed(3)}|${o25?.toFixed(3) ?? "x"}`;
   let lam = marketLamCache.get(ck);
   if (lam === undefined) { lam = fitLams(hw, aw, o25); marketLamCache.set(ck, lam); }
-  if (!lam) return null;
-  const N = 10;
-  const ph: number[] = [], pa: number[] = [];
-  for (let k = 0; k <= N; k++) { ph.push(pois(k, lam.lh)); pa.push(pois(k, lam.la)); }
-  let s = 0, total = 0;
-  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
-    const p = ph[i] * pa[j];
-    total += p;
-    s += p * earlyCell(mk, i, j);
-  }
-  return total > 0 ? s / total : null;
+  return lam;
+}
+// bookies' implied matrix for a period (lams are grid-quantised, so this cache stays small)
+const marketAggCache = new Map<string, Agg>();
+function marketAggFor(lam: { lh: number; la: number }, share: number): Agg {
+  const ck = `${lam.lh}|${lam.la}|${share}`;
+  let a = marketAggCache.get(ck);
+  if (!a) { a = aggregate(lam.lh * share, lam.la * share, 10, true); marketAggCache.set(ck, a); }
+  return a;
 }
 
 type Rate = { gf: number; ga: number; n: number }; // time-decay-weighted LEAGUE-RELATIVE ratio sums
@@ -1087,8 +1087,17 @@ function modelFor(cell: Cell, c: Cand): number | null {
 }
 function marketFor(c: Cand, bms: any[]): number | null {
   const k = canon(c.mk, c.side, c.line);
-  if (EARLY_PRICED.has(k.mk)) return earlyMarketProb(k.mk, bms); // derived from the bookies' 1X2+totals
-  return marketProb(k.mk, k.side, k.line, bms, periodOf(c));
+  const period = periodOf(c);
+  // 1) the bookies' DIRECTLY quoted odds for this exact market, when they exist
+  const direct = marketProb(k.mk, k.side, k.line, bms, period);
+  if (direct != null) return direct;
+  // 2) derived fallback: any goals-derived market prices off the bookies' implied score matrix
+  //    (corners/cards can't be derived from 1X2 — they keep needing their own quotes)
+  if (CORNER_MKS.has(k.mk) || CARD_MKS.has(k.mk)) return null;
+  const lam = marketLams(bms);
+  if (!lam) return null;
+  const share = period === "1h" ? H1_GOALS : period === "2h" ? 1 - H1_GOALS : 1;
+  return modelProb(k.mk, k.side, k.line, marketAggFor(lam, share), c.bet_value ?? null);
 }
 // Weigh a SET of outcomes for one game and return the best: priced candidates compete on (capped)
 // edge, model-only ones on probability, and a model-less outcome (corners, cards, non-FT periods)
