@@ -133,6 +133,7 @@ export type ExistingStrategy = {
   bet_value: string | null;
   rule_text: string | null;
   rule_parsed: ParsedRule | null;
+  kickoff_at: string | null;
   league_ids: number[] | null;
   league_mode: string | null;
   selectivity: string | null;
@@ -154,7 +155,6 @@ export type MixItem = {
   period: string | null;
   bet_value: string | null;
 };
-const MIX_MAX = 6;
 
 export default function StrategyBuilder({
   userId,
@@ -223,6 +223,8 @@ export default function StrategyBuilder({
   });
   const [time, setTime] = useState(existing?.deliver_at ? existing.deliver_at.slice(0, 5) : "06:00");
   const [target, setTarget] = useState(existing?.target_day ?? "same_day");
+  // optional kickoff pin: only games starting at exactly this local time ("" = any time)
+  const [kickAt, setKickAt] = useState(existing?.kickoff_at ? existing.kickoff_at.slice(0, 5) : "");
   const [channels, setChannels] = useState<Set<string>>(new Set(existing?.channels ?? ["app"]));
   const [tgLinked, setTgLinked] = useState(true); // optimistic: avoids a warning flash before we know
   const [learning, setLearning] = useState(existing?.learning ?? false);
@@ -277,7 +279,7 @@ export default function StrategyBuilder({
   // exactly what it understood — a rule that mistranslates (or translates to nothing and would be
   // silently ignored) gets caught here, before the agent ever picks with it. The confirmed parse
   // is persisted on save so the engine runs precisely what the user approved.
-  const [ruleParse, setRuleParse] = useState<{ text: string; parsed: ParsedRule | null } | null>(
+  const [ruleParse, setRuleParse] = useState<{ text: string; parsed: ParsedRule | null; heard?: string | null } | null>(
     existing?.rule_text?.trim() && existing.rule_parsed ? { text: existing.rule_text.trim(), parsed: existing.rule_parsed } : null
   );
   const [parseBusy, setParseBusy] = useState(false);
@@ -293,7 +295,7 @@ export default function StrategyBuilder({
         : { market_key: market?.key ?? "custom", side: market?.side ?? null, market_label: market?.label ?? "custom" };
       try {
         const { data, error } = await supabase.functions.invoke("run-strategies", { body: { parse_rule: { text, ...base } } });
-        if (!cancelled) setRuleParse({ text, parsed: error ? null : ((data?.parsed as ParsedRule | null) ?? null) });
+        if (!cancelled) setRuleParse({ text, parsed: error ? null : ((data?.parsed as ParsedRule | null) ?? null), heard: (data?.heard as string | null) ?? null });
       } catch {
         if (!cancelled) setRuleParse({ text, parsed: null });
       }
@@ -425,18 +427,24 @@ export default function StrategyBuilder({
         .lte("kickoff_utc", toIso)
         .not("status", "in", `(${FINISHED_LIVE.join(",")})`)
         .order("kickoff_utc", { ascending: true })
-        .limit(50);
+        .limit(200);
       if (picked.size) q = q.in("league_id", Array.from(picked));
       const { data, count } = await q;
       if (cancelled) return;
-      setPreviewN(count ?? data?.length ?? 0);
-      setPreviewFx((data ?? []).slice(0, 3) as { home_team: string; away_team: string }[]);
+      // a kickoff pin filters by LOCAL start time, which the DB can't do — filter the page here
+      // (the count is then "of the first 200", close enough for a preview)
+      const all = (data ?? []) as { home_team: string; away_team: string; kickoff_utc: string }[];
+      const inScope = kickAt
+        ? all.filter((f) => new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { hour12: false }).slice(0, 5) === kickAt)
+        : all;
+      setPreviewN(kickAt ? inScope.length : count ?? all.length);
+      setPreviewFx(inScope.slice(0, 3));
       // earliest kickoff in scope — used to keep the delivery time before the first match
-      setEarliestKickoff(((data ?? [])[0] as { kickoff_utc?: string })?.kickoff_utc ?? null);
+      setEarliestKickoff(inScope[0]?.kickoff_utc ?? null);
     };
     const id = setTimeout(run, 250);
     return () => { cancelled = true; clearTimeout(id); };
-  }, [picked, target, supabase]);
+  }, [picked, target, kickAt, supabase]);
 
   // A same-day time that's already passed is FINE — the engine simply fires at its next chance
   // (right away if the agent hasn't run today, else tomorrow at that time). The old hard block here
@@ -538,7 +546,6 @@ export default function StrategyBuilder({
       const added: string[] = [];
       for (const item of items) {
         if (next.some((m) => m.market_key === item.market_key && m.side === item.side && m.line === item.line && m.period === item.period && m.bet_value === item.bet_value)) continue;
-        if (next.length >= MIX_MAX) { skipped.push(`“${item.label}” (mix is full at ${MIX_MAX})`); continue; }
         next.push(item); added.push(item.label);
       }
       setMix(next);
@@ -564,7 +571,6 @@ export default function StrategyBuilder({
     if (mix.some((m) => m.market_key === item.market_key && m.side === item.side && m.line === item.line && m.period === item.period && m.bet_value === item.bet_value)) {
       return setMsg("That outcome is already in the mix.");
     }
-    if (mix.length >= MIX_MAX) return setMsg(`Up to ${MIX_MAX} outcomes per mix.`);
     setMix((xs) => [...xs, item]);
     setMixNote(`Added: ${label}`);
   }
@@ -703,6 +709,7 @@ export default function StrategyBuilder({
       max_per_prediction: cap,
       deliver_at: jitteredDeliverAt(time),
       target_day: target,
+      kickoff_at: kickAt ? `${kickAt}:00` : null,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
       channels: Array.from(channels),
       learning: canLearn ? learning : false,
@@ -835,6 +842,7 @@ export default function StrategyBuilder({
         <Row k="Leagues" v={leagueSurprise ? "🎲 Surprise · re-rolls each run" : picked.size === 0 ? (plan === "pro_max" ? "All competitions" : "Pick some") : `${picked.size} of ${maxLeagues}`} />
         <Row k="Selectivity" v={`${sel.name.split(" ")[0]} · ${sel.eq.replace("min edge ", "")}`} />
         <Row k="Cap" v={`${cap} / prediction`} />
+        {kickAt && <Row k="Kickoff" v={`${kickAt} games only`} />}
         <Row k="Delivery" v={`${time} · ${chLabel}`} />
         <Row k="Learning" v={learning && canLearn ? "On" : "Off"} />
       </div>
@@ -1104,14 +1112,19 @@ export default function StrategyBuilder({
                       </span>
                     </p>
                   ) : (
-                    <ul className="mt-2 flex flex-col gap-1 text-[12.5px] leading-relaxed text-ink">
-                      {rb!.lines.map((l, i) => (
-                        <li key={i} className="flex gap-1.5">
-                          <span className="flex-none text-ink-mute">→</span>
-                          <span>{l}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      {ruleParse?.heard && (
+                        <p className="mt-2 text-[12px] italic leading-snug text-ink-mute">Heard as: “{ruleParse.heard}”</p>
+                      )}
+                      <ul className="mt-2 flex flex-col gap-1 text-[12.5px] leading-relaxed text-ink">
+                        {rb!.lines.map((l, i) => (
+                          <li key={i} className="flex gap-1.5">
+                            <span className="flex-none text-ink-mute">→</span>
+                            <span>{l}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
                   )}
                 </div>
               );
@@ -1161,6 +1174,31 @@ export default function StrategyBuilder({
             <p className="mb-3 text-[12px] leading-snug text-ink-mute">
               Showing leagues that play {TARGETS.find((t) => t.k === target)?.h}. Your agent hunts this window at each delivery.
             </p>
+
+            {/* optional kickoff pin — only games starting at exactly this local time */}
+            <div className="mb-3 flex flex-wrap items-center gap-2.5">
+              <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">⏰ Kickoff at</span>
+              <input
+                type="time"
+                value={kickAt}
+                onChange={(e) => setKickAt(e.target.value)}
+                className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
+              />
+              {kickAt ? (
+                <>
+                  <span className="text-[12px] text-ink-mute">only games starting {kickAt} count</span>
+                  <button
+                    type="button"
+                    onClick={() => setKickAt("")}
+                    className="rounded-md border border-ink/15 px-2 py-1 font-mono text-[10.5px] font-bold uppercase text-ink-mute transition hover:border-ink/40 hover:text-ink"
+                  >
+                    ✕ Any time
+                  </button>
+                </>
+              ) : (
+                <span className="text-[12px] text-ink-mute">optional — leave empty for any kickoff time</span>
+              )}
+            </div>
 
             {/* one-tap region sets — each toggles its whole tier (cap-aware, strongest first) */}
             <div className="mb-3 flex flex-wrap gap-2">

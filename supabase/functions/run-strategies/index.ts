@@ -47,7 +47,11 @@ let TEMP = 1;
 // the pick keeps its true edge in the row but is demoted to amber and ranked at the cap.
 const MAX_PLAUSIBLE_EDGE = 0.15;
 
-function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } }); }
+// CORS: the builder calls this function straight from the browser (rule read-back, run-on-create).
+// Without these headers the preflight fails and every in-app invoke silently dies — curl works,
+// the app doesn't. Cron/server callers ignore them.
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
+function json(b: unknown, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json", ...CORS } }); }
 async function getSecret(name: string): Promise<string> {
   const { data, error } = await sb.rpc("get_secret", { secret_name: name });
   if (error || !data) throw new Error(`secret ${name}`);
@@ -790,7 +794,7 @@ async function parseRule(text: string, key: string, base: { mk: string; side: st
         model: "claude-sonnet-5", max_tokens: 1500,
         thinking: { type: "disabled" },
         output_config: { format: { type: "json_schema", schema: RULE_SCHEMA } },
-        messages: [{ role: "user", content: `${RULE_PROMPT}\n\nBASE market: ${base.label} (key ${base.mk}, side ${base.side ?? ""}).\nRULE: ${text.trim().slice(0, 500)}` }],
+        messages: [{ role: "user", content: `${RULE_PROMPT}\n\nBASE market: ${base.label} (key ${base.mk}, side ${base.side ?? ""}).\nRULE: ${text.trim().slice(0, 800)}` }],
       }),
     });
     if (!res.ok) return null;
@@ -799,6 +803,34 @@ async function parseRule(text: string, key: string, base: { mk: string; side: st
     const p = JSON.parse(block?.text ?? "{}");
     return { filters: Array.isArray(p.filters) ? p.filters : [], select: Array.isArray(p.select) ? p.select : [] };
   } catch { return null; }
+}
+// Bettors write rules in every style — math shorthand ("1.2 < odds <= 1.37"), broken grammar,
+// slang. One cheap Haiku pass canonicalises the text into explicit betting English BEFORE the
+// structured parse, so a single pipeline fits every writing style. Numbers must survive exactly;
+// any failure falls back to parsing the raw text alone.
+async function rephraseRule(text: string, key: string): Promise<string | null> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", max_tokens: 300,
+        messages: [{ role: "user", content: `Rewrite this football bettor's rule as one or two short, explicit English sentences describing betting conditions. Expand shorthand and math notation into words (e.g. "1.2 < odds <= 1.37" means "the odds are greater than 1.2 and at most 1.37"). Keep every number EXACTLY as written. Do not add, drop or invent conditions. Do not answer or explain anything — output ONLY the rewritten rule.\n\nRULE: ${text.trim().slice(0, 500)}` }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const t = ((data.content ?? []).find((b: any) => b.type === "text")?.text ?? "").trim();
+    return t || null;
+  } catch { return null; }
+}
+// The full pipeline: canonicalise, then parse original + clarified together (the parser sees
+// both, so a bad rephrase can't hide the user's actual words). heard = what the engine
+// understood in plain English, surfaced by the builder's read-back.
+async function parseRuleFull(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<{ parsed: RuleParsed | null; heard: string | null }> {
+  const heard = await rephraseRule(text, key);
+  const parsed = await parseRule(heard ? `${text}\n(Clarified: ${heard})` : text, key, base);
+  return { parsed, heard };
 }
 function medianOdd(bms: any[], betId: number, value: string): number | null {
   const xs: number[] = [];
@@ -1339,7 +1371,7 @@ async function learnAdjust(strategy: any): Promise<{ next: number; basis: string
 
 // --- Surprise-me leagues: resolve the league set for THIS run -----------------
 // Server port of surpriseLeagues() in StrategyBuilder.tsx. league_mode drives it:
-//   fixed    -> hunt exactly strategy.league_ids (today's behaviour)
+//   fixed    -> hunt league_ids (today's behaviour)
 //   all      -> no league filter, scan every competition (Pro Max)
 //   surprise -> re-roll a fresh random subset of in-window leagues EVERY run
 // Returns "all" for no filter, or the concrete league_id list to hunt.
@@ -1458,7 +1490,12 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     .order("kickoff_utc", { ascending: true }).limit(200);
   if (leagues !== "all") q = q.in("league_id", leagues);
   const { data: fixtures } = await q;
-  const candidates = (fixtures ?? []).filter((f: Fixture) => !takenAll.has(f.id));
+  // optional kickoff pin ("games starting 15:00"): only fixtures whose LOCAL kickoff (strategy tz)
+  // matches the chosen HH:MM survive — empty = any time, the old behaviour
+  const kickAt = strategy.kickoff_at ? String(strategy.kickoff_at).slice(0, 5) : null;
+  const candidates = (fixtures ?? []).filter((f: Fixture) =>
+    !takenAll.has(f.id) &&
+    (!kickAt || new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { timeZone: tz, hour12: false }).slice(0, 5) === kickAt));
 
   const rule: RuleParsed | null = strategy.rule_parsed ?? null;
   // Only compute recent-form signals when a rule is actually in play (keeps the common path fast).
@@ -1580,6 +1617,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
 }
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     let strategyId: string | null = null;
     let shard = -1, shards = 0;
@@ -1605,12 +1643,12 @@ Deno.serve(async (req) => {
       const akey = await anthropicKey();
       if (!akey) return json({ error: "parser_unavailable" }, 503);
       const mk = typeof parseOnly.market_key === "string" ? parseOnly.market_key : "custom";
-      const parsed = await parseRule(parseOnly.text, akey, {
+      const { parsed, heard } = await parseRuleFull(parseOnly.text, akey, {
         mk,
         side: typeof parseOnly.side === "string" ? parseOnly.side : null,
         label: typeof parseOnly.market_label === "string" ? parseOnly.market_label : mk,
       });
-      return json({ parsed });
+      return json({ parsed, heard });
     }
 
     let strategies: any[] = [];
@@ -1629,7 +1667,7 @@ Deno.serve(async (req) => {
       const akey = await anthropicKey();
       if (akey) for (const s of strategies) {
         if (s.rule_text && !s.rule_parsed) {
-          const rp = await parseRule(s.rule_text, akey, { mk: s.market_key, side: s.side, label: s.market_label ?? s.market_key });
+          const { parsed: rp } = await parseRuleFull(s.rule_text, akey, { mk: s.market_key, side: s.side, label: s.market_label ?? s.market_key });
           if (rp) { s.rule_parsed = rp; await sb.from("strategies").update({ rule_parsed: rp }).eq("id", s.id); }
         }
       }
