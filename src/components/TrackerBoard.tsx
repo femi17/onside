@@ -758,6 +758,25 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
     if (!error) router.refresh();
   }
 
+  // wipe the whole tracker in one go — same rules as single remove: acca legs are only hidden
+  // (the slip stays intact), standalone bets are deleted
+  async function clearAll() {
+    const ok = await confirm({
+      title: "Clear all tracked games?",
+      body: `Removes all ${tickets.length} game${tickets.length === 1 ? "" : "s"} from your tracker. Accumulator legs are only hidden — your slips stay intact.`,
+      confirmLabel: "Clear all",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusyId("__all__");
+    const accaIds = tickets.filter((t) => t.accumulator_id).map((t) => t.id);
+    const soloIds = tickets.filter((t) => !t.accumulator_id).map((t) => t.id);
+    if (accaIds.length) await supabase.from("tickets").update({ tracker_hidden: true }).in("id", accaIds);
+    if (soloIds.length) await supabase.from("tickets").delete().in("id", soloIds);
+    setBusyId(null);
+    router.refresh();
+  }
+
   const grouped = useMemo(() => {
     const g: Record<Group, Ticket[]> = { live: [], upcoming: [], settled: [] };
     for (const t of tickets) g[groupOf(t, stateOf(t))].push(t);
@@ -876,6 +895,13 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
                   </button>
                 );
               })}
+              <button
+                onClick={clearAll}
+                disabled={busyId === "__all__"}
+                className="flex flex-none items-center gap-1.5 rounded-full border border-white/10 bg-pitch-2 px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-wide text-brick transition-colors hover:border-brick/50 disabled:opacity-50"
+              >
+                ✕ Clear all
+              </button>
             </div>
           )}
         </div>
