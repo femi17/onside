@@ -15,6 +15,8 @@ export type PickReasons = {
   away_form: TeamForm5 | null;
   h2h: { n: number; homeWins: number; draws: number; awayWins: number } | null;
   model: { home: number; draw: number; away: number; over25: number; btts: number } | null;
+  corners_exp?: number | null; // engine's expected total corners for this game
+  cards_exp?: number | null;   // engine's expected total cards
 };
 
 export type AgentPick = TrackedTicket & {
@@ -34,6 +36,16 @@ export type AgentPick = TrackedTicket & {
 // form + goals, the head-to-head record, the model's probabilities) and how they point to the pick,
 // then the edge/confidence. Falls back to the numbers-only explanation for older picks with no
 // stored reasons.
+// Which story a market tells — the explanation talks about the thing the BET is about
+// (goals for an under-3.5, corners for a corners line, "going a goal up" for 1UP), never a
+// generic home-advantage blurb.
+function groupOfMk(mk: string): "result" | "early" | "goals" | "corners" | "cards" {
+  if (/corner/.test(mk)) return "corners";
+  if (/card/.test(mk)) return "cards";
+  if (/1up|2up|never_down/.test(mk)) return "early";
+  if (/^(home_win|away_win|draw$|result_1x2|double_chance|dnb|handicap|home_no_bet|away_no_bet)/.test(mk)) return "result";
+  return "goals";
+}
 function explainPick(p: AgentPick): { title: string; body: string[] } {
   const f = p.fixtures;
   const home = f?.home_team ?? "Home";
@@ -41,42 +53,56 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
   const market = p.market_label ?? p.custom_market ?? "this market";
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   const r = p.reasons;
-  const body: string[] = [`${p.agent_name} picked “${market}” in ${home} v ${away}. Here's why:`];
+  const mk = p.market_key ?? "";
+  const group = groupOfMk(mk);
+  const body: string[] = [`${p.agent_name} picked “${market}” in ${home} v ${away}. Here's why THIS game fits that bet:`];
 
   if (r && (r.home_form || r.away_form || r.h2h || r.model)) {
-    const formLine = (name: string, ff: TeamForm5 | null) =>
-      ff && ff.n
-        ? `${name} — last ${ff.n} games: won ${ff.w}, drew ${ff.d}, lost ${ff.l}. Scored ${ff.gf}, let in ${ff.ga}.`
-        : null;
-    for (const line of [formLine(home, r.home_form), formLine(away, r.away_form)]) if (line) body.push(line);
+    const gpg = (ff: TeamForm5) => ((ff.gf + ff.ga) / ff.n).toFixed(1);
 
-    const streak = (name: string, ff: TeamForm5 | null) => {
-      if (!ff || !ff.n) return null;
-      if (ff.l >= 3) return `${name} are struggling — ${ff.l} losses in their last ${ff.n}.`;
-      if (ff.w >= 3) return `${name} are in form — ${ff.w} wins in their last ${ff.n}.`;
-      return null;
-    };
-    for (const line of [streak(home, r.home_form), streak(away, r.away_form)]) if (line) body.push(line);
-
-    if (r.h2h && r.h2h.n) {
-      const s = (n: number) => (n === 1 ? "" : "s");
-      body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)}. Context only: old meetings between different squads say little, so the model rates the teams on their full recent seasons instead.`);
-    }
-
-    // Result-type markets get the 1X2 split (shows who's favoured / opponent strength). Every other
-    // market (any goals line, BTTS, handicap, …) gets the model's probability for THAT exact pick,
-    // labelled with its real market — never a hardcoded "over 2.5".
-    const mk = p.market_key ?? "";
-    const resultFam = ["home_win", "away_win", "draw", "result_1x2", "double_chance_1x", "double_chance_x2", "double_chance_12"];
-    if (r.model && resultFam.includes(mk)) {
-      body.push(`Our computer model's ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)}.`);
-    } else if (p.model_prob != null) {
-      body.push(`Our computer model gives “${market}” about a ${pct(p.model_prob)} chance.`);
-    } else if (r.model) {
-      body.push(`Our computer model's ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)}.`);
-    }
-    if (r.model) {
-      body.push(`(The rating comes from a full year of each team's results — recent games count most — plus home advantage and how strong their opponents were. That's why a home team can still be favourite when both sides are struggling: it's about who's LESS weak, at home.)`);
+    if (group === "goals") {
+      // goals-centric: the bet is about scoring, so the evidence is scoring rates
+      const gl = (name: string, ff: TeamForm5 | null) =>
+        ff && ff.n ? `${name}'s last ${ff.n}: scored ${ff.gf}, conceded ${ff.ga} — their games are running at about ${gpg(ff)} goals each.` : null;
+      for (const line of [gl(home, r.home_form), gl(away, r.away_form)]) if (line) body.push(line);
+      if (r.home_form?.n && r.away_form?.n) {
+        const avg = ((r.home_form.gf + r.home_form.ga) / r.home_form.n + (r.away_form.gf + r.away_form.ga) / r.away_form.n) / 2;
+        body.push(`Blend the two and this fixture profiles as a ${avg < 2.3 ? "low" : avg > 3.1 ? "high" : "medium"}-scoring game (≈${avg.toFixed(1)} goals).`);
+      }
+      if (r.model) body.push(`The model's read on this game: over 2.5 goals ${pct(r.model.over25)}, both teams scoring ${pct(r.model.btts)}.`);
+      if (p.model_prob != null) body.push(`Put together, the model gives “${market}” a ${pct(p.model_prob)} chance here.`);
+    } else if (group === "corners") {
+      if (r.corners_exp != null) body.push(`From both teams' recent corner counts, the model expects about ${r.corners_exp} corners in this game.`);
+      if (p.model_prob != null) body.push(`Against what “${market}” needs${p.line != null ? ` (the ${p.line} line)` : ""}, that works out to a ${pct(p.model_prob)} chance.`);
+      if (r.corners_exp == null && p.model_prob == null) body.push(`Corner data for these teams is still building, so this pick leans on your rules more than the corner model.`);
+    } else if (group === "cards") {
+      if (r.cards_exp != null) body.push(`From both teams' recent bookings, the model expects about ${r.cards_exp} cards in this game.`);
+      if (p.model_prob != null) body.push(`Against what “${market}” needs${p.line != null ? ` (the ${p.line} line)` : ""}, that's a ${pct(p.model_prob)} chance.`);
+      if (r.cards_exp == null && p.model_prob == null) body.push(`Card data for these teams is still building, so this pick leans on your rules more than the cards model.`);
+    } else {
+      // result + early-payout markets: who's stronger is the story
+      const fl = (name: string, ff: TeamForm5 | null) =>
+        ff && ff.n ? `${name} — last ${ff.n}: won ${ff.w}, drew ${ff.d}, lost ${ff.l} (scored ${ff.gf}, conceded ${ff.ga}).` : null;
+      for (const line of [fl(home, r.home_form), fl(away, r.away_form)]) if (line) body.push(line);
+      if (r.h2h && r.h2h.n) {
+        const s = (n: number) => (n === 1 ? "" : "s");
+        body.push(`Head-to-head — last ${r.h2h.n} meeting${s(r.h2h.n)}: ${home} won ${r.h2h.homeWins}, ${away} won ${r.h2h.awayWins}, ${r.h2h.draws} draw${s(r.h2h.draws)} (context only — the model rates full recent seasons, not a handful of old meetings).`);
+      }
+      if (r.model) body.push(`The model's match ratings: ${home} ${pct(r.model.home)}, draw ${pct(r.model.draw)}, ${away} ${pct(r.model.away)} — built from a year of results (recent games count most), opponent strength and home advantage.`);
+      if (group === "early") {
+        const team = /away/.test(mk) ? away : home;
+        const kind = /2up/.test(mk) ? "2up" : /never_down/.test(mk) ? "nd" : "1up";
+        const sem =
+          kind === "1up"
+            ? `“${market}” pays the moment ${team} go a goal in front — even if the game later turns. That's easier than winning outright, which is why its chance is higher than the win rating above.`
+            : kind === "2up"
+              ? `“${market}” lands if ${team} either win, or lead by two at any point (early payout). Slightly easier than a plain win.`
+              : `“${market}” needs ${team} to win without EVER falling behind — stricter than a plain win, so its chance is lower than the win rating above.`;
+        body.push(sem);
+        if (p.model_prob != null) body.push(`The model's chance for this exact bet: ${pct(p.model_prob)}.`);
+      } else if (p.model_prob != null && !r.model) {
+        body.push(`The model gives “${market}” a ${pct(p.model_prob)} chance here.`);
+      }
     }
   }
 
@@ -554,17 +580,19 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
       {explain && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
           <div onClick={() => setExplain(null)} className="absolute inset-0 bg-ink/60" />
-          <div role="dialog" aria-modal="true" aria-label="Why the agent picked this" className="relative w-full max-w-md rounded-t-2xl bg-chalk p-5 text-ink shadow-2xl sm:rounded-2xl">
-            <div className="flex items-start justify-between gap-3">
+          {/* height is capped — long explanations scroll inside (invisible scrollbar) instead of
+              stretching the sheet top-to-bottom on mobile */}
+          <div role="dialog" aria-modal="true" aria-label="Why the agent picked this" className="relative flex max-h-[72vh] w-full max-w-md flex-col rounded-t-2xl bg-chalk p-5 text-ink shadow-2xl sm:max-h-[76vh] sm:rounded-2xl">
+            <div className="flex flex-none items-start justify-between gap-3">
               <h3 className="font-disp text-lg font-extrabold text-ink">{explainPick(explain).title}</h3>
               <button onClick={() => setExplain(null)} aria-label="Close" className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-ink/5 font-mono text-lg text-ink-mute transition-colors hover:text-ink">×</button>
             </div>
-            <div className="mt-3 flex flex-col gap-2.5">
+            <div className="no-scrollbar mt-3 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
               {explainPick(explain).body.map((line, i) => (
                 <p key={i} className="text-[13.5px] leading-relaxed text-ink-mute">{line}</p>
               ))}
             </div>
-            <button onClick={() => setExplain(null)} className="mt-4 w-full rounded-xl bg-flood py-2.5 font-bold text-ink">Got it</button>
+            <button onClick={() => setExplain(null)} className="mt-4 w-full flex-none rounded-xl bg-flood py-2.5 font-bold text-ink">Got it</button>
           </div>
         </div>
       )}

@@ -1436,13 +1436,17 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       const hf = hId != null ? (await apiTeamForm(hId, key)) ?? rForm.get(hId) : undefined;
       const af = aId != null ? (await apiTeamForm(aId, key)) ?? rForm.get(aId) : undefined;
       const h2h = (hId != null && aId != null) ? (await apiH2H(hId, aId, key)) ?? await buildH2H(hId, aId) : null;
-      const agg = aggCache.get(r.f.id)?.agg;
-      const conf = aggCache.get(r.f.id)?.confident ?? false;
+      const cellR = aggCache.get(r.f.id);
+      const agg = cellR?.agg;
+      const conf = cellR?.confident ?? false;
       reasonsByFx.set(r.f.id, {
         home_form: hf ? { w: hf.wins5, d: hf.draws5, l: hf.losses5, gf: hf.gf5, ga: hf.ga5, n: hf.n } : null,
         away_form: af ? { w: af.wins5, d: af.draws5, l: af.losses5, gf: af.gf5, ga: af.ga5, n: af.n } : null,
         h2h: h2h && h2h.n ? h2h : null,
         model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), btts: round2(agg.btts) } : null,
+        // stat-model expectations so corner/card picks can explain themselves with real numbers
+        ...(cellR?.corn?.ok ? { corners_exp: Math.round((cellR.corn.lh + cellR.corn.la) * 10) / 10 } : {}),
+        ...(cellR?.card?.ok ? { cards_exp: Math.round((cellR.card.lh + cellR.card.la) * 10) / 10 } : {}),
       });
     }
   }
