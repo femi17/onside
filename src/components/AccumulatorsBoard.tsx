@@ -129,17 +129,20 @@ function LegRow({ leg, nowMs, onDetach, onTrack, busy }: { leg: AccaLeg; nowMs: 
           )}
         </div>
         <div className="mt-0.5 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{market}</div>
-        {/* every leg says whether it's ALSO visible on the tracker; a hidden one is one tap away */}
-        {leg.tracker_hidden ? (
-          <button
-            onClick={onTrack}
-            disabled={busy || !onTrack}
-            className="mt-1 rounded-full bg-flood/15 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25 disabled:opacity-50"
-          >
-            ＋ Add to tracker
-          </button>
-        ) : (
-          <span className="mt-0.5 block font-mono text-[9.5px] uppercase tracking-wide text-ink-mute/70">✓ on tracker</span>
+        {/* open legs say whether they're ALSO visible on the tracker (a hidden one is one tap
+            away); a landed/missed/void leg is done — tracking it again would be pointless */}
+        {leg.status !== "won" && leg.status !== "lost" && leg.status !== "void" && (
+          leg.tracker_hidden ? (
+            <button
+              onClick={onTrack}
+              disabled={busy || !onTrack}
+              className="mt-1 rounded-full bg-flood/15 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25 disabled:opacity-50"
+            >
+              ＋ Add to tracker
+            </button>
+          ) : (
+            <span className="mt-0.5 block font-mono text-[9.5px] uppercase tracking-wide text-ink-mute/70">✓ on tracker</span>
+          )
         )}
       </div>
       <div className="text-right font-mono">
