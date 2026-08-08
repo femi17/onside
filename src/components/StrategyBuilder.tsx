@@ -279,31 +279,36 @@ export default function StrategyBuilder({
   // exactly what it understood — a rule that mistranslates (or translates to nothing and would be
   // silently ignored) gets caught here, before the agent ever picks with it. The confirmed parse
   // is persisted on save so the engine runs precisely what the user approved.
-  const [ruleParse, setRuleParse] = useState<{ text: string; parsed: ParsedRule | null; heard?: string | null } | null>(
-    existing?.rule_text?.trim() && existing.rule_parsed ? { text: existing.rule_text.trim(), parsed: existing.rule_parsed } : null
+  const [ruleParse, setRuleParse] = useState<{ text: string; baseKey: string; parsed: ParsedRule | null; heard?: string | null } | null>(
+    existing?.rule_text?.trim() && existing.rule_parsed
+      ? { text: existing.rule_text.trim(), baseKey: `${existing.markets?.length ? "mix" : existing.market_key}|${existing.markets?.length ? "" : existing.side ?? ""}`, parsed: existing.rule_parsed }
+      : null
   );
   const [parseBusy, setParseBusy] = useState(false);
   useEffect(() => {
     const text = rule.trim();
     if (!text) { setRuleParse(null); return; }
-    if (ruleParse?.text === text) return; // this exact wording is already read back
+    const base = mix.length
+      ? { market_key: "mix", side: null as string | null, market_label: `Mix · ${mix.map((m) => m.label).join(" / ")}` }
+      : { market_key: market?.key ?? "custom", side: market?.side ?? null, market_label: market?.label ?? "custom" };
+    // cache on wording AND base market — the same words parse differently against a different
+    // market ("odds" = the pick's odds), so switching market must re-run the read-back
+    const baseKey = `${base.market_key}|${base.side ?? ""}`;
+    if (ruleParse?.text === text && ruleParse.baseKey === baseKey) return;
     let cancelled = false;
     const timer = setTimeout(async () => {
       setParseBusy(true);
-      const base = mix.length
-        ? { market_key: "mix", side: null as string | null, market_label: `Mix · ${mix.map((m) => m.label).join(" / ")}` }
-        : { market_key: market?.key ?? "custom", side: market?.side ?? null, market_label: market?.label ?? "custom" };
       try {
         const { data, error } = await supabase.functions.invoke("run-strategies", { body: { parse_rule: { text, ...base } } });
-        if (!cancelled) setRuleParse({ text, parsed: error ? null : ((data?.parsed as ParsedRule | null) ?? null), heard: (data?.heard as string | null) ?? null });
+        if (!cancelled) setRuleParse({ text, baseKey, parsed: error ? null : ((data?.parsed as ParsedRule | null) ?? null), heard: (data?.heard as string | null) ?? null });
       } catch {
-        if (!cancelled) setRuleParse({ text, parsed: null });
+        if (!cancelled) setRuleParse({ text, baseKey, parsed: null });
       }
       if (!cancelled) setParseBusy(false);
     }, 1200);
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rule]);
+  }, [rule, market?.key, market?.side, mix]);
 
   // Search across ALL leagues in the DB (1000+), not just the preloaded set — so typing "england"
   // finds Premier League, League One/Two, National League, etc. even though they aren't preloaded.
@@ -777,8 +782,12 @@ export default function StrategyBuilder({
     // precisely what the user approved. An empty or unchecked parse stays null: the engine
     // re-parses on the first run rather than caching "no rule" forever.
     const ruleText = r.row.rule_text as string | null;
+    // the read-back must match BOTH the wording and the market being saved — a parse made
+    // against a different base market is stale (null → the engine re-parses on first run)
+    const savedBaseKey = `${r.row.market_key}|${(r.row.side as string | null) ?? ""}`;
     const confirmedParse =
-      ruleText && ruleParse?.text === ruleText && ruleParse.parsed && (ruleParse.parsed.filters.length || ruleParse.parsed.select.length)
+      ruleText && ruleParse?.text === ruleText && ruleParse.baseKey === savedBaseKey &&
+      ruleParse.parsed && (ruleParse.parsed.filters.length || ruleParse.parsed.select.length)
         ? ruleParse.parsed
         : null;
 

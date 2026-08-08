@@ -45,7 +45,7 @@ export type LearningEvent = {
   new_min_edge: number | null;
   avg_roi: number | null;
   avg_clv: number | null;
-  basis: string | null; // 'clv' | 'roi' — which signal drove the adjustment
+  basis: string | null; // 'clv' | 'roi' | 'cross_agent' — which signal drove the adjustment
   sample_size: number | null;
   created_at: string | null;
   strategies: { name: string | null } | { name: string | null }[] | null;
@@ -420,8 +420,10 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], h
                 {tunes.map((e) => {
                   const prev = e.prev_min_edge ?? 0, next = e.new_min_edge ?? 0;
                   const tightened = next > prev;
-                  const isClv = e.basis === "clv";
-                  const metric = isClv ? (e.avg_clv ?? 0) : (e.avg_roi ?? 0);
+                  // cross_agent = a new agent seeded from the COMMUNITY's record on its market
+                  // family (metric lives in avg_clv, same units) — not its own ROI
+                  const basis = e.basis === "clv" || e.basis === "cross_agent" ? e.basis : "roi";
+                  const metric = basis === "roi" ? (e.avg_roi ?? 0) : (e.avg_clv ?? 0);
                   return (
                     <div key={e.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-pitch-2 p-4">
                       <span className={`grid h-8 w-8 flex-none place-items-center rounded-lg font-mono text-base font-bold ${tightened ? "bg-flood/15 text-flood-deep" : "bg-grass/15 text-grass-deep"}`}>
@@ -432,7 +434,9 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], h
                           <b>{evAgent(e)}</b> {tightened ? "tightened" : "loosened"} its bar {signed(prev)} → {signed(next)}
                         </div>
                         <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">
-                          {metric >= 0 ? "+" : ""}{(metric * 100).toFixed(1)}% {isClv ? "CLV" : "ROI"} over {e.sample_size ?? 0} {isClv ? "picks" : "settled"}
+                          {metric >= 0 ? "+" : ""}{(metric * 100).toFixed(1)}%{" "}
+                          {basis === "clv" ? "CLV" : basis === "cross_agent" ? "community record on its market" : "ROI"} over {e.sample_size ?? 0}{" "}
+                          {basis === "roi" ? "settled" : "picks"}
                           {e.created_at ? ` · ${new Date(e.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}` : ""}
                         </div>
                       </div>
