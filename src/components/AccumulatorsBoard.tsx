@@ -78,7 +78,7 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
-function LegRow({ leg, nowMs, onDetach, onTrack, busy }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; busy?: boolean }) {
+function LegRow({ leg, nowMs, onDetach, onTrack, busy, dead }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; busy?: boolean; dead?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
   const voided = leg.status === "void";
@@ -130,8 +130,9 @@ function LegRow({ leg, nowMs, onDetach, onTrack, busy }: { leg: AccaLeg; nowMs: 
         </div>
         <div className="mt-0.5 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{market}</div>
         {/* open legs say whether they're ALSO visible on the tracker (a hidden one is one tap
-            away); a landed/missed/void leg is done — tracking it again would be pointless */}
-        {leg.status !== "won" && leg.status !== "lost" && leg.status !== "void" && (
+            away); a landed/missed/void leg is done — tracking it again would be pointless.
+            On a CUT slip the games were cleared off the tracker on purpose, so no re-add chip */}
+        {!dead && leg.status !== "won" && leg.status !== "lost" && leg.status !== "void" && (
           leg.tracker_hidden ? (
             <button
               onClick={onTrack}
@@ -375,7 +376,7 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
                 <span className={`h-2 w-2 rounded-full ${g.dot}`} /> {g.label} · {grouped[g.cat].length}
               </div>
               {grouped[g.cat].map((leg) => (
-                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} onTrack={() => retrackLeg(leg)} busy={busyId === leg.id} />
+                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} onTrack={() => retrackLeg(leg)} busy={busyId === leg.id} dead={dead} />
               ))}
             </div>
           ) : null
