@@ -1235,7 +1235,14 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     }
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketFor(baseCand, bms2);
-    if (kp == null) continue;
+    if (kp == null) {
+      // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
+      // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
+      if (mp >= 0.5 && passesDeferred(mp, null, null)) {
+        unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null });
+      }
+      continue;
+    }
     const edge = mp - kp;
     if (!passesDeferred(mp, kp, edge)) continue;
     priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });

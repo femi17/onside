@@ -61,15 +61,43 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
     const gpg = (ff: TeamForm5) => ((ff.gf + ff.ga) / ff.n).toFixed(1);
 
     if (group === "goals") {
-      // goals-centric: the bet is about scoring, so the evidence is scoring rates
-      const gl = (name: string, ff: TeamForm5 | null) =>
-        ff && ff.n ? `${name}'s last ${ff.n}: scored ${ff.gf}, conceded ${ff.ga} — their games are running at about ${gpg(ff)} goals each.` : null;
-      for (const line of [gl(home, r.home_form), gl(away, r.away_form)]) if (line) body.push(line);
-      if (r.home_form?.n && r.away_form?.n) {
-        const avg = ((r.home_form.gf + r.home_form.ga) / r.home_form.n + (r.away_form.gf + r.away_form.ga) / r.away_form.n) / 2;
-        body.push(`Blend the two and this fixture profiles as a ${avg < 2.3 ? "low" : avg > 3.1 ? "high" : "medium"}-scoring game (≈${avg.toFixed(1)} goals).`);
+      // goals-centric: the evidence matches WHO the bet is about. "Home to score" cares about the
+      // home side's scoring and the AWAY side's conceding — never the away side's scoring.
+      const atk = (name: string, ff: TeamForm5 | null) =>
+        ff && ff.n ? `${name} have scored ${ff.gf} in their last ${ff.n} games (≈${(ff.gf / ff.n).toFixed(1)} per game).` : null;
+      const dfn = (name: string, ff: TeamForm5 | null) =>
+        ff && ff.n ? `${name} have let in ${ff.ga} in their last ${ff.n} (≈${(ff.ga / ff.n).toFixed(1)} conceded per game).` : null;
+      const teamScoped = mk.match(/^(home|away)_(to_score|goals_ou|goal_range|multigoals|clean_sheet|win_to_nil|odd_even)/);
+      if (teamScoped) {
+        const focusHome = teamScoped[1] === "home";
+        const kind = teamScoped[2];
+        if (kind === "clean_sheet" || kind === "win_to_nil") {
+          // the bet is about the focus team NOT conceding → their defence + the opponent's attack
+          for (const line of [
+            dfn(focusHome ? home : away, focusHome ? r.home_form : r.away_form),
+            atk(focusHome ? away : home, focusHome ? r.away_form : r.home_form),
+          ]) if (line) body.push(line);
+        } else {
+          // the bet is about the focus team SCORING → their attack + the opponent's leaky defence
+          for (const line of [
+            atk(focusHome ? home : away, focusHome ? r.home_form : r.away_form),
+            dfn(focusHome ? away : home, focusHome ? r.away_form : r.home_form),
+          ]) if (line) body.push(line);
+        }
+      } else if (mk === "btts" || mk === "teams_to_score") {
+        for (const line of [atk(home, r.home_form), atk(away, r.away_form)]) if (line) body.push(line);
+        if (r.model) body.push(`The model gives both teams scoring ${pct(r.model.btts)} in this game.`);
+      } else {
+        // whole-match goal lines: both teams' combined scoring tempo is the story
+        const gl = (name: string, ff: TeamForm5 | null) =>
+          ff && ff.n ? `${name}'s last ${ff.n}: scored ${ff.gf}, conceded ${ff.ga} — their games are running at about ${gpg(ff)} goals each.` : null;
+        for (const line of [gl(home, r.home_form), gl(away, r.away_form)]) if (line) body.push(line);
+        if (r.home_form?.n && r.away_form?.n) {
+          const avg = ((r.home_form.gf + r.home_form.ga) / r.home_form.n + (r.away_form.gf + r.away_form.ga) / r.away_form.n) / 2;
+          body.push(`Blend the two and this fixture profiles as a ${avg < 2.3 ? "low" : avg > 3.1 ? "high" : "medium"}-scoring game (≈${avg.toFixed(1)} goals).`);
+        }
+        if (r.model) body.push(`The model's read on this game: over 2.5 goals ${pct(r.model.over25)}, both teams scoring ${pct(r.model.btts)}.`);
       }
-      if (r.model) body.push(`The model's read on this game: over 2.5 goals ${pct(r.model.over25)}, both teams scoring ${pct(r.model.btts)}.`);
       if (p.model_prob != null) body.push(`Put together, the model gives “${market}” a ${pct(p.model_prob)} chance here.`);
     } else if (group === "corners") {
       if (r.corners_exp != null) body.push(`From both teams' recent corner counts, the model expects about ${r.corners_exp} corners in this game.`);
