@@ -227,6 +227,24 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     router.refresh();
   }
 
+  // a cut slip can be deleted — soft delete only, so the day's upload/acca quota
+  // stays used (both quota checks count accumulators rows, deleted or not)
+  async function deleteAcca() {
+    const okGo = await confirm({
+      title: "Delete this slip?",
+      body: "It disappears from your accumulators for good. Today's upload count stays used — deleting a slip doesn't give it back.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!okGo) return;
+    setBusyId(acca.id);
+    // belt and braces: its games should already be off the tracker (the cut hides them)
+    await supabase.from("tickets").update({ tracker_hidden: true }).eq("accumulator_id", acca.id);
+    await supabase.from("accumulators").update({ deleted_at: new Date().toISOString() }).eq("id", acca.id);
+    setBusyId(null);
+    router.refresh();
+  }
+
   // a leg hidden from the tracker (removed there / Clear all) goes back with one tap
   async function retrackLeg(leg: AccaLeg) {
     setBusyId(leg.id);
@@ -254,6 +272,19 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
             <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-ink-mute">
               <span className="rounded bg-ink px-1.5 py-0.5 font-bold tracking-wider text-chalk-2">{acca.bookmaker ?? "Onside"}</span>
               {won ? "won" : dead ? "cut" : "live"}
+              {dead && (
+                <button
+                  onClick={deleteAcca}
+                  disabled={busyId === acca.id}
+                  aria-label="Delete this slip"
+                  title="Delete this slip"
+                  className="grid h-6 w-6 flex-none place-items-center rounded-md text-ink-mute transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+                    <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3L12 4M6.5 7v4.5M9.5 7v4.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
             </div>
             <div className="mt-2 font-disp text-[15px] font-extrabold">{fold}-fold accumulator</div>
           </div>

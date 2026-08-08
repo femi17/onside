@@ -29,6 +29,9 @@ export default async function AccumulatorsPage() {
     .select(
       "id, title, bookmaker, stake, potential_return, currency, leg_count, status, created_at, tickets(id, market_key, market_label, custom_market, line, side, period, status, current_value, tracker_hidden, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht)))"
     )
+    // deleted slips are soft-deleted only (they still count against the daily
+    // upload/acca quota) — just never shown again
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
   if (cap != null) query = query.limit(cap);
   const { data } = await query;
