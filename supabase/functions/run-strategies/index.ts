@@ -154,7 +154,31 @@ function dcTau(x: number, y: number, l: number, m: number): number {
   if (x === 1 && y === 1) return 1 - RHO;
   return 1;
 }
-type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[]; hDist: number[]; aDist: number[]; hwNil: number; awNil: number };
+// ---------- early-payout (1UP/2UP/Never Down) path maths ----------
+// Given a final score (i home goals, j away), every ordering of the goals is equally likely under
+// Poisson scoring, so "was the team EVER a goal up during the game" has an exact ballot-problem
+// formula. That lets both the model AND the bookies' implied matrix price these markets — the
+// bookies never quote 1UP directly, but their 1X2 + totals pin down their score matrix.
+const C2 = (n: number, r: number) => (r < 0 || r > n ? 0 : FACT[n] / (FACT[r] * FACT[n - r]));
+const everUp1 = (i: number, j: number) => (i > j ? 1 : i / (j + 1));
+const everUp2 = (i: number, j: number) => (i - j >= 2 ? 1 : i >= 2 ? C2(i + j, i - 2) / C2(i + j, i) : 0);
+const neverBehindWin = (i: number, j: number) => (i > j ? (i + 1 - j) / (i + 1) : 0);
+const EARLY_KEYS = ["home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "home_win_never_down", "away_win_never_down", "double_chance_1x_1up", "double_chance_x2_1up"] as const;
+// P(market wins | final score i-j), matching poll's settlement semantics exactly
+function earlyCell(mk: string, i: number, j: number): number {
+  switch (mk) {
+    case "home_win_1up": return everUp1(i, j);
+    case "away_win_1up": return everUp1(j, i);
+    case "home_win_2up": return i > j ? 1 : everUp2(i, j);
+    case "away_win_2up": return j > i ? 1 : everUp2(j, i);
+    case "home_win_never_down": return neverBehindWin(i, j);
+    case "away_win_never_down": return neverBehindWin(j, i);
+    case "double_chance_1x_1up": return i >= j ? 1 : everUp1(i, j);
+    case "double_chance_x2_1up": return j >= i ? 1 : everUp1(j, i);
+    default: return 0;
+  }
+}
+type Agg = { hw: number; dr: number; aw: number; totalP: number[]; homeScore: number; awayScore: number; btts: number; marg: number[]; hDist: number[]; aDist: number[]; hwNil: number; awNil: number; early: Record<string, number> };
 // Full score matrix (DC-corrected, temperature-calibrated, renormalised) → every market read off it,
 // so BTTS/team-to-score are proper matrix sums (not the old independent-Poisson product) and all
 // probabilities share the same calibration.
@@ -177,6 +201,8 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
   const marg = new Array(2 * N + 1).fill(0);
   const hDist = new Array(N + 1).fill(0); // per-team goal marginals — price team-total lines
   const aDist = new Array(N + 1).fill(0);
+  const early: Record<string, number> = {};
+  for (const k of EARLY_KEYS) early[k] = 0;
   for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
     const p = cells[i][j] / total;
     if (i > j) hw += p; else if (i === j) dr += p; else aw += p;
@@ -189,8 +215,9 @@ function aggregate(lamH: number, lamA: number, N = 10): Agg {
     marg[i - j + N] += p;
     hDist[i] += p;
     aDist[j] += p;
+    for (const k of EARLY_KEYS) early[k] += p * earlyCell(k, i, j);
   }
-  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg, hDist, aDist, hwNil, awNil };
+  return { hw, dr, aw, totalP, homeScore, awayScore, btts, marg, hDist, aDist, hwNil, awNil, early };
 }
 const overP = (agg: Agg, line: number) => { let s = 0; for (let t = 0; t < agg.totalP.length; t++) if (t > line) s += agg.totalP[t]; return s; };
 // bet_value range grammar shared with the settlement grader: "2-3", "4+", bare "2"
@@ -260,6 +287,10 @@ function modelProb(mk: string, side: string | null, line: number | null, agg: Ag
     case "away_clean_sheet": { const p = agg.hDist[0]; return side === "no" ? 1 - p : p; }
     case "home_win_to_nil": return agg.hwNil;
     case "away_win_to_nil": return agg.awNil;
+    case "home_win_1up": case "away_win_1up": case "home_win_2up": case "away_win_2up":
+    case "home_win_never_down": case "away_win_never_down":
+    case "double_chance_1x_1up": case "double_chance_x2_1up":
+      return agg.early[mk] ?? null;
     case "handicap": {
       if (line == null || !side) return null;
       const N = (agg.marg.length - 1) / 2;
@@ -393,6 +424,59 @@ function marketProb(mk: string, side: string | null, line: number | null, bookma
   for (const bm of bookmakers) { const p = bookProb(mk, side, line, bm.bets ?? [], period); if (p != null && p > 0 && p < 1) ps.push(p); }
   if (!ps.length) return null;
   return ps.reduce((a, b) => a + b, 0) / ps.length;
+}
+// ---------- market-implied pricing for markets bookmakers never quote (1UP/2UP/Never Down) ----------
+// Books don't offer these through the odds feed, but their de-vigged 1X2 (+ over 2.5 when quoted)
+// pins down THEIR implied goal rates. Fit lamH/lamA to reproduce those numbers, rebuild the
+// bookies' score matrix, and read the early-payout price off it with the same path maths the
+// model uses — so edge stays a genuine model-vs-market comparison.
+const EARLY_PRICED = new Set<string>(EARLY_KEYS as unknown as string[]);
+const marketLamCache = new Map<string, { lh: number; la: number } | null>();
+function plainProbs(lh: number, la: number, N = 10): { hw: number; aw: number; over25: number } {
+  const ph: number[] = [], pa: number[] = [];
+  for (let k = 0; k <= N; k++) { ph.push(pois(k, lh)); pa.push(pois(k, la)); }
+  let hw = 0, aw = 0, over25 = 0, total = 0;
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
+    const p = ph[i] * pa[j];
+    total += p;
+    if (i > j) hw += p; else if (j > i) aw += p;
+    if (i + j >= 3) over25 += p;
+  }
+  return { hw: hw / total, aw: aw / total, over25: over25 / total };
+}
+function fitLams(hwT: number, awT: number, o25T: number | null): { lh: number; la: number } | null {
+  let best: { lh: number; la: number } | null = null;
+  let bestE = Infinity;
+  const scan = (l0: number, l1: number, a0: number, a1: number, step: number) => {
+    for (let lh = l0; lh <= l1; lh += step) for (let la = a0; la <= a1; la += step) {
+      const r = plainProbs(lh, la);
+      let e = (r.hw - hwT) ** 2 + (r.aw - awT) ** 2;
+      if (o25T != null) e += 0.5 * (r.over25 - o25T) ** 2;
+      if (e < bestE) { bestE = e; best = { lh, la }; }
+    }
+  };
+  scan(0.2, 3.6, 0.2, 3.6, 0.2);
+  if (best) scan(Math.max(0.1, best.lh - 0.2), best.lh + 0.2, Math.max(0.1, best.la - 0.2), best.la + 0.2, 0.05);
+  return best && bestE < 0.01 ? best : null; // reject when no lambda pair reproduces the odds
+}
+function earlyMarketProb(mk: string, bms: any[]): number | null {
+  const hw = marketProb("home_win", "home", null, bms), aw = marketProb("away_win", "away", null, bms);
+  if (hw == null || aw == null) return null;
+  const o25 = marketProb("total_goals_ou", "over", 2.5, bms);
+  const ck = `${hw.toFixed(3)}|${aw.toFixed(3)}|${o25?.toFixed(3) ?? "x"}`;
+  let lam = marketLamCache.get(ck);
+  if (lam === undefined) { lam = fitLams(hw, aw, o25); marketLamCache.set(ck, lam); }
+  if (!lam) return null;
+  const N = 10;
+  const ph: number[] = [], pa: number[] = [];
+  for (let k = 0; k <= N; k++) { ph.push(pois(k, lam.lh)); pa.push(pois(k, lam.la)); }
+  let s = 0, total = 0;
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
+    const p = ph[i] * pa[j];
+    total += p;
+    s += p * earlyCell(mk, i, j);
+  }
+  return total > 0 ? s / total : null;
 }
 
 type Rate = { gf: number; ga: number; n: number }; // time-decay-weighted LEAGUE-RELATIVE ratio sums
@@ -624,6 +708,8 @@ function canon(mk: string, side: string | null, line: number | null): { mk: stri
   if (mk === "teams_to_score") return { mk: "btts", side: side ?? "yes", line: null };
   if (mk === "home_no_bet") return { mk: "dnb", side: "away", line: null };
   if (mk === "away_no_bet") return { mk: "dnb", side: "home", line: null };
+  // per settlement, draw 2UP/Never-Down are exactly a draw bet — price them as one
+  if (mk === "draw_2up" || mk === "draw_never_down") return { mk: "draw", side: "draw", line: null };
   return { mk, side, line };
 }
 // halves as independently thinned Poissons: goals skew slightly to the 2nd half, corners a bit more
@@ -1001,6 +1087,7 @@ function modelFor(cell: Cell, c: Cand): number | null {
 }
 function marketFor(c: Cand, bms: any[]): number | null {
   const k = canon(c.mk, c.side, c.line);
+  if (EARLY_PRICED.has(k.mk)) return earlyMarketProb(k.mk, bms); // derived from the bookies' 1X2+totals
   return marketProb(k.mk, k.side, k.line, bms, periodOf(c));
 }
 // Weigh a SET of outcomes for one game and return the best: priced candidates compete on (capped)
