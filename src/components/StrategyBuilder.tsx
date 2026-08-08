@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { recognizeBet } from "@/lib/betCatalog";
+import { describeRule, type ParsedRule } from "@/lib/ruleReadback";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 import ConnectTelegram from "@/components/ConnectTelegram";
@@ -131,6 +132,7 @@ export type ExistingStrategy = {
   period: string | null;
   bet_value: string | null;
   rule_text: string | null;
+  rule_parsed: ParsedRule | null;
   league_ids: number[] | null;
   league_mode: string | null;
   selectivity: string | null;
@@ -270,6 +272,36 @@ export default function StrategyBuilder({
       valueTarget: customParsed.valueTarget ?? "bet_value",
     };
   }, [mode, presetIdx, familyIdx, surprisePick, customParsed, customText]);
+
+  // Live rule read-back: run the plain-English rule through the engine's OWN parser and show
+  // exactly what it understood — a rule that mistranslates (or translates to nothing and would be
+  // silently ignored) gets caught here, before the agent ever picks with it. The confirmed parse
+  // is persisted on save so the engine runs precisely what the user approved.
+  const [ruleParse, setRuleParse] = useState<{ text: string; parsed: ParsedRule | null } | null>(
+    existing?.rule_text?.trim() && existing.rule_parsed ? { text: existing.rule_text.trim(), parsed: existing.rule_parsed } : null
+  );
+  const [parseBusy, setParseBusy] = useState(false);
+  useEffect(() => {
+    const text = rule.trim();
+    if (!text) { setRuleParse(null); return; }
+    if (ruleParse?.text === text) return; // this exact wording is already read back
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setParseBusy(true);
+      const base = mix.length
+        ? { market_key: "mix", side: null as string | null, market_label: `Mix · ${mix.map((m) => m.label).join(" / ")}` }
+        : { market_key: market?.key ?? "custom", side: market?.side ?? null, market_label: market?.label ?? "custom" };
+      try {
+        const { data, error } = await supabase.functions.invoke("run-strategies", { body: { parse_rule: { text, ...base } } });
+        if (!cancelled) setRuleParse({ text, parsed: error ? null : ((data?.parsed as ParsedRule | null) ?? null) });
+      } catch {
+        if (!cancelled) setRuleParse({ text, parsed: null });
+      }
+      if (!cancelled) setParseBusy(false);
+    }, 1200);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rule]);
 
   // Search across ALL leagues in the DB (1000+), not just the preloaded set — so typing "england"
   // finds Premier League, League One/Two, National League, etc. even though they aren't preloaded.
@@ -734,13 +766,24 @@ export default function StrategyBuilder({
     setBusy(true);
     setMsg(null);
 
+    // Persist the CONFIRMED parse — the exact logic the read-back showed — so the engine runs
+    // precisely what the user approved. An empty or unchecked parse stays null: the engine
+    // re-parses on the first run rather than caching "no rule" forever.
+    const ruleText = r.row.rule_text as string | null;
+    const confirmedParse =
+      ruleText && ruleParse?.text === ruleText && ruleParse.parsed && (ruleParse.parsed.filters.length || ruleParse.parsed.select.length)
+        ? ruleParse.parsed
+        : null;
+
     // EDIT: update in place, keep the current status, and DO NOT run now. New config applies on the
     // next scheduled run — so editing can never be used to churn out extra forecasts on demand.
     if (editing && existing) {
       const patch: Record<string, unknown> = { ...r.row };
       delete patch.user_id; // never reassign owner on edit
-      // if the plain-English rule changed, drop the cached parse so the engine re-parses it
-      if ((existing.rule_text ?? null) !== (r.row.rule_text ?? null)) patch.rule_parsed = null;
+      // store the read-back's confirmed parse; if there isn't one and the wording changed,
+      // null it so the engine re-parses (never leave a stale parse behind edited wording)
+      if (confirmedParse) patch.rule_parsed = confirmedParse;
+      else if ((existing.rule_text ?? null) !== ruleText) patch.rule_parsed = null;
       const { error } = await supabase.from("strategies").update(patch).eq("id", existing.id);
       setBusy(false);
       if (error) { setMsg(error.message); return; }
@@ -752,7 +795,7 @@ export default function StrategyBuilder({
     // CREATE: insert, then run once immediately so today's picks show right away.
     const { data: strat, error } = await supabase
       .from("strategies")
-      .insert({ ...r.row, status })
+      .insert({ ...r.row, rule_parsed: confirmedParse, status })
       .select("id")
       .single();
     if (error || !strat) {
@@ -1037,6 +1080,42 @@ export default function StrategyBuilder({
             <p className="mt-2.5 text-[12.5px] leading-relaxed text-ink-mute">
               Conditions, odds checks and fallbacks are understood. <b className="text-ink">“If odds &lt; 1.6 → straight win, else double chance”</b> becomes a real rule the agent runs on every game. Optional.
             </p>
+            {rule.trim() && (() => {
+              const pending = parseBusy || ruleParse?.text !== rule.trim();
+              const failed = !pending && ruleParse?.parsed == null;
+              const rb = !pending && !failed ? describeRule(ruleParse!.parsed) : null;
+              return (
+                <div className="mt-3 rounded-xl border border-ink/10 bg-ink/[0.03] p-3.5">
+                  <div className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-wide text-ink-mute">
+                    <span className={`h-1.5 w-1.5 flex-none rounded-full ${pending ? "animate-pulse bg-flood motion-reduce:animate-none" : failed ? "bg-ink/30" : rb!.empty ? "bg-brick" : "bg-grass"}`} />
+                    How your agent reads this
+                  </div>
+                  {pending ? (
+                    <p className="mt-2 text-[12.5px] text-ink-mute">Reading your rule…</p>
+                  ) : failed ? (
+                    <p className="mt-2 text-[12.5px] leading-relaxed text-ink-mute">
+                      Couldn&apos;t check this right now — the agent will read the rule on its first run.
+                    </p>
+                  ) : rb!.empty ? (
+                    <p className="mt-2 text-[12.5px] leading-relaxed">
+                      <b className="text-brick">This doesn&apos;t translate into anything the agent can act on — as written it will be ignored.</b>{" "}
+                      <span className="text-ink-mute">
+                        Use numbers the engine can check: odds, wins or points in the last 5, goals scored per game, the blend, model probability or edge.
+                      </span>
+                    </p>
+                  ) : (
+                    <ul className="mt-2 flex flex-col gap-1 text-[12.5px] leading-relaxed text-ink">
+                      {rb!.lines.map((l, i) => (
+                        <li key={i} className="flex gap-1.5">
+                          <span className="flex-none text-ink-mute">→</span>
+                          <span>{l}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
           </section>
 
           {/* 04 leagues */}

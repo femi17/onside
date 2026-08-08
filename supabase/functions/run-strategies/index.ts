@@ -1583,7 +1583,35 @@ Deno.serve(async (req) => {
   try {
     let strategyId: string | null = null;
     let shard = -1, shards = 0;
-    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); } catch { /* cron */ }
+    let parseOnly: { text?: unknown; market_key?: unknown; side?: unknown; market_label?: unknown } | null = null;
+    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); parseOnly = b?.parse_rule ?? null; } catch { /* cron */ }
+
+    // Parse-only mode: the builder reads a rule back to the user BEFORE saving, so a rule that
+    // mistranslates (or translates to nothing) is caught at creation time, not after wrong picks.
+    // No DB writes, no strategy runs — just the same parser the engine itself uses.
+    if (parseOnly && typeof parseOnly.text === "string" && parseOnly.text.trim()) {
+      // per-user daily cap (rides the api_cache table and its daily pruning) — each parse is a
+      // real LLM call, so a builder session can't burn unbounded tokens
+      let uid = "anon";
+      try {
+        const tok = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+        const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        if (typeof payload?.sub === "string") uid = payload.sub;
+      } catch { /* shared anon bucket */ }
+      const ck = `ruleparse:${uid}:${dayKey()}`;
+      const used = (await sharedCacheGet<number>(ck)) ?? 0;
+      if (used >= 40) return json({ error: "rule_parse_limit" }, 429);
+      await sharedCachePut(ck, used + 1);
+      const akey = await anthropicKey();
+      if (!akey) return json({ error: "parser_unavailable" }, 503);
+      const mk = typeof parseOnly.market_key === "string" ? parseOnly.market_key : "custom";
+      const parsed = await parseRule(parseOnly.text, akey, {
+        mk,
+        side: typeof parseOnly.side === "string" ? parseOnly.side : null,
+        label: typeof parseOnly.market_label === "string" ? parseOnly.market_label : mk,
+      });
+      return json({ parsed });
+    }
 
     let strategies: any[] = [];
     if (strategyId) { const { data } = await sb.from("strategies").select("*").eq("id", strategyId).limit(1); strategies = data ?? []; }

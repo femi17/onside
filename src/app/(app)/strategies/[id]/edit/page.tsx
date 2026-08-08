@@ -23,7 +23,7 @@ export default async function EditStrategyPage({ params }: { params: { id: strin
     supabase
       .from("strategies")
       .select(
-        "id, name, status, market_key, market_label, custom_market, side, line, period, bet_value, rule_text, league_ids, league_mode, selectivity, max_per_prediction, deliver_at, target_day, channels, learning, markets"
+        "id, name, status, market_key, market_label, custom_market, side, line, period, bet_value, rule_text, rule_parsed, league_ids, league_mode, selectivity, max_per_prediction, deliver_at, target_day, channels, learning, markets"
       )
       .eq("id", params.id)
       .eq("user_id", user.id)
