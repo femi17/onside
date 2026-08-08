@@ -888,9 +888,24 @@ let reasonCalls = 0;
 const apiFormCache = new Map<string, Form | null>();
 const apiH2HCache = new Map<string, H2H | null>();
 const dayKey = () => new Date().toISOString().slice(0, 10);
+// Cross-isolate day cache (api_cache table): the in-memory maps above die with the isolate and
+// are per-SHARD, so parallel shards / cold starts used to re-buy the same team's form on the same
+// day. One fetch lands in the table and every isolate reuses it; pruned daily in maybeRecalibrate.
+// undefined = not cached; null = cached "no data" (worth remembering too — saves a refetch).
+async function sharedCacheGet<T>(ck: string): Promise<T | null | undefined> {
+  try {
+    const { data } = await sb.from("api_cache").select("payload").eq("cache_key", ck).maybeSingle();
+    return data ? (((data.payload as { v: T | null }).v ?? null) as T | null) : undefined;
+  } catch { return undefined; }
+}
+async function sharedCachePut(ck: string, v: unknown): Promise<void> {
+  try { await sb.from("api_cache").upsert({ cache_key: ck, payload: { v }, fetched_at: new Date().toISOString() }, { onConflict: "cache_key" }); } catch { /* non-fatal */ }
+}
 async function apiTeamForm(teamId: number, key: string): Promise<Form | null> {
   const ck = `${teamId}:${dayKey()}`;
   if (apiFormCache.has(ck)) return apiFormCache.get(ck)!;
+  const shared = await sharedCacheGet<Form>(`form:${ck}`);
+  if (shared !== undefined) { apiFormCache.set(ck, shared); return shared; }
   if (reasonCalls >= REASON_FETCH_CAP) return null;
   reasonCalls++;
   try {
@@ -909,6 +924,7 @@ async function apiTeamForm(teamId: number, key: string): Promise<Form | null> {
     f.ppg5 = f.n ? f.pts5 / f.n : 0;
     const out = f.n ? f : null;
     apiFormCache.set(ck, out);
+    await sharedCachePut(`form:${ck}`, out);
     return out;
   } catch { return null; }
 }
@@ -918,6 +934,8 @@ type H2H = { n: number; homeWins: number; draws: number; awayWins: number };
 async function apiH2H(homeId: number, awayId: number, key: string): Promise<H2H | null> {
   const ck = `${homeId}-${awayId}:${dayKey()}`;
   if (apiH2HCache.has(ck)) return apiH2HCache.get(ck)!;
+  const shared = await sharedCacheGet<H2H>(`h2h:${ck}`);
+  if (shared !== undefined) { apiH2HCache.set(ck, shared); return shared; }
   if (reasonCalls >= REASON_FETCH_CAP) return null;
   reasonCalls++;
   try {
@@ -935,6 +953,7 @@ async function apiH2H(homeId: number, awayId: number, key: string): Promise<H2H 
     }
     const out = n ? { n, homeWins, draws, awayWins } : null;
     apiH2HCache.set(ck, out);
+    await sharedCachePut(`h2h:${ck}`, out);
     return out;
   } catch { return null; }
 }
@@ -994,6 +1013,11 @@ async function maybeRecalibrate(): Promise<void> {
   const { data: mp } = await sb.from("model_params").select("temp,last_calib_at").eq("id", 1).maybeSingle();
   if (mp?.temp != null && Number.isFinite(Number(mp.temp))) TEMP = Number(mp.temp) || 1;
   if (mp?.last_calib_at && Date.now() - Date.parse(mp.last_calib_at) < 24 * 3600 * 1000) return;
+  // housekeeping riding the daily gate: day-keyed shared API cache rows and old odds snapshots
+  // are dead weight after a few days — prune so the tables stay index-sized
+  const stale = new Date(Date.now() - 3 * 86400000).toISOString();
+  try { await sb.from("api_cache").delete().lt("fetched_at", stale); } catch { /* non-fatal */ }
+  try { await sb.from("odds_cache").delete().lt("fetched_at", stale); } catch { /* non-fatal */ }
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: rows } = await sb.from("deliveries").select("model_prob,result")
     .in("result", ["won", "lost"]).not("model_prob", "is", null).gte("delivered_at", since).limit(2000);
