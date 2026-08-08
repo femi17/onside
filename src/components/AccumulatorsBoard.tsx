@@ -12,6 +12,10 @@ import type { MatchState } from "@/lib/matchState";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
+// an acca leg = a ticket + whether it's visible on the tracker (a leg removed from the
+// tracker is only HIDDEN there — it stays on the slip, and can be put back)
+export type AccaLeg = TrackedTicket & { tracker_hidden?: boolean | null };
+
 export type Acca = {
   id: string;
   title: string | null;
@@ -22,7 +26,7 @@ export type Acca = {
   leg_count: number | null;
   status: string;
   created_at: string;
-  tickets: TrackedTicket[];
+  tickets: AccaLeg[];
 };
 
 type Cat = "cut" | "live" | "safe" | "soon";
@@ -74,7 +78,7 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
-function LegRow({ leg, nowMs, onDetach, busy }: { leg: TrackedTicket; nowMs: number; onDetach?: () => void; busy?: boolean }) {
+function LegRow({ leg, nowMs, onDetach, onTrack, busy }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; busy?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
   const voided = leg.status === "void";
@@ -119,6 +123,18 @@ function LegRow({ leg, nowMs, onDetach, busy }: { leg: TrackedTicket; nowMs: num
           )}
         </div>
         <div className="mt-0.5 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{market}</div>
+        {/* every leg says whether it's ALSO visible on the tracker; a hidden one is one tap away */}
+        {leg.tracker_hidden ? (
+          <button
+            onClick={onTrack}
+            disabled={busy || !onTrack}
+            className="mt-1 rounded-full bg-flood/15 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25 disabled:opacity-50"
+          >
+            ＋ Add to tracker
+          </button>
+        ) : (
+          <span className="mt-0.5 block font-mono text-[9.5px] uppercase tracking-wide text-ink-mute/70">✓ on tracker</span>
+        )}
       </div>
       <div className="text-right font-mono">
         <div className={`text-sm font-bold ${pulse && !voided ? "pop " : ""}${scColor}`}>{sc}</div>
@@ -199,6 +215,14 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     setBusyId(null);
     setAddOpen(false);
     setLoose(null);
+    router.refresh();
+  }
+
+  // a leg hidden from the tracker (removed there / Clear all) goes back with one tap
+  async function retrackLeg(leg: AccaLeg) {
+    setBusyId(leg.id);
+    await supabase.from("tickets").update({ tracker_hidden: false }).eq("id", leg.id);
+    setBusyId(null);
     router.refresh();
   }
   const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0 };
@@ -311,7 +335,7 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
                 <span className={`h-2 w-2 rounded-full ${g.dot}`} /> {g.label} · {grouped[g.cat].length}
               </div>
               {grouped[g.cat].map((leg) => (
-                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} busy={busyId === leg.id} />
+                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} onTrack={() => retrackLeg(leg)} busy={busyId === leg.id} />
               ))}
             </div>
           ) : null
