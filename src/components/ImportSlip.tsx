@@ -442,36 +442,90 @@ export default function ImportSlip({
                 <div className="no-scrollbar mt-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
                   {sels.map((s, i) => {
                     const trackable = !!s.fixture_id;
-                    // matched: a toggle row you tick to include
+                    // one shared inline search — attaches a fixture to an unmatched leg AND
+                    // re-attaches a matched leg the user says is wrong ("Change")
+                    const findPanel = findRow === i && (
+                      <div className="mt-2">
+                        <input
+                          value={findQ}
+                          onChange={(e) => setFindQ(e.target.value)}
+                          placeholder="Search the team or game…"
+                          autoFocus
+                          className="w-full rounded-lg border border-flood-deep bg-white px-3 py-2 text-sm text-ink focus:outline-none"
+                        />
+                        <div className="mt-1.5 flex flex-col gap-1">
+                          {finding ? (
+                            <p className="font-mono text-[11px] text-ink-mute">Searching…</p>
+                          ) : findResults && findResults.length === 0 ? (
+                            <p className="font-mono text-[11px] text-ink-mute">No games found — try another spelling.</p>
+                          ) : (
+                            (findResults ?? []).map((g) => (
+                              <button
+                                key={g.id}
+                                onClick={() => resolveMatch(i, g)}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-ink/10 px-2.5 py-1.5 text-left transition-colors hover:border-flood-deep"
+                              >
+                                <span className="truncate text-[13px] font-semibold">
+                                  {g.home_team} <span className="text-ink-mute">v</span> {g.away_team}
+                                </span>
+                                <span className="flex-none font-mono text-[10px] text-ink-mute">{g.leagues?.name ?? ""}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    );
+                    const toggleFind = () => {
+                      const opening = findRow !== i;
+                      setFindRow(opening ? i : null);
+                      setFindQ(opening ? s.home : "");
+                    };
+                    // matched: a toggle row you tick to include, with "Change" to re-pick the game
                     if (trackable)
                       return (
-                        <button
+                        <div
                           key={i}
-                          onClick={() => setSels((xs) => xs!.map((x, j) => (j === i ? { ...x, on: !x.on } : x)))}
-                          className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          className={`rounded-xl border px-3 py-2.5 transition-colors ${
                             s.on ? "border-flood-deep bg-flood/10" : "border-ink/15"
                           }`}
                         >
-                          <span
-                            className={`flex h-5 w-5 flex-none items-center justify-center rounded-md border font-mono text-xs font-bold ${
-                              s.on ? "border-ink bg-ink text-chalk-2" : "border-ink/30 text-transparent"
-                            }`}
-                          >
-                            ✓
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <SlipLeague name={s.league_name} flag={s.league_flag} tier={s.league_tier} />
-                            <div className="truncate text-sm font-bold">{s.matched}</div>
-                            <div className="truncate font-mono text-[11px] font-bold uppercase text-flood-deep">{s.market_label}</div>
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setSels((xs) => xs!.map((x, j) => (j === i ? { ...x, on: !x.on } : x)))}
+                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            >
+                              <span
+                                className={`flex h-5 w-5 flex-none items-center justify-center rounded-md border font-mono text-xs font-bold ${
+                                  s.on ? "border-ink bg-ink text-chalk-2" : "border-ink/30 text-transparent"
+                                }`}
+                              >
+                                ✓
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <SlipLeague name={s.league_name} flag={s.league_flag} tier={s.league_tier} />
+                                <div className="truncate text-sm font-bold">{s.matched}</div>
+                                <div className="truncate font-mono text-[11px] font-bold uppercase text-flood-deep">{s.market_label}</div>
+                              </div>
+                            </button>
+                            <div className="flex flex-none flex-col items-end gap-1">
+                              <span
+                                className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase ${
+                                  s.confidence === "high" ? "bg-grass/15 text-grass-deep" : "bg-flood/20 text-flood-deep"
+                                }`}
+                              >
+                                {s.confidence === "high" ? "Read" : "Check"}
+                              </span>
+                              {/* wrong game matched? re-open the search and pick again */}
+                              <button
+                                onClick={toggleFind}
+                                className="rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/5 hover:text-ink"
+                              >
+                                {findRow === i ? "Close" : "↻ Change"}
+                              </button>
+                            </div>
                           </div>
-                          <span
-                            className={`flex-none rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase ${
-                              s.confidence === "high" ? "bg-grass/15 text-grass-deep" : "bg-flood/20 text-flood-deep"
-                            }`}
-                          >
-                            {s.confidence === "high" ? "Read" : "Check"}
-                          </span>
-                        </button>
+                          {findPanel}
+                        </div>
                       );
                     // unmatched: show what we read + a "Find game" search to attach a fixture
                     return (
@@ -485,47 +539,13 @@ export default function ImportSlip({
                             <div className="truncate font-mono text-[11px] font-bold uppercase text-flood-deep">{s.market_label}</div>
                           </div>
                           <button
-                            onClick={() => {
-                              const opening = findRow !== i;
-                              setFindRow(opening ? i : null);
-                              setFindQ(opening ? s.home : "");
-                            }}
+                            onClick={toggleFind}
                             className="flex-none rounded-full bg-flood/15 px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25"
                           >
                             {findRow === i ? "Close" : "Find game"}
                           </button>
                         </div>
-                        {findRow === i && (
-                          <div className="mt-2">
-                            <input
-                              value={findQ}
-                              onChange={(e) => setFindQ(e.target.value)}
-                              placeholder="Search the team or game…"
-                              autoFocus
-                              className="w-full rounded-lg border border-flood-deep bg-white px-3 py-2 text-sm text-ink focus:outline-none"
-                            />
-                            <div className="mt-1.5 flex flex-col gap-1">
-                              {finding ? (
-                                <p className="font-mono text-[11px] text-ink-mute">Searching…</p>
-                              ) : findResults && findResults.length === 0 ? (
-                                <p className="font-mono text-[11px] text-ink-mute">No games found — try another spelling.</p>
-                              ) : (
-                                (findResults ?? []).map((g) => (
-                                  <button
-                                    key={g.id}
-                                    onClick={() => resolveMatch(i, g)}
-                                    className="flex items-center justify-between gap-2 rounded-lg border border-ink/10 px-2.5 py-1.5 text-left transition-colors hover:border-flood-deep"
-                                  >
-                                    <span className="truncate text-[13px] font-semibold">
-                                      {g.home_team} <span className="text-ink-mute">v</span> {g.away_team}
-                                    </span>
-                                    <span className="flex-none font-mono text-[10px] text-ink-mute">{g.leagues?.name ?? ""}</span>
-                                  </button>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        )}
+                        {findPanel}
                       </div>
                     );
                   })}

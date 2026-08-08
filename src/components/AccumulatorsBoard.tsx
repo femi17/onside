@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { type TrackedTicket, stateOf, liveTrack } from "@/lib/ticket";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import { usePulse } from "@/lib/usePulse";
@@ -71,7 +74,7 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
-function LegRow({ leg, nowMs }: { leg: TrackedTicket; nowMs: number }) {
+function LegRow({ leg, nowMs, onDetach, busy }: { leg: TrackedTicket; nowMs: number; onDetach?: () => void; busy?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
   const voided = leg.status === "void";
@@ -100,7 +103,7 @@ function LegRow({ leg, nowMs }: { leg: TrackedTicket; nowMs: number }) {
   const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : pulse ? "text-flood-deep" : "text-ink";
 
   return (
-    <div className={`grid grid-cols-[26px_1fr_auto] items-center gap-3 rounded-[10px] px-2.5 py-2.5 transition-colors hover:bg-ink/[0.04] ${voided ? "opacity-60" : ""}`}>
+    <div className={`grid ${onDetach ? "grid-cols-[26px_1fr_auto_auto]" : "grid-cols-[26px_1fr_auto]"} items-center gap-3 rounded-[10px] px-2.5 py-2.5 transition-colors hover:bg-ink/[0.04] ${voided ? "opacity-60" : ""}`}>
       <span className={`grid h-[22px] w-[22px] place-items-center rounded-[7px] font-mono text-xs font-bold ${voided ? "bg-ink/[0.07] text-ink-mute" : MK[cat].cls}`}>
         {voided ? "–" : MK[cat].glyph}
       </span>
@@ -121,15 +124,83 @@ function LegRow({ leg, nowMs }: { leg: TrackedTicket; nowMs: number }) {
         <div className={`text-sm font-bold ${pulse && !voided ? "pop " : ""}${scColor}`}>{sc}</div>
         {mn && <div className="text-[11px] text-ink-mute">{mn}</div>}
       </div>
+      {onDetach && (
+        <button
+          onClick={onDetach}
+          disabled={busy}
+          aria-label="Remove this game from the slip"
+          title="Remove from this slip"
+          className="grid h-6 w-6 flex-none place-items-center rounded-md font-mono text-sm text-ink-mute transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
 
+// a standalone tracked bet that can be pulled INTO this slip (accumulator_id is null)
+type LooseTicket = {
+  id: string;
+  market_label: string | null;
+  custom_market: string | null;
+  fixtures: { home_team: string; away_team: string; kickoff_utc: string } | null;
+};
+
 function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: number; plan: string; uploadsLeft: number | null }) {
+  const supabase = createClient();
+  const router = useRouter();
+  const confirm = useConfirm();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [loose, setLoose] = useState<LooseTicket[] | null>(null);
+
   // order the legs by kickoff so the slip reads in start-time order (earliest game first)
   const legs = [...(acca.tickets ?? [])].sort(
     (a, b) => (a.fixtures?.kickoff_utc ?? "").localeCompare(b.fixtures?.kickoff_utc ?? "") || a.id.localeCompare(b.id)
   );
+
+  // wrong game on the slip (a bad screenshot match)? pull it out — the bet itself stays
+  // tracked as a single, so nothing is lost and it can be re-added below
+  async function detachLeg(leg: TrackedTicket) {
+    const okGo = await confirm({
+      title: "Remove this game from the slip?",
+      body: "It stays in your tracker as a single bet — you can add it back to this slip anytime with “Add a game”.",
+      confirmLabel: "Remove",
+    });
+    if (!okGo) return;
+    setBusyId(leg.id);
+    const { error } = await supabase.from("tickets").update({ accumulator_id: null }).eq("id", leg.id);
+    if (!error) await supabase.from("accumulators").update({ leg_count: Math.max(1, legs.length - 1) }).eq("id", acca.id);
+    setBusyId(null);
+    router.refresh();
+  }
+
+  // list the user's standalone open bets (not on any slip) to add into this acca
+  async function toggleAdd() {
+    const opening = !addOpen;
+    setAddOpen(opening);
+    if (opening) {
+      const { data } = await supabase
+        .from("tickets")
+        .select("id, market_label, custom_market, fixtures(home_team, away_team, kickoff_utc)")
+        .is("accumulator_id", null)
+        .in("status", ["pending", "live"])
+        .order("created_at", { ascending: false })
+        .limit(30);
+      setLoose((data ?? []) as unknown as LooseTicket[]);
+    }
+  }
+
+  async function attachLeg(id: string) {
+    setBusyId(id);
+    const { error } = await supabase.from("tickets").update({ accumulator_id: acca.id }).eq("id", id);
+    if (!error) await supabase.from("accumulators").update({ leg_count: legs.length + 1 }).eq("id", acca.id);
+    setBusyId(null);
+    setAddOpen(false);
+    setLoose(null);
+    router.refresh();
+  }
   const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0 };
   const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], soon: [] };
   for (const leg of legs) {
@@ -240,10 +311,54 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
                 <span className={`h-2 w-2 rounded-full ${g.dot}`} /> {g.label} · {grouped[g.cat].length}
               </div>
               {grouped[g.cat].map((leg) => (
-                <LegRow key={leg.id} leg={leg} nowMs={nowMs} />
+                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} busy={busyId === leg.id} />
               ))}
             </div>
           ) : null
+        )}
+      </div>
+
+      {/* add a game to this slip — any standalone tracked bet can become a leg */}
+      <div className="border-t border-dashed border-ink/15 p-3">
+        <button
+          onClick={toggleAdd}
+          className="w-full rounded-xl border border-dashed border-ink/25 py-2.5 font-mono text-[11.5px] font-bold uppercase tracking-wide text-ink-mute transition-colors hover:border-ink/50 hover:text-ink"
+        >
+          {addOpen ? "Close" : "＋ Add a game to this slip"}
+        </button>
+        {addOpen && (
+          <div className="mt-2 flex max-h-[220px] flex-col gap-1.5 overflow-y-auto">
+            {loose === null ? (
+              <p className="px-1 py-2 font-mono text-[11px] text-ink-mute">Loading your tracked bets…</p>
+            ) : loose.length === 0 ? (
+              <p className="px-1 py-2 font-mono text-[11px] text-ink-mute">
+                No standalone bets to add — track a game from{" "}
+                <Link href="/add" className="font-bold text-ink underline decoration-ink/30 underline-offset-2">
+                  Add to tracker
+                </Link>{" "}
+                first, then add it here.
+              </p>
+            ) : (
+              loose.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => attachLeg(t.id)}
+                  disabled={busyId === t.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-ink/10 px-3 py-2 text-left transition-colors hover:border-flood-deep disabled:opacity-50"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-bold">
+                      {t.fixtures ? `${t.fixtures.home_team} v ${t.fixtures.away_team}` : "Match"}
+                    </span>
+                    <span className="block truncate font-mono text-[10.5px] font-bold uppercase text-flood-deep">
+                      {t.market_label ?? t.custom_market ?? "Tracked market"}
+                    </span>
+                  </span>
+                  <span className="flex-none font-mono text-[10px] font-bold uppercase text-grass-deep">Add</span>
+                </button>
+              ))
+            )}
+          </div>
         )}
       </div>
     </section>

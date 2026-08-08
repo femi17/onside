@@ -117,6 +117,10 @@ export default function AddGamesClient({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [slipOpen, setSlipOpen] = useState(false); // mobile slip drawer
+  // how to track the slip: standalone bets, a brand-new acca, or legs added to an open acca
+  const [mode, setMode] = useState<"single" | "new" | "existing">("single");
+  const [accaId, setAccaId] = useState<string | null>(null);
+  const [openAccas, setOpenAccas] = useState<{ id: string; title: string | null; leg_count: number | null; created_at: string }[] | null>(null);
   const [remote, setRemote] = useState<Game[] | null>(null); // server-side search results
   const [searching, setSearching] = useState(false);
   const [headerH, setHeaderH] = useState(0); // page header height, so the search bar stacks under it (mobile)
@@ -367,8 +371,33 @@ export default function AddGamesClient({
     setOpenId(null);
   }
 
+  // lazily load the user's open slips the first time they pick "existing acca"
+  async function pickMode(m: "single" | "new" | "existing") {
+    setMode(m);
+    setMsg(null);
+    if (m === "existing" && openAccas === null) {
+      const { data } = await supabase
+        .from("accumulators")
+        .select("id, title, leg_count, created_at")
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(20);
+      const list = (data ?? []) as { id: string; title: string | null; leg_count: number | null; created_at: string }[];
+      setOpenAccas(list);
+      if (list.length) setAccaId(list[0].id);
+    }
+  }
+
   async function trackAll() {
     if (!basket.length) return;
+    if (mode === "new" && basket.length < 2) {
+      setMsg("An accumulator needs at least 2 games — add another, or just track.");
+      return;
+    }
+    if (mode === "existing" && !accaId) {
+      setMsg("Pick which slip to add these to.");
+      return;
+    }
     setBusy(true);
     setMsg(null);
 
@@ -392,12 +421,35 @@ export default function AddGamesClient({
       setBasket([]);
       return;
     }
+    if (mode === "new" && fresh.length < 2) {
+      setBusy(false);
+      setMsg("Only 1 of these is new (the rest are already tracked) — an acca needs 2+ games.");
+      return;
+    }
 
-    // manual picks are always standalone bets — accumulators are only built from an uploaded
-    // slip (ImportSlip), so hand-picked games never group into an acca
+    // where the bets land: standalone (tracker), a brand-new acca, or an existing open acca.
+    // Acca creation is plan-gated server-side (DAILY_ACCA_LIMIT trigger), same as slip uploads.
+    let accumulatorId: string | null = null;
+    if (mode === "new") {
+      const { data: acca, error } = await supabase
+        .from("accumulators")
+        .insert({ user_id: userId, leg_count: fresh.length, source: "manual", status: "open" })
+        .select("id")
+        .single();
+      if (error || !acca) {
+        setBusy(false);
+        const limit = error?.message.match(/DAILY_ACCA_LIMIT:(\w+):(\d+)/);
+        setMsg(limit ? `Your ${limit[1].replace("_", " ")} plan tracks ${limit[2]} accumulator${limit[2] === "1" ? "" : "s"} a day. Upgrade for more.` : error?.message ?? "Couldn't create the accumulator.");
+        return;
+      }
+      accumulatorId = acca.id;
+    } else if (mode === "existing") {
+      accumulatorId = accaId;
+    }
+
     const rows = fresh.map((b) => ({
       user_id: userId,
-      accumulator_id: null,
+      accumulator_id: accumulatorId,
       fixture_id: b.fixtureId,
       market_key: b.marketKey,
       market_label: b.label,
@@ -410,13 +462,18 @@ export default function AddGamesClient({
       status: "pending",
     }));
     const { error } = await supabase.from("tickets").insert(rows);
+    if (!error && mode === "existing" && accumulatorId) {
+      // keep the fold count honest on the slip we just extended
+      const prev = openAccas?.find((a) => a.id === accumulatorId)?.leg_count ?? 0;
+      await supabase.from("accumulators").update({ leg_count: prev + fresh.length }).eq("id", accumulatorId);
+    }
     setBusy(false);
     if (error) {
       setMsg(error.message);
       return;
     }
     if (skipped > 0) setMsg(`Tracked ${fresh.length}; skipped ${skipped} already on your tracker.`);
-    router.push("/tracker");
+    router.push(accumulatorId ? "/accumulators" : "/tracker");
     router.refresh();
   }
 
@@ -451,14 +508,76 @@ export default function AddGamesClient({
         </div>
       )}
 
+      {/* how to track: standalone bets, a new acca, or legs onto an open slip.
+          Acca creation stays plan-gated server-side (daily acca limit per plan). */}
+      {basket.length > 0 && (
+        <div className="mt-3 shrink-0">
+          <p className="mb-1.5 font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">How to track</p>
+          <div className="flex gap-1.5">
+            {(
+              [
+                { m: "single" as const, label: "Just track" },
+                { m: "new" as const, label: "New acca" },
+                { m: "existing" as const, label: "To a slip" },
+              ]
+            ).map(({ m, label }) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => pickMode(m)}
+                className={`flex-1 rounded-lg border px-2 py-2 font-mono text-[11px] font-bold uppercase transition-colors ${
+                  mode === m ? "border-ink bg-ink text-chalk" : "border-ink/20 text-ink-mute hover:border-ink/40 hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {mode === "new" && basket.length < 2 && (
+            <p className="mt-1.5 font-mono text-[10.5px] text-flood-deep">An acca needs at least 2 games — add another.</p>
+          )}
+          {mode === "existing" && (
+            <div className="mt-2">
+              {openAccas === null ? (
+                <p className="font-mono text-[10.5px] text-ink-mute">Loading your open slips…</p>
+              ) : openAccas.length === 0 ? (
+                <p className="font-mono text-[10.5px] text-ink-mute">No open slips yet — pick “New acca” instead.</p>
+              ) : (
+                <select
+                  value={accaId ?? ""}
+                  onChange={(e) => setAccaId(e.target.value || null)}
+                  className="w-full rounded-lg border border-ink/20 bg-white px-3 py-2 font-mono text-[12px] text-ink"
+                >
+                  {openAccas.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {(a.title?.trim() || `${a.leg_count ?? "?"}-fold acca`) +
+                        " · " +
+                        new Date(a.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {msg && <p className="mt-3 font-mono text-xs text-brick">{msg}</p>}
 
       <button
-        disabled={!basket.length || busy}
+        disabled={!basket.length || busy || (mode === "existing" && !accaId)}
         onClick={trackAll}
         className="mt-4 w-full shrink-0 rounded-xl bg-flood px-4 py-3 font-bold text-ink disabled:opacity-40"
       >
-        {busy ? "Tracking…" : basket.length ? `Track ${basket.length} bet${basket.length === 1 ? "" : "s"}` : "Track"}
+        {busy
+          ? "Tracking…"
+          : !basket.length
+            ? "Track"
+            : mode === "new"
+              ? `Track as ${basket.length}-leg acca`
+              : mode === "existing"
+                ? `Add ${basket.length} to slip`
+                : `Track ${basket.length} bet${basket.length === 1 ? "" : "s"}`}
       </button>
     </>
   );
