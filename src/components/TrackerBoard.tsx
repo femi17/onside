@@ -447,6 +447,7 @@ function Card({
     const settled = group === "settled";
     const won = t.status === "won";
     const lost = t.status === "lost";
+    const voided = t.status === "void"; // game postponed/cancelled — auto-settled, stake back
     const track = liveTrack(t);
     // one stored timeline holds goals and cards; split them into their own scoresheets
     const timeline = (f?.events ?? []) as GoalEvent[];
@@ -498,7 +499,7 @@ function Card({
                   won ? "bg-grass/15 text-grass-deep" : lost ? "bg-brick/15 text-brick" : "bg-ink/5 text-ink-mute"
                 }`}
               >
-                {won ? "Landed" : lost ? "Missed" : "Full-time"}
+                {won ? "Landed" : lost ? "Missed" : voided ? "Void — game off" : "Full-time"}
               </span>
             ) : (
               <LiveClock label={ms?.label ?? "Live"} />

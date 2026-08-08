@@ -15,6 +15,11 @@ const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const sb = createClient(SB_URL, SB_KEY);
 const FINISHED_LIVE = ["FT", "AET", "PEN", "1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT"];
+// postponed/cancelled/abandoned/awarded/walkover — these games will never be played as scheduled,
+// so they must never appear in a pick (the sync fn flips a status to PST but the fixture keeps a
+// valid in-window kickoff, which is how PP games leaked into predictions)
+const DEAD = ["PST", "CANC", "ABD", "AWD", "WO"];
+const NOT_PICKABLE = [...FINISHED_LIVE, ...DEAD];
 const FINISHED = ["FT", "AET", "PEN"];
 const ODDS_FETCH_CAP = 90;
 const DEF_HOME = 1.45, DEF_AWAY = 1.15;
@@ -1317,7 +1322,7 @@ async function planMaxLeagues(userId: string): Promise<number> {
 async function windowLeagueIds(fromIso: string, toIso: string): Promise<number[]> {
   const { data } = await sb.from("fixtures").select("league_id")
     .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
-    .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
+    .not("status", "in", `(${NOT_PICKABLE.join(",")})`).limit(3000);
   return Array.from(new Set((data ?? []).map((r: any) => r.league_id).filter((x: any) => x != null)));
 }
 async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string, mem: Map<number, LeagueMem>): Promise<number[] | "all"> {
@@ -1416,7 +1421,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
 
   let q = sb.from("fixtures").select("id, league_id, kickoff_utc, home_team_id, away_team_id")
     .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
-    .not("status", "in", `(${FINISHED_LIVE.join(",")})`)
+    .not("status", "in", `(${NOT_PICKABLE.join(",")})`)
     .order("kickoff_utc", { ascending: true }).limit(200);
   if (leagues !== "all") q = q.in("league_id", leagues);
   const { data: fixtures } = await q;
@@ -1582,7 +1587,7 @@ Deno.serve(async (req) => {
     if (allLeagues) {
       const { data: up } = await sb.from("fixtures").select("league_id")
         .gte("kickoff_utc", new Date().toISOString()).lte("kickoff_utc", new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString())
-        .not("status", "in", `(${FINISHED_LIVE.join(",")})`).limit(3000);
+        .not("status", "in", `(${NOT_PICKABLE.join(",")})`).limit(3000);
       for (const r of up ?? []) leagueSet.add(r.league_id);
     }
     // learning layer: load the calibrated temperature (daily self-check) + the league memory

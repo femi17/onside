@@ -257,8 +257,9 @@ function Item({
   const grp = groupOf(p, ms);
   const won = p.status === "won";
   const lost = p.status === "lost";
+  const voided = p.status === "void"; // game postponed/cancelled — auto-voided, no result
   const cat = won ? "won" : lost ? "lost" : grp === "live" ? "live" : "pend";
-  const settled = won || lost;
+  const settled = won || lost || voided;
   const track = liveTrack(p);
   const market = p.market_label ?? p.custom_market ?? "Tracked market";
 
@@ -285,6 +286,7 @@ function Item({
   let chipCls = "text-ink-mute";
   if (won) { chipCls = "text-grass-deep"; chipMobile = score ?? "Landed"; chipDesktop = ["Landed", score].filter(Boolean).join(" "); }
   else if (lost) { chipCls = "text-brick"; chipMobile = score ?? "Missed"; chipDesktop = ["Missed", score].filter(Boolean).join(" "); }
+  else if (voided) { chipMobile = "Void"; chipDesktop = "Void — game off"; }
   else if (cat === "live") { chipCls = "text-flood-deep"; chipMobile = chipDesktop = [score, liveMin].filter(Boolean).join("  ") || "Live"; }
   else if (awaitingFeed) { chipCls = "text-flood-deep"; chipMobile = chipDesktop = "Awaiting"; }
   else if (staleFeed) { chipMobile = chipDesktop = "No data"; }
@@ -435,7 +437,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   }, [initKey]);
 
   const fixtureId = (p: AgentPick) => (p.fixtures as { id?: number } | null)?.id ?? null;
-  const isTrackable = (p: AgentPick) => p.status !== "won" && p.status !== "lost" && !!fixtureId(p) && !tracked.has(p.id);
+  const isTrackable = (p: AgentPick) => p.status !== "won" && p.status !== "lost" && p.status !== "void" && !!fixtureId(p) && !tracked.has(p.id);
   const dupKey = (fx: number, mk: string | null | undefined, side: string | null | undefined) => `${fx}:${mk ?? ""}:${side ?? ""}`;
   const ticketRow = (p: AgentPick, fx: number) => ({
     user_id: userId, accumulator_id: null, fixture_id: fx,
