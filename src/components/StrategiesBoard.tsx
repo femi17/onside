@@ -21,7 +21,17 @@ export type StrategyCard = {
   last14: { won: number; total: number };
   vs_market: number | null; // avg edge %, signed
   spark: ("won" | "lost" | "pending")[];
+  last_run_at: string | null;
+  ran_empty: boolean; // the LATEST run delivered nothing (rule/bar cleared no games)
 };
+
+// "today 11:29" / "Sat 11:29" in the viewer's local time — recent runs only get the banner
+function runLabel(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `today ${time}` : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
 
 // compact window tag shown after the delivery time ("07:30 · Sat")
 const TARGET_TAG: Record<string, string> = {
@@ -101,6 +111,26 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
                 </div>
                 <StatusPill status={c.status} />
               </div>
+
+              {/* heads-up when the newest run sent nothing: the agent isn't broken, it's being
+                  selective — but a rule that's TOO strict looks identical, so point at it */}
+              {c.status === "running" && c.ran_empty && c.last_run_at && Date.now() - Date.parse(c.last_run_at) < 36 * 3600 * 1000 && (
+                <div className="mt-3 rounded-xl bg-flood/10 px-3 py-2.5 text-[12.5px] leading-snug">
+                  <span className="font-bold text-ink">Ran {runLabel(c.last_run_at)} — no games cleared your {c.has_rule ? "rule" : "bar"}.</span>{" "}
+                  <span className="text-ink-mute">
+                    It sends nothing rather than a weak pick.{" "}
+                    {c.has_rule ? (
+                      <Link href={`/strategies/${c.id}/edit`} className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                        Check the rule →
+                      </Link>
+                    ) : (
+                      <Link href={`/strategies/${c.id}/edit`} className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+                        Review settings →
+                      </Link>
+                    )}
+                  </span>
+                </div>
+              )}
 
               <div className="mt-4 flex gap-1 border-t border-dashed border-ink/15 pt-4">
                 {c.spark.length ? c.spark.map((s, i) => (

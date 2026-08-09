@@ -12,7 +12,7 @@ export default async function StrategiesPage() {
   const [{ data: strategies }, { data: deliveries }, { data: profile }] = await Promise.all([
     supabase
       .from("strategies")
-      .select("id, name, market_label, league_ids, status, rule_text, deliver_at, target_day")
+      .select("id, name, market_label, league_ids, status, rule_text, deliver_at, target_day, last_run_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -37,6 +37,12 @@ export default async function StrategiesPage() {
     const last14 = ds.filter((d) => (d.result === "won" || d.result === "lost") && d.delivered_at && new Date(d.delivered_at).getTime() >= cutoff);
     const edges = ds.map((d) => d.edge).filter((e): e is number => e != null);
     const spark = ds.slice(0, 8).reverse().map((d) => (d.result === "won" ? "won" : d.result === "lost" ? "lost" : "pending") as "won" | "lost" | "pending");
+    // did the LATEST run come up empty? A run's deliveries are stamped seconds before
+    // last_run_at, so "newest delivery well before the last run" = that run sent nothing.
+    // Timezone-free on purpose — it compares the agent's own timestamps, not calendar days.
+    const lastRun = (s.last_run_at as string | null) ?? null;
+    const newestDelivery = ds[0]?.delivered_at ?? null;
+    const ranEmpty = !!lastRun && (!newestDelivery || Date.parse(lastRun) - Date.parse(newestDelivery) > 5 * 60 * 1000);
     return {
       id: s.id as string,
       name: (s.name as string) ?? "Agent",
@@ -50,6 +56,8 @@ export default async function StrategiesPage() {
       last14: { won: last14.filter((d) => d.result === "won").length, total: last14.length },
       vs_market: edges.length ? (edges.reduce((a, b) => a + b, 0) / edges.length) * 100 : null,
       spark,
+      last_run_at: lastRun,
+      ran_empty: ranEmpty,
     };
   });
 
