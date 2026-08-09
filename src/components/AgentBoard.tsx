@@ -571,7 +571,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               <span className="min-w-0 flex-1">
                 <span className="block font-disp text-[15px] font-bold text-chalk">Onside Best</span>
                 <span className="mt-0.5 block text-[12.5px] leading-snug text-onpitch-mute">
-                  Onside read your agents&apos; picks today and chose the {bestIds.size} strongest.
+                  Onside screened your agents&apos; picks and kept the {bestIds.size} that clear its quality bar.
                 </span>
               </span>
               <span className="flex-none font-mono text-[11px] font-bold uppercase tracking-wide text-flood">View →</span>
