@@ -33,6 +33,18 @@ const SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
+    // slip-level money summary — 0/"" when not visible on the screenshot
+    slip: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        bookmaker: { type: "string" },
+        stake: { type: "number" },
+        potential_return: { type: "number" },
+        currency: { type: "string" },
+      },
+      required: ["bookmaker", "stake", "potential_return", "currency"],
+    },
     selections: {
       type: "array",
       items: {
@@ -53,7 +65,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ["selections"],
+  required: ["slip", "selections"],
 };
 
 const PROMPT = `You are reading a football betting slip screenshot. Extract EVERY selection on it — do NOT skip, merge, or summarise any leg.
@@ -68,6 +80,12 @@ EVERYTHING ELSE uses market_key "custom": set market_label to a short human name
 - Corners/cards/bookings/shots/fouls/offsides totals: market_label like "Over 9.5 corners", "Under 3.5 cards"; value = "".
 raw_market: copy the selection's market text EXACTLY as printed (verbatim), INCLUDING any team name shown beside the Over/Under or Total — e.g. the greyed subtitle "Kuopion Palloseura Over/Under" or "Man City Total". Do NOT paraphrase or drop the team name; this is used to detect single-team totals, so accuracy here matters more than market_label.
 When there is no extra value, set value to "". line: the numeric goal/corner line (e.g. 8.5) or 0 if none. confidence: "high" if clearly read, else "low".
+Also fill the top-level "slip" object from the slip's money summary (usually at the top or bottom):
+- stake: the TOTAL amount wagered ("Stake", "Total Stake", "Amount"). Strip currency symbols and thousands separators: "₦5,000.00" -> 5000.
+- potential_return: the potential winnings ("Potential Win", "Possible Win", "To Return", "Est. Payout", "Potential Return"). If the slip shows both a base win and a final amount with bonus, use the FINAL payout amount.
+- currency: a 3-letter code inferred from the symbol or text: ₦/NGN -> "NGN", GH₵/GHS -> "GHS", KSh/KES -> "KES", TSh -> "TZS", USh -> "UGX", R -> "ZAR", $ -> "USD", € -> "EUR", £ -> "GBP"; otherwise the symbol exactly as printed.
+- bookmaker: the bookmaker's name if identifiable from the slip's branding/layout (e.g. "SportyBet", "Bet365", "1xBet", "Betway", "BetKing", "MSport", "Paripesa").
+Use 0 for any amount that is not visible and "" for unknown currency/bookmaker. Never invent amounts.
 Return only the structured JSON.`;
 
 // prepended when the slip arrived as several images (multiple screenshots and/or slices)
@@ -190,6 +208,17 @@ Deno.serve(async (req) => {
     const parsed = JSON.parse(textBlock?.text ?? "{}");
     const selections: any[] = parsed.selections ?? [];
 
+    // slip-level money summary (stake / potential win / currency / bookmaker) — nulls when unseen
+    const rawSlip = parsed.slip ?? {};
+    const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+    const str = (v: unknown) => { const s = String(v ?? "").trim(); return s ? s : null; };
+    const slip = {
+      bookmaker: str(rawSlip.bookmaker),
+      stake: num(rawSlip.stake),
+      potential_return: num(rawSlip.potential_return),
+      currency: str(rawSlip.currency),
+    };
+
     const winStart = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
     const aliases = await loadAliases();
     const out = [];
@@ -241,10 +270,10 @@ Deno.serve(async (req) => {
       user_id: user.id,
       storage_path: paths[0],
       status: "parsed",
-      parsed: { selections: out },
+      parsed: { slip, selections: out },
     });
 
-    return json({ selections: out });
+    return json({ slip, selections: out });
   } catch (e) {
     console.error("parse-slip failed:", e);
     return json({ error: String(e instanceof Error ? e.message : e) }, 500);

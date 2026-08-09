@@ -65,6 +65,14 @@ type Sel = {
   on: boolean;
 };
 
+// slip-level money summary read off the screenshot (stake / potential win / currency / bookmaker)
+type SlipMeta = {
+  bookmaker: string | null;
+  stake: number | null;
+  potential_return: number | null;
+  currency: string | null;
+};
+
 // country flag + league name for a read selection (UEFA competitions show a cup)
 function SlipLeague({ name, flag, tier }: { name?: string | null; flag?: string | null; tier?: string | null }) {
   if (!name && !flag) return null;
@@ -101,6 +109,7 @@ export default function ImportSlip({
   useEffect(() => setMounted(true), []);
   const [busy, setBusy] = useState<null | "reading" | "tracking">(null);
   const [sels, setSels] = useState<Sel[] | null>(null);
+  const [slipMeta, setSlipMeta] = useState<SlipMeta | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   // reads consumed in this session — quota is checked server-side, but we mirror it
   // here so the UI can stop them before a call goes out (and before they get charged)
@@ -167,6 +176,7 @@ export default function ImportSlip({
 
   function reset() {
     setSels(null);
+    setSlipMeta(null);
     setMsg(null);
     setOk(null);
     setBusy(null);
@@ -219,6 +229,17 @@ export default function ImportSlip({
         throw new Error(detail);
       }
       const parsed = (data?.selections ?? []) as Omit<Sel, "on">[];
+      // keep the first non-null money values seen — a later screenshot of the same slip
+      // (more legs, no totals in frame) must not wipe what an earlier read captured
+      const meta = data?.slip as SlipMeta | undefined;
+      if (meta) {
+        setSlipMeta((prev) => ({
+          bookmaker: prev?.bookmaker ?? meta.bookmaker ?? null,
+          stake: prev?.stake ?? meta.stake ?? null,
+          potential_return: prev?.potential_return ?? meta.potential_return ?? null,
+          currency: prev?.currency ?? meta.currency ?? null,
+        }));
+      }
       let added = 0;
       setSels((prev) => {
         const existing = prev ?? [];
@@ -272,7 +293,17 @@ export default function ImportSlip({
     if (chosen.length >= 2) {
       const { data: acca, error } = await supabase
         .from("accumulators")
-        .insert({ user_id: userId, leg_count: chosen.length, source: "screenshot", status: "open" })
+        .insert({
+          user_id: userId,
+          leg_count: chosen.length,
+          source: "screenshot",
+          status: "open",
+          // money summary read off the slip — shows "stake → potential" on the acca card
+          bookmaker: slipMeta?.bookmaker ?? null,
+          stake: slipMeta?.stake ?? null,
+          potential_return: slipMeta?.potential_return ?? null,
+          currency: slipMeta?.currency ?? null,
+        })
         .select("id")
         .single();
       if (error || !acca) {
