@@ -34,8 +34,9 @@ export default function LeaderboardOptIn({ on, canOptIn }: { on: boolean; canOpt
         <span className="min-w-0">
           <span className="block text-[13px] font-semibold text-chalk">Publish my agents here</span>
           <span className="mt-0.5 block font-mono text-[10.5px] leading-snug text-onpitch-mute">
-            Your agents&apos; edge vs market joins this board — aggregate results only, under your handle
-            (board needs 20+ settled picks). Individual picks are never posted. Off by default.
+            Your agents&apos; edge vs market joins this board — aggregate results only, under your handle.
+            An agent shows once it&apos;s run a full day (all that day&apos;s picks settled) and has 20+ settled
+            picks. Individual picks are never posted. Off by default.
           </span>
         </span>
       </button>

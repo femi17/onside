@@ -143,7 +143,7 @@ export default async function CommunityPage() {
                   })
                 ) : (
                   <p className="mt-2 font-mono text-[12px] leading-relaxed text-onpitch-mute">
-                    No members on the board yet — opt in below to be first (needs an agent with 20+ settled picks).
+                    No members on the board yet — opt in below to be first (needs an agent that&apos;s run a full day — all its picks settled — with 20+ settled picks).
                   </p>
                 )}
               </div>
