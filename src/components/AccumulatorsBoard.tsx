@@ -464,25 +464,57 @@ function accaDate(iso: string): string {
   return `${day} · ${time}`;
 }
 
-function AccaRow({ acca, active, onClick, nowMs }: { acca: Acca; active: boolean; onClick: () => void; nowMs: number }) {
+function AccaRow({
+  acca,
+  active,
+  onClick,
+  nowMs,
+  canDelete = false,
+  onDelete,
+  deleting = false,
+}: {
+  acca: Acca;
+  active: boolean;
+  onClick: () => void;
+  nowMs: number;
+  canDelete?: boolean;
+  onDelete?: () => void;
+  deleting?: boolean;
+}) {
   const meta = STATE_META[accaState(acca, nowMs)];
   const fold = acca.leg_count ?? acca.tickets?.length ?? 0;
+  // wrapper is a div (not a button) so the trash can be a real nested button — a button
+  // inside a button is invalid HTML. The selection area is its own inner button.
   return (
-    <button
-      onClick={onClick}
-      className={`w-full rounded-xl border p-3 text-left transition-colors ${
+    <div
+      className={`relative rounded-xl border transition-colors ${
         active ? "border-flood bg-flood/10" : "border-white/10 bg-pitch-2 hover:border-white/25"
       }`}
     >
-      <div className="flex items-center gap-2.5">
-        <span className={`h-2 w-2 flex-none rounded-full ${meta.dot}`} />
-        <span className="min-w-0 flex-1 truncate text-sm font-bold text-chalk">{accaName(acca)}</span>
-        <span className={`font-mono text-[10px] font-bold uppercase ${meta.tone}`}>{meta.word}</span>
-      </div>
-      <div className="mt-1.5 pl-[18px] font-mono text-[10.5px] text-onpitch-mute">
-        {accaDate(acca.created_at)} · {fold} leg{fold === 1 ? "" : "s"}
-      </div>
-    </button>
+      <button onClick={onClick} className="w-full p-3 text-left">
+        <div className="flex items-center gap-2.5">
+          <span className={`h-2 w-2 flex-none rounded-full ${meta.dot}`} />
+          <span className="min-w-0 flex-1 truncate text-sm font-bold text-chalk">{accaName(acca)}</span>
+          <span className={`font-mono text-[10px] font-bold uppercase ${meta.tone}`}>{meta.word}</span>
+        </div>
+        <div className={`mt-1.5 pl-[18px] font-mono text-[10.5px] text-onpitch-mute ${canDelete ? "pr-7" : ""}`}>
+          {accaDate(acca.created_at)} · {fold} leg{fold === 1 ? "" : "s"}
+        </div>
+      </button>
+      {canDelete && (
+        <button
+          onClick={onDelete}
+          disabled={deleting}
+          aria-label="Delete this slip"
+          title="Delete this slip"
+          className="absolute bottom-2 right-2 grid h-6 w-6 place-items-center rounded-md text-onpitch-mute transition-colors hover:bg-brick/15 hover:text-brick disabled:opacity-40"
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+            <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3L12 4M6.5 7v4.5M9.5 7v4.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -506,8 +538,31 @@ function AccaPill({ acca, active, onClick, nowMs }: { acca: Acca; active: boolea
 
 export default function AccumulatorsBoard({ accas, plan = "free", cap = null, uploadsLeft = null }: { accas: Acca[]; plan?: string; cap?: number | null; uploadsLeft?: number | null }) {
   const nowMs = useMinuteTick();
+  const router = useRouter();
+  const supabase = createClient();
+  const confirm = useConfirm();
   const [selId, setSelId] = useState<string | null>(accas[0]?.id ?? null);
+  const [delId, setDelId] = useState<string | null>(null);
   const selected = useMemo(() => accas.find((a) => a.id === selId) ?? accas[0] ?? null, [accas, selId]);
+
+  // delete a cut slip straight from the sidebar list (same soft-delete as the detail card:
+  // its legs are hidden from the tracker, the row disappears, but today's upload/acca quota
+  // stays used — deleting doesn't hand a slot back).
+  async function deleteAccaFromList(id: string) {
+    const okGo = await confirm({
+      title: "Delete this slip?",
+      body: "It disappears from your accumulators for good. Today's upload count stays used — deleting a slip doesn't give it back.",
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!okGo) return;
+    setDelId(id);
+    await supabase.from("tickets").update({ tracker_hidden: true }).eq("accumulator_id", id);
+    await supabase.from("accumulators").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    if (selId === id) setSelId(null);
+    setDelId(null);
+    router.refresh();
+  }
 
   // the free/pro history cap is full — surface a nudge to keep more (pro_max = unlimited = no cap)
   const atCap = cap != null && accas.length >= cap;
@@ -579,7 +634,16 @@ export default function AccumulatorsBoard({ accas, plan = "free", cap = null, up
           <div className="no-scrollbar flex flex-1 flex-col gap-2 overflow-y-auto pl-1">
             <div className="px-1 pb-1 font-mono text-[10.5px] uppercase tracking-[0.2em] text-onpitch-mute">Previous slips</div>
             {accas.map((a) => (
-              <AccaRow key={a.id} acca={a} active={a.id === selected?.id} onClick={() => setSelId(a.id)} nowMs={nowMs} />
+              <AccaRow
+                key={a.id}
+                acca={a}
+                active={a.id === selected?.id}
+                onClick={() => setSelId(a.id)}
+                nowMs={nowMs}
+                canDelete={accaState(a, nowMs) === "cut"}
+                onDelete={() => deleteAccaFromList(a.id)}
+                deleting={delId === a.id}
+              />
             ))}
           </div>
           {atCap && (
