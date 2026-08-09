@@ -187,6 +187,10 @@ Deno.serve(async (req) => {
       const mime = p.endsWith(".png") ? "image/png" : p.endsWith(".webp") ? "image/webp" : "image/jpeg";
       imageBlocks.push({ type: "image", source: { type: "base64", media_type: mime, data: b64 } });
     }
+    // the images are now in memory as base64 — we don't keep users' bet-slip screenshots. Delete the
+    // stored copies immediately (the daily cap counts screenshot_imports rows, not files, so this is
+    // safe). Best-effort: a cleanup failure must not fail the read.
+    try { await sb.storage.from("betslips").remove(paths); } catch { /* best-effort cleanup */ }
     const promptText = (paths.length > 1 ? MULTI_PREFIX(paths.length) : "") + PROMPT;
     const key = await anthropicKey();
 
