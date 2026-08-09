@@ -277,16 +277,9 @@ export default function ImportSlip({
     const r = await readSlip(picked);
     if (!r.error) setReadsUsed((n) => n + 1);
     setBusy(null);
-    // one outcome, one message: a green success or a red error — never a quota lecture.
-    // When the slip prints its own fold count, be honest about a partial read instead of
-    // pretending completeness ("already on your slip" on a 27-of-32 read hid 5 games).
-    const short = r.expected > 0 && r.total < r.expected;
-    if (r.error) setMsg(r.error);
-    else if (r.parsed === 0) setMsg("Couldn't read any games from that slip. Try a clearer, full-length screenshot.");
-    else if (r.added === 0 && short) setMsg(`Still ${r.total} of the ${r.expected} games on this slip — nothing new this time. Screenshot the missing games closer and upload again.`);
-    else if (r.added === 0) setMsg("Those games are already on your slip.");
-    else if (short) setOk(`✓ Read ${r.total} of the ${r.expected} games on this slip. Screenshot the missing ones closer and upload again — games already read are skipped.`);
-    else setOk(`✓ Read ${r.added} game${r.added === 1 ? "" : "s"} from your slip. Track them below.`);
+    // just two outcomes, no counts/jargon: it read the slip, or it didn't.
+    if (r.error || r.parsed === 0) setMsg("Failed, try again.");
+    else setOk("Successful.");
   }
 
   const chosen = (sels ?? []).filter((s) => s.on && s.fixture_id);
