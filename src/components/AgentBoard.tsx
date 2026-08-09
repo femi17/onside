@@ -410,6 +410,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const [bulkBusy, setBulkBusy] = useState(false);
   const [settlingId, setSettlingId] = useState<string | null>(null);
   const [explain, setExplain] = useState<AgentPick | null>(null); // which pick's "why" modal is open
+  const [doubleOpen, setDoubleOpen] = useState(false); // mobile: banker-double sheet (behind the FAB)
 
   // settle a no-data delivery (provider never covered the game) so it stops showing "no feed data".
   // Goes through an RPC that only flips result + stores the entered score for the caller's own
@@ -539,13 +540,6 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         </StickyHeader>
       </div>
 
-      {/* mobile: your banker double (+ history) rides the top of the feed */}
-      {doubles.length > 0 && (
-        <div className="mb-4 shrink-0 lg:hidden">
-          <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} />
-        </div>
-      )}
-
       <div className="flex min-h-0 flex-1 gap-6">
         <main className="no-scrollbar min-w-0 flex-1 lg:overflow-y-auto lg:pb-10">
 
@@ -644,6 +638,33 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
           </div>
         </div>
       )}
+
+      {/* mobile: Onside Double behind a floating icon (bottom-left, clear of the live-games peek);
+          tapping opens a bottom sheet with the banker card + history. Desktop shows it in the sidebar. */}
+      <div className="lg:hidden">
+        <button
+          onClick={() => setDoubleOpen(true)}
+          aria-label="Onside Double"
+          title="Onside Double"
+          className="fixed bottom-[calc(84px+env(safe-area-inset-bottom))] left-5 z-40 grid h-12 w-12 place-items-center rounded-full border border-white/10 bg-pitch/90 text-xl shadow-lg backdrop-blur transition-transform active:scale-95"
+        >
+          🎯
+          {doubles.length > 0 && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-flood ring-2 ring-pitch" />}
+        </button>
+        {doubleOpen && (
+          <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
+            <div onClick={() => setDoubleOpen(false)} className="absolute inset-0 bg-ink/60" />
+            <div role="dialog" aria-modal="true" aria-label="Onside Double" className="relative flex max-h-[82vh] w-full max-w-md flex-col rounded-t-2xl bg-pitch p-4 shadow-2xl sm:rounded-2xl">
+              <div className="mb-1 flex flex-none justify-end">
+                <button onClick={() => setDoubleOpen(false)} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg bg-white/5 font-mono text-lg text-onpitch-mute transition-colors hover:text-chalk">×</button>
+              </div>
+              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
+                <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
