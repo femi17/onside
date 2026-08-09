@@ -10,7 +10,7 @@ export default async function NewStrategyPage() {
   if (!user) redirect("/login");
 
   const [{ data: profile }, { data: leaguesRaw }, { count: existingCount }] = await Promise.all([
-    supabase.from("profiles").select("plan").eq("id", user.id).single(),
+    supabase.from("profiles").select("plan, is_admin").eq("id", user.id).single(),
     // curated (tiered) leagues first so the big competitions are in the default list; the search
     // box queries the full table for everything else
     supabase.from("leagues").select("id, name, country, flag_url, tier").order("tier", { ascending: true, nullsFirst: false }).order("name", { ascending: true }).limit(400),
@@ -35,7 +35,8 @@ export default async function NewStrategyPage() {
       plan={plan}
       maxLeagues={limits?.max_leagues ?? 5}
       maxPicks={limits?.max_games_per_prediction ?? 3}
-      maxAgents={limits?.max_agents ?? 3}
+      // admins run the platform's own agents — no slot cap (plan caps stay untouched for everyone else)
+      maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3}
       canLearn={limits?.learning ?? false}
       existingCount={existingCount ?? 0}
       leagues={leagues}

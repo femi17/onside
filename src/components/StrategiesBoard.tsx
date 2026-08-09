@@ -162,7 +162,7 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
             <Link href="/strategies/new" className="flex min-h-[200px] flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-white/15 p-8 text-onpitch-mute transition hover:border-flood hover:text-chalk">
               <span className="grid h-11 w-11 place-items-center rounded-xl bg-flood font-mono text-xl font-bold text-ink">+</span>
               <span className="font-bold">Build a new agent</span>
-              <span className="font-mono text-[11px]">{maxAgents - cards.length} slot{maxAgents - cards.length === 1 ? "" : "s"} left</span>
+              <span className="font-mono text-[11px]">{maxAgents >= 999 ? "unlimited slots" : `${maxAgents - cards.length} slot${maxAgents - cards.length === 1 ? "" : "s"} left`}</span>
             </Link>
           )}
         </div>

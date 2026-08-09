@@ -12,7 +12,7 @@ export default async function EditStrategyPage({ params }: { params: { id: strin
   if (!user) redirect("/login");
 
   const [{ data: profile }, { data: leaguesRaw }, { count: existingCount }, { data: strategy }] = await Promise.all([
-    supabase.from("profiles").select("plan").eq("id", user.id).single(),
+    supabase.from("profiles").select("plan, is_admin").eq("id", user.id).single(),
     supabase
       .from("leagues")
       .select("id, name, country, flag_url, tier")
@@ -50,7 +50,7 @@ export default async function EditStrategyPage({ params }: { params: { id: strin
       plan={plan}
       maxLeagues={limits?.max_leagues ?? 5}
       maxPicks={limits?.max_games_per_prediction ?? 3}
-      maxAgents={limits?.max_agents ?? 3}
+      maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3}
       canLearn={limits?.learning ?? false}
       existingCount={existingCount ?? 0}
       leagues={leagues}

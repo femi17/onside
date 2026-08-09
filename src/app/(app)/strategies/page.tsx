@@ -21,7 +21,7 @@ export default async function StrategiesPage() {
       .eq("user_id", user.id)
       .order("delivered_at", { ascending: false })
       .limit(1000),
-    supabase.from("profiles").select("plan").eq("id", user.id).single(),
+    supabase.from("profiles").select("plan, is_admin").eq("id", user.id).single(),
   ]);
 
   const cutoff = Date.now() - 14 * 86400000;
@@ -64,5 +64,5 @@ export default async function StrategiesPage() {
   const plan = profile?.plan ?? "free";
   const { data: limits } = await supabase.from("plan_limits").select("max_agents").eq("plan", plan).maybeSingle();
 
-  return <StrategiesBoard cards={cards} maxAgents={limits?.max_agents ?? 3} />;
+  return <StrategiesBoard cards={cards} maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3} />;
 }
