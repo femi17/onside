@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
-import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
+import AgentBoard, { type AgentPick, type OnsideDoubleLeg as AgentBoardDoubleLeg } from "@/components/AgentBoard";
 
 export default async function AgentPage() {
   const supabase = createClient();
@@ -95,10 +95,22 @@ export default async function AgentPage() {
     ? { summary: (bestRow.summary as string) ?? null, picks: (bestRow.picks as { delivery_id: string; rank: number; reason: string }[]) ?? [] }
     : null;
 
+  // 🎯 today's Onside Double — the 2-leg banker slip
+  const { data: dblRow } = await supabase
+    .from("onside_double")
+    .select("set_date, summary, legs")
+    .eq("user_id", user.id)
+    .order("set_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const dbl = dblRow && String(dblRow.set_date) === todayWat
+    ? { summary: (dblRow.summary as string) ?? null, legs: (dblRow.legs as AgentBoardDoubleLeg[]) ?? [] }
+    : null;
+
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} best={best} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} best={best} double={dbl} />
     </>
   );
 }

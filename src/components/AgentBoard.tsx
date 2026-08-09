@@ -401,8 +401,10 @@ export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
 // today's engine-generated best-of set (pro/pro_max): ranked delivery ids + a reason each
 export type OnsideBest = { summary: string | null; picks: { delivery_id: string; rank: number; reason: string }[] };
+export type OnsideDoubleLeg = { delivery_id: string; rank: number; game: string; market: string; agent: string; prob: number; fixture_id: number };
+export type OnsideDouble = { summary: string | null; legs: OnsideDoubleLeg[] };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], best = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; best?: OnsideBest | null }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], best = null, double = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; best?: OnsideBest | null; double?: OnsideDouble | null }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
@@ -488,6 +490,14 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const agents = useMemo(() => Array.from(new Set(picks.map((p) => p.agent_name))), [picks]);
   // the Best set as ids present in the loaded feed (a stale id can't blank the view)
   const bestIds = useMemo(() => new Set((best?.picks ?? []).map((b) => b.delivery_id).filter((id) => picks.some((p) => p.id === id))), [best, picks]);
+  // 🎯 Onside Double — resolve each leg's live result from the loaded feed (legs are today's picks)
+  const doubleLegs = useMemo(
+    () => (double?.legs ?? []).map((l) => ({ ...l, status: (picks.find((p) => p.id === l.delivery_id)?.status ?? "pending") as string })),
+    [double, picks],
+  );
+  const doubleState = doubleLegs.length === 2
+    ? (doubleLegs.some((l) => l.status === "lost") ? "lost" : doubleLegs.every((l) => l.status === "won") ? "won" : "live")
+    : null;
   const filtered = bestView ? picks.filter((p) => bestIds.has(p.id)) : agent ? picks.filter((p) => p.agent_name === agent) : picks;
   const emptyForView = bestView ? [] : agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
 
@@ -560,6 +570,36 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         </div>
       ) : (
         <>
+          {/* 🎯 Onside Double — the day's banker slip: the two safest legs from the strongest agents,
+              combined. Wins DAYS (both must land); leg results resolve live from the feed. */}
+          {doubleState && (
+            <div className="mt-6 overflow-hidden rounded-2xl bg-ink shadow-xl">
+              <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
+                <span className="grid h-9 w-9 flex-none place-items-center rounded-xl bg-flood/15 text-lg">🎯</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-disp text-[15px] font-bold text-chalk">Onside Double</div>
+                  <div className="font-mono text-[10.5px] uppercase tracking-wide text-onpitch-mute">Today&apos;s banker slip · your 2 safest</div>
+                </div>
+                <span className={`flex-none rounded-md px-2 py-1 font-mono text-[10px] font-bold uppercase ${
+                  doubleState === "won" ? "bg-grass/15 text-grass" : doubleState === "lost" ? "bg-brick/15 text-brick" : "bg-flood/15 text-flood"
+                }`}>{doubleState === "won" ? "Landed" : doubleState === "lost" ? "Cut" : "Live"}</span>
+              </div>
+              <div className="divide-y divide-white/5">
+                {doubleLegs.map((l) => (
+                  <div key={l.delivery_id} className="flex items-center gap-3 px-4 py-3">
+                    <span className={`grid h-5 w-5 flex-none place-items-center rounded-full text-[11px] font-bold ${
+                      l.status === "won" ? "bg-grass/20 text-grass" : l.status === "lost" ? "bg-brick/20 text-brick" : "bg-white/10 text-onpitch-mute"
+                    }`}>{l.status === "won" ? "✓" : l.status === "lost" ? "✕" : "•"}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13.5px] font-semibold text-chalk">{l.game}</div>
+                      <div className="truncate font-mono text-[10.5px] text-onpitch-mute">{l.market} · {l.agent}</div>
+                    </div>
+                    <span className="flex-none font-mono text-[12px] font-bold text-chalk">{l.prob}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {/* ⭐ Onside Best teaser — announces the set without flooding the feed; opening it
               switches to the Best view below, where the picks render as normal cards */}
           {bestIds.size > 0 && !bestView && (
