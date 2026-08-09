@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     getSecret("vapid_subject"), getSecret("vapid_public_key"), getSecret("vapid_private_key"),
   ]);
   if (!publicKey || !privateKey) return json({ error: "VAPID not configured" }, 500);
-  webpush.setVapidDetails(subject || "mailto:admin@onside.app", publicKey, privateKey);
+  webpush.setVapidDetails(subject || "mailto:admin@onside.com.ng", publicKey, privateKey);
 
   const { data: subs } = await admin
     .from("push_subscriptions").select("endpoint, p256dh, auth").in("user_id", targets);

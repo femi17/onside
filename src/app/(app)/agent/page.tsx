@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
-import AgentBoard, { type AgentPick, type OnsideDoubleLeg as AgentBoardDoubleLeg } from "@/components/AgentBoard";
+import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
+import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
 
 export default async function AgentPage() {
   const supabase = createClient();
@@ -83,22 +84,60 @@ export default async function AgentPage() {
     .filter((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat && !deliveredTodayNames.has(s.name as string))
     .map((s) => ({ id: s.id as string, agent_name: (s.name as string) ?? "Agent", ran_at: s.last_run_at as string }));
 
-  // 🎯 today's Onside Double — the 2-leg banker slip
-  const { data: dblRow } = await supabase
+  // 🎯 Onside Double — the daily 2-leg banker, tracked day by day in the feed's sidebar
+  const { data: dblRows } = await supabase
     .from("onside_double")
-    .select("set_date, summary, legs")
+    .select("id, set_date, summary, legs, created_at")
     .eq("user_id", user.id)
     .order("set_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const dbl = dblRow && String(dblRow.set_date) === todayWat
-    ? { summary: (dblRow.summary as string) ?? null, legs: (dblRow.legs as AgentBoardDoubleLeg[]) ?? [] }
-    : null;
+    .limit(14);
+  const doubles = (dblRows ?? []) as unknown as OnsideDouble[];
+
+  // legs point at deliveries — pull them (past-day legs won't be in the 200-pick feed) so the
+  // banker card can resolve live tick/cross/score
+  const dblLegIds = Array.from(
+    new Set(doubles.flatMap((d) => (d.legs ?? []).map((l) => l.delivery_id)).filter(Boolean))
+  );
+  const doubleDeliveries: Record<string, LegDelivery> = {};
+  if (dblLegIds.length) {
+    const { data: dblDels } = await supabase
+      .from("deliveries")
+      .select(
+        "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
+      )
+      .in("id", dblLegIds);
+    for (const r of (dblDels ?? []) as Record<string, unknown>[]) {
+      doubleDeliveries[r.id as string] = {
+        id: r.id as string,
+        market_key: (r.market_key as string) ?? null,
+        market_label: (r.market_label as string) ?? null,
+        custom_market: null,
+        line: (r.line as number) ?? null,
+        side: (r.side as string) ?? null,
+        period: (r.period as string) ?? null,
+        bet_value: (r.bet_value as string) ?? null,
+        status: (r.result as string) ?? "pending",
+        settle_score: (r.settle_score as string) ?? null,
+        current_value: (r.current_value as number) ?? null,
+        fixtures: (r.fixtures as LegDelivery["fixtures"]) ?? null,
+      };
+    }
+  }
+
+  // realtime covers the feed's games AND the double's legs (past-day legs may be off-feed)
+  const liveFixtureIds = Array.from(
+    new Set([
+      ...fixtureIds,
+      ...Object.values(doubleDeliveries)
+        .map((d) => (d.fixtures as { id?: number } | null)?.id)
+        .filter((v): v is number => v != null),
+    ])
+  );
 
   return (
     <>
-      <RealtimeRefresh fixtureIds={fixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} double={dbl} />
+      <RealtimeRefresh fixtureIds={liveFixtureIds} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} />
     </>
   );
 }
