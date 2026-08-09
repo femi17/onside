@@ -399,19 +399,14 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-// today's engine-generated best-of set (pro/pro_max): ranked delivery ids + a reason each
-export type OnsideBest = { summary: string | null; picks: { delivery_id: string; rank: number; reason: string }[] };
 export type OnsideDoubleLeg = { delivery_id: string; rank: number; game: string; market: string; agent: string; prob: number; fixture_id: number };
 export type OnsideDouble = { summary: string | null; legs: OnsideDoubleLeg[] };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], best = null, double = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; best?: OnsideBest | null; double?: OnsideDouble | null }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], double = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; double?: OnsideDouble | null }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
   const [agent, setAgent] = useState<string | null>(null);
-  // ⭐ Onside Best is a VIEW, not an inline list: a teaser card announces it, and opening it
-  // filters the feed to just the chosen picks — rendered as normal pick cards, like an agent tab
-  const [bestView, setBestView] = useState(false);
   const [tracked, setTracked] = useState<Set<string>>(() => new Set(initialTracked));
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -488,8 +483,6 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   }
 
   const agents = useMemo(() => Array.from(new Set(picks.map((p) => p.agent_name))), [picks]);
-  // the Best set as ids present in the loaded feed (a stale id can't blank the view)
-  const bestIds = useMemo(() => new Set((best?.picks ?? []).map((b) => b.delivery_id).filter((id) => picks.some((p) => p.id === id))), [best, picks]);
   // 🎯 Onside Double — resolve each leg's live result from the loaded feed (legs are today's picks)
   const doubleLegs = useMemo(
     () => (double?.legs ?? []).map((l) => ({ ...l, status: (picks.find((p) => p.id === l.delivery_id)?.status ?? "pending") as string })),
@@ -498,8 +491,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const doubleState = doubleLegs.length === 2
     ? (doubleLegs.some((l) => l.status === "lost") ? "lost" : doubleLegs.every((l) => l.status === "won") ? "won" : "live")
     : null;
-  const filtered = bestView ? picks.filter((p) => bestIds.has(p.id)) : agent ? picks.filter((p) => p.agent_name === agent) : picks;
-  const emptyForView = bestView ? [] : agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
+  const filtered = agent ? picks.filter((p) => p.agent_name === agent) : picks;
+  const emptyForView = agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
 
   // stable ordering: within each day, sort by match kickoff time (chronological), with deterministic
   // tiebreakers (delivery time, then id) so a card never jumps when a pick settles or the feed refreshes.
@@ -600,37 +593,13 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               </div>
             </div>
           )}
-          {/* ⭐ Onside Best teaser — announces the set without flooding the feed; opening it
-              switches to the Best view below, where the picks render as normal cards */}
-          {bestIds.size > 0 && !bestView && (
-            <button
-              onClick={() => { setBestView(true); setAgent(null); }}
-              className="mt-6 flex w-full items-center gap-3.5 rounded-2xl bg-ink p-4 text-left shadow-xl transition-transform hover:-translate-y-0.5"
-            >
-              <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-flood/15 text-lg">⭐</span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-disp text-[15px] font-bold text-chalk">Onside Best</span>
-                <span className="mt-0.5 block text-[12.5px] leading-snug text-onpitch-mute">
-                  Onside screened your agents&apos; picks and kept the {bestIds.size} that clear its quality bar.
-                </span>
-              </span>
-              <span className="flex-none font-mono text-[11px] font-bold uppercase tracking-wide text-flood">View →</span>
-            </button>
-          )}
-          {(agents.length > 1 || bestIds.size > 0) && (
+          {agents.length > 1 && (
             <div className="mt-6 flex flex-wrap gap-2">
-              <Chip on={!bestView && agent === null} onClick={() => { setAgent(null); setBestView(false); }}>All agents</Chip>
-              {bestIds.size > 0 && (
-                <Chip on={bestView} onClick={() => { setBestView(true); setAgent(null); }}>⭐ Onside Best</Chip>
-              )}
+              <Chip on={agent === null} onClick={() => setAgent(null)}>All agents</Chip>
               {agents.map((a) => (
-                <Chip key={a} on={!bestView && agent === a} onClick={() => { setAgent(a); setBestView(false); }}>{a}</Chip>
+                <Chip key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Chip>
               ))}
             </div>
-          )}
-          {/* in the Best view, the board summary sits where the feed starts */}
-          {bestView && best?.summary && (
-            <p className="mt-4 text-[12.5px] leading-snug text-onpitch-mute">⭐ {best.summary}</p>
           )}
           {/* in-app "no games" note — mirrors the Telegram note so a run that found nothing reads
               as "ran, nothing cleared" instead of just an empty feed */}

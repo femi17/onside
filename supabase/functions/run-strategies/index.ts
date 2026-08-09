@@ -1677,81 +1677,6 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   return rows.length;
 }
 
-// ---------- Onside Best: the pick-of-the-picks layer (pro / pro_max only) ----------
-// "After all agents have delivered, read the board and keep only the strongest." Fires at most
-// once per user per local day, only when EVERY running agent scheduled for today has already run
-// (Sat/Sun-only agents count only on their day), and only for plans with multiple agents.
-// Claude reads every not-yet-started pick delivered today and returns up to 15 in rank order
-// with one concrete reason each; stored in onside_best, surfaced on /agent, announced by push.
-const BEST_SCHEMA = { type: "object", additionalProperties: false, properties: { summary: { type: "string" }, picks: { type: "array", items: { type: "object", additionalProperties: false, properties: { delivery_id: { type: "string" }, reason: { type: "string" } }, required: ["delivery_id", "reason"] } } }, required: ["summary", "picks"] };
-async function maybeOnsideBest(userId: string): Promise<void> {
-  try {
-    const { data: prof } = await sb.from("profiles").select("plan, timezone").eq("id", userId).maybeSingle();
-    if (!prof || (prof.plan !== "pro" && prof.plan !== "pro_max")) return;
-    const tz = prof.timezone || "Africa/Lagos";
-    const today = tzDay(new Date().toISOString(), tz);
-    const { data: done } = await sb.from("onside_best").select("id").eq("user_id", userId).eq("set_date", today).maybeSingle();
-    if (done) return; // one Best per day
-    const { data: strats } = await sb.from("strategies").select("id, target_day, timezone, last_run_at").eq("user_id", userId).eq("status", "running");
-    const running = strats ?? [];
-    if (running.length < 2) return; // the multi-agent perk — a single agent's feed IS its best
-    // "all agents delivered": every agent SCHEDULED for today (sat/sun agents only count on
-    // their day) has run today in its own timezone
-    const scheduledToday = running.filter((s: any) => {
-      const stz = s.timezone || tz;
-      const t = s.target_day || "same_day";
-      const dow = tzDow(stz);
-      if (t === "saturday" && dow !== 6) return false;
-      if (t === "sunday" && dow !== 0) return false;
-      return true;
-    });
-    if (!scheduledToday.length) return;
-    if (!scheduledToday.every((s: any) => s.last_run_at && tzDay(s.last_run_at, s.timezone || tz) === tzDay(new Date().toISOString(), s.timezone || tz))) return;
-    const [dayStart] = tzDayBoundsISO(tz, 0);
-    const { data: dels } = await sb.from("deliveries")
-      .select("id, fixture_id, market_label, edge, tier, model_prob, market_prob, strategies(name), fixtures(home_team, away_team, kickoff_utc, status, leagues(name, country))")
-      .eq("user_id", userId).eq("result", "pending").gte("delivered_at", dayStart).limit(120);
-    // only games that haven't kicked off — Best must be actionable, not a recap
-    const pool = ((dels ?? []) as any[]).filter((d) => d.fixtures && !FINISHED_LIVE.includes(d.fixtures.status) && !DEAD.includes(d.fixtures.status));
-    if (pool.length < 6) return; // a tiny board already is its own best-of
-    const akey = await anthropicKey();
-    if (!akey) return;
-    const row = (d: any) => {
-      const f = d.fixtures, lg = f?.leagues;
-      const agent = Array.isArray(d.strategies) ? d.strategies[0]?.name : d.strategies?.name;
-      return `${d.id} | ${f.home_team} v ${f.away_team} | ${lg?.name ?? "?"} (${lg?.country ?? "?"}) | ko ${f.kickoff_utc} | bet: ${d.market_label ?? "?"} | agent: ${agent ?? "?"} | model ${d.model_prob ?? "-"} market ${d.market_prob ?? "-"} edge ${d.edge ?? "-"} tier ${d.tier ?? "-"}`;
-    };
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": akey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-5", max_tokens: 2500,
-        thinking: { type: "disabled" },
-        output_config: { format: { type: "json_schema", schema: BEST_SCHEMA } },
-        messages: [{ role: "user", content: `You are Onside Best — the pick-of-the-picks layer over a bettor's AI agents. Below is every not-yet-started pick the user's agents delivered today. Select the STRONGEST, at most 15 — fewer beats padding. Judge on: edge (model minus market; PREFER 0.03-0.12 and DISTRUST edges above 0.15, those are usually model error), tier (elite > strong > wide), model probability, and price sanity. At most ONE pick per fixture. Rank best first. reason = one concrete line quoting the numbers, no fluff. summary = 1-2 sentences on the board as a whole. Return ONLY JSON; copy delivery_id values EXACTLY.\n\nPICKS:\n${pool.map(row).join("\n")}` }],
-      }),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    const block = (data.content ?? []).find((b: any) => b.type === "text");
-    const out = JSON.parse(block?.text ?? "{}");
-    const valid = new Set(pool.map((d: any) => String(d.id)));
-    // one pick per FIXTURE is enforced HERE, not just asked of the model (it slipped once) —
-    // the first (highest-ranked) pick on a game wins, later ones on the same game are dropped
-    const fxById = new Map(pool.map((d: any) => [String(d.id), String(d.fixture_id ?? d.id)]));
-    const seenIds = new Set<string>();
-    const seenFx = new Set<string>();
-    const picks = (Array.isArray(out.picks) ? out.picks : [])
-      .filter((p: any) => typeof p?.delivery_id === "string" && valid.has(p.delivery_id) && !seenIds.has(p.delivery_id) && seenIds.add(p.delivery_id))
-      .filter((p: any) => { const fx = fxById.get(p.delivery_id)!; if (seenFx.has(fx)) return false; seenFx.add(fx); return true; })
-      .slice(0, 15)
-      .map((p: any, i: number) => ({ delivery_id: p.delivery_id, rank: i + 1, reason: String(p.reason ?? "").slice(0, 300) }));
-    if (!picks.length) return;
-    const { error } = await sb.from("onside_best").insert({ user_id: userId, set_date: today, picks, summary: String(out.summary ?? "").slice(0, 500) });
-    if (!error) await sendPush(userId, "⭐ Onside Best", `Your agents' ${picks.length} strongest picks today — tap to see.`, "/agent", "onside-best");
-  } catch { /* non-fatal — Best is a bonus layer, it never blocks agent runs */ }
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -1838,9 +1763,6 @@ Deno.serve(async (req) => {
 
     let inserted = 0;
     for (const s of strategies) inserted += await runStrategy(s, model, statM, aggCache, key, mem, memM);
-    // Onside Best rides the tail of the runs: for each user whose agents just ran, check
-    // whether the whole board is now in and distil it (all gating lives inside)
-    for (const uid of Array.from(new Set(strategies.map((s: any) => s.user_id)))) await maybeOnsideBest(String(uid));
     return json({ strategies: strategies.length, inserted, oddsCalls, temp: TEMP });
   } catch (e) {
     console.error("run-strategies failed:", e);
