@@ -21,7 +21,7 @@ const admin = createClient(SB_URL, SERVICE);
 // category (SQL-injection guard for the dynamic column select below).
 const CATEGORY_DEFAULT_ON: Record<string, boolean> = {
   agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, community: true,
-  build_up: false,
+  build_up: false, cards: false,
 };
 
 async function getSecret(name: string): Promise<string | null> {
