@@ -1709,7 +1709,7 @@ async function maybeOnsideBest(userId: string): Promise<void> {
     if (!scheduledToday.every((s: any) => s.last_run_at && tzDay(s.last_run_at, s.timezone || tz) === tzDay(new Date().toISOString(), s.timezone || tz))) return;
     const [dayStart] = tzDayBoundsISO(tz, 0);
     const { data: dels } = await sb.from("deliveries")
-      .select("id, market_label, edge, tier, model_prob, market_prob, strategies(name), fixtures(home_team, away_team, kickoff_utc, status, leagues(name, country))")
+      .select("id, fixture_id, market_label, edge, tier, model_prob, market_prob, strategies(name), fixtures(home_team, away_team, kickoff_utc, status, leagues(name, country))")
       .eq("user_id", userId).eq("result", "pending").gte("delivered_at", dayStart).limit(120);
     // only games that haven't kicked off — Best must be actionable, not a recap
     const pool = ((dels ?? []) as any[]).filter((d) => d.fixtures && !FINISHED_LIVE.includes(d.fixtures.status) && !DEAD.includes(d.fixtures.status));
@@ -1736,9 +1736,14 @@ async function maybeOnsideBest(userId: string): Promise<void> {
     const block = (data.content ?? []).find((b: any) => b.type === "text");
     const out = JSON.parse(block?.text ?? "{}");
     const valid = new Set(pool.map((d: any) => String(d.id)));
+    // one pick per FIXTURE is enforced HERE, not just asked of the model (it slipped once) —
+    // the first (highest-ranked) pick on a game wins, later ones on the same game are dropped
+    const fxById = new Map(pool.map((d: any) => [String(d.id), String(d.fixture_id ?? d.id)]));
     const seenIds = new Set<string>();
+    const seenFx = new Set<string>();
     const picks = (Array.isArray(out.picks) ? out.picks : [])
       .filter((p: any) => typeof p?.delivery_id === "string" && valid.has(p.delivery_id) && !seenIds.has(p.delivery_id) && seenIds.add(p.delivery_id))
+      .filter((p: any) => { const fx = fxById.get(p.delivery_id)!; if (seenFx.has(fx)) return false; seenFx.add(fx); return true; })
       .slice(0, 15)
       .map((p: any, i: number) => ({ delivery_id: p.delivery_id, rank: i + 1, reason: String(p.reason ?? "").slice(0, 300) }));
     if (!picks.length) return;
