@@ -83,10 +83,22 @@ export default async function AgentPage() {
     .filter((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat && !deliveredTodayNames.has(s.name as string))
     .map((s) => ({ id: s.id as string, agent_name: (s.name as string) ?? "Agent", ran_at: s.last_run_at as string }));
 
+  // ⭐ today's Onside Best (pro/pro_max) — engine-generated once all agents delivered
+  const { data: bestRow } = await supabase
+    .from("onside_best")
+    .select("set_date, summary, picks")
+    .eq("user_id", user.id)
+    .order("set_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const best = bestRow && String(bestRow.set_date) === todayWat
+    ? { summary: (bestRow.summary as string) ?? null, picks: (bestRow.picks as { delivery_id: string; rank: number; reason: string }[]) ?? [] }
+    : null;
+
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} best={best} />
     </>
   );
 }

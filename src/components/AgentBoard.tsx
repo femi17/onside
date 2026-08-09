@@ -399,7 +399,10 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [] }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[] }) {
+// today's engine-generated best-of set (pro/pro_max): ranked delivery ids + a reason each
+export type OnsideBest = { summary: string | null; picks: { delivery_id: string; rank: number; reason: string }[] };
+
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], best = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; best?: OnsideBest | null }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
@@ -552,6 +555,48 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         </div>
       ) : (
         <>
+          {/* ⭐ Onside Best — the engine's cross-agent distillation of today's board. Generated
+              once every agent scheduled today has delivered (pro / pro max); rows link back to
+              the full picks below by delivery id. */}
+          {best && best.picks.length > 0 && (() => {
+            const byId = new Map(picks.map((p) => [p.id, p]));
+            const rows = best.picks
+              .map((b) => ({ b, p: byId.get(b.delivery_id) }))
+              .filter((x) => !!x.p) as { b: { delivery_id: string; rank: number; reason: string }; p: AgentPick }[];
+            if (!rows.length) return null;
+            return (
+              <section className="mt-6 rounded-2xl bg-ink p-5 text-chalk-2 shadow-xl">
+                <div className="flex items-center gap-2">
+                  <span className="text-[15px]">⭐</span>
+                  <span className="font-disp text-[16px] font-bold text-chalk">Onside Best</span>
+                  <span className="ml-auto font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">today · {rows.length} pick{rows.length === 1 ? "" : "s"}</span>
+                </div>
+                {best.summary && <p className="mt-1.5 text-[12.5px] leading-snug text-onpitch-mute">{best.summary}</p>}
+                <div className="mt-2 flex flex-col divide-y divide-white/10">
+                  {rows.map(({ b, p }) => {
+                    const f = p.fixtures as { home_team?: string; away_team?: string } | null;
+                    return (
+                      <div key={b.delivery_id} className="flex gap-3 py-2.5">
+                        <span className="mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md bg-flood/15 font-mono text-[11px] font-bold text-flood">{b.rank}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="min-w-0 truncate text-[13.5px] font-bold text-chalk">
+                              {f ? `${f.home_team} v ${f.away_team}` : "Match"}
+                            </span>
+                            {p.edge != null && <span className="flex-none font-mono text-[10.5px] font-bold text-flood">+{p.edge}%</span>}
+                          </div>
+                          <div className="mt-0.5 truncate font-mono text-[10.5px] font-bold uppercase tracking-wide text-flood">
+                            {p.market_label ?? p.market_key ?? "Pick"} · {p.agent_name}
+                          </div>
+                          <div className="mt-1 text-[12px] leading-snug text-onpitch-mute">{b.reason}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
           {agents.length > 1 && (
             <div className="mt-6 flex flex-wrap gap-2">
               <Chip on={agent === null} onClick={() => setAgent(null)}>All agents</Chip>

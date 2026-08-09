@@ -777,13 +777,16 @@ function defSide(mk: string): string | null {
 function defLine(mk: string): number | null { const m = mk.match(/(?:over|under)_(\d)_5/); return m ? Number(`${m[1]}.5`) : null; }
 
 type Cond = { field: string; op: string; value: number; value2: number };
-type Branch = { when_field: string; when_op: string; when_value: number; when_value2: number; market_key: string; side: string; line: number };
+// a branch carries a when-LIST (all conditions must hold; empty list = the DEFAULT branch).
+// The legacy single when_field/when_op shape from parses stored before the list existed is
+// still honoured by applySelect.
+type Branch = { when?: Cond[]; when_field?: string; when_op?: string; when_value?: number; when_value2?: number; market_key: string; side: string; line: number };
 type RuleParsed = { filters: Cond[]; select: Branch[] };
 
 const COND_SCHEMA = { type: "object", additionalProperties: false, properties: { field: { type: "string", enum: RULE_FIELDS }, op: { type: "string", enum: ["lt", "lte", "gt", "gte", "eq", "between"] }, value: { type: "number" }, value2: { type: "number" } }, required: ["field", "op", "value", "value2"] };
-const BRANCH_SCHEMA = { type: "object", additionalProperties: false, properties: { when_field: { type: "string" }, when_op: { type: "string" }, when_value: { type: "number" }, when_value2: { type: "number" }, market_key: { type: "string", enum: RULE_MARKETS }, side: { type: "string" }, line: { type: "number" } }, required: ["when_field", "when_op", "when_value", "when_value2", "market_key", "side", "line"] };
+const BRANCH_SCHEMA = { type: "object", additionalProperties: false, properties: { when: { type: "array", items: COND_SCHEMA }, market_key: { type: "string", enum: RULE_MARKETS }, side: { type: "string" }, line: { type: "number" } }, required: ["when", "market_key", "side", "line"] };
 const RULE_SCHEMA = { type: "object", additionalProperties: false, properties: { filters: { type: "array", items: COND_SCHEMA }, select: { type: "array", items: BRANCH_SCHEMA } }, required: ["filters", "select"] };
-const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is. home_score_prob/away_score_prob = the model's probability that the home/away team scores at least one goal, 0-1 — compare the two to pick the team more likely to score. home_goals_blend/away_goals_blend = that team's total goals per game (scored + conceded) over its last 5 — the app's pick text calls this the team's "blend"; goals_blend = the average of the two teams' blends, i.e. the "≈X goals" blend the app shows for the fixture — a bettor saying "blend of 3.0" or "blend is 3.0" means goals_blend gte 3.0 unless they clearly mean less-than; min_goals_blend = the LOWER of the two teams' blends — use it for "both teams' blends are at least X". home_goals_avg/away_goals_avg = goals that team SCORED per game over its last 5 (conceded not counted) — "the team averages 2 goals" means home_goals_avg gte 2.0.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when_field/when_op/when_value(/when_value2 for 'between') and the market to use if it holds. A branch whose when_field is \"\" is the DEFAULT (always). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nIMPORTANT: select is ONLY for rules that EXPLICITLY name a different market to bet (\"if X, bet under 2.5 instead\"). If the rule is guidance about what to consider (defence, form, strength...), express it as filters and return EMPTY select — never replace the user's chosen market with a lookalike, and never emit a default branch unless the rule explicitly asks to always bet that market.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
+const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is. home_score_prob/away_score_prob = the model's probability that the home/away team scores at least one goal, 0-1 — compare the two to pick the team more likely to score. home_goals_blend/away_goals_blend = that team's total goals per game (scored + conceded) over its last 5 — the app's pick text calls this the team's "blend"; goals_blend = the average of the two teams' blends, i.e. the "≈X goals" blend the app shows for the fixture — a bettor saying "blend of 3.0" or "blend is 3.0" means goals_blend gte 3.0 unless they clearly mean less-than; min_goals_blend = the LOWER of the two teams' blends — use it for "both teams' blends are at least X". home_goals_avg/away_goals_avg = goals that team SCORED per game over its last 5 (conceded not counted) — "the team averages 2 goals" means home_goals_avg gte 2.0.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when: a LIST of conditions that must ALL hold (AND), plus the market to use if they do. A branch with an EMPTY when list is the DEFAULT (always fires). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nIMPORTANT: select is ONLY for rules that EXPLICITLY name a different market to bet (\"if X, bet under 2.5 instead\"). If the rule is guidance about what to consider (defence, form, strength...), express it as filters and return EMPTY select — never replace the user's chosen market with a lookalike, and never emit a default branch unless the rule explicitly asks to always bet that market.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
 
 async function parseRule(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<RuleParsed | null> {
   try {
@@ -881,12 +884,18 @@ type Eff = { mk: string; side: string | null; line: number | null };
 // like "odds not lower than 1.20" would silently block every game.
 const FAMILY_DEFERRED = new Set(["market_odds", "model_prob", "market_prob", "edge"]);
 // Pick a market from the rule's ordered branches; first matching (or default) wins, else null.
+// A branch matches when ALL of its when-conditions hold (an empty list is the default branch);
+// legacy single-condition branches from older stored parses evaluate identically.
 function applySelect(select: Branch[], sig: Record<string, number | null>): Eff | null {
   for (const b of select) {
-    const isDefault = !b.when_field || b.when_field === "always" || b.when_op === "always";
+    const conds: Cond[] = Array.isArray(b.when)
+      ? b.when
+      : !b.when_field || b.when_field === "always" || b.when_op === "always"
+        ? []
+        : [{ field: b.when_field, op: b.when_op ?? "", value: b.when_value ?? 0, value2: b.when_value2 ?? 0 }];
     const pick = (): Eff => ({ mk: b.market_key, side: b.side || defSide(b.market_key), line: b.line || defLine(b.market_key) });
-    if (isDefault) return pick();
-    if (evalCond({ field: b.when_field, op: b.when_op, value: b.when_value, value2: b.when_value2 }, sig)) return pick();
+    if (conds.length === 0) return pick();
+    if (conds.every((c) => evalCond(c, sig))) return pick();
   }
   return null;
 }
@@ -1668,6 +1677,76 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   return rows.length;
 }
 
+// ---------- Onside Best: the pick-of-the-picks layer (pro / pro_max only) ----------
+// "After all agents have delivered, read the board and keep only the strongest." Fires at most
+// once per user per local day, only when EVERY running agent scheduled for today has already run
+// (Sat/Sun-only agents count only on their day), and only for plans with multiple agents.
+// Claude reads every not-yet-started pick delivered today and returns up to 15 in rank order
+// with one concrete reason each; stored in onside_best, surfaced on /agent, announced by push.
+const BEST_SCHEMA = { type: "object", additionalProperties: false, properties: { summary: { type: "string" }, picks: { type: "array", items: { type: "object", additionalProperties: false, properties: { delivery_id: { type: "string" }, reason: { type: "string" } }, required: ["delivery_id", "reason"] } } }, required: ["summary", "picks"] };
+async function maybeOnsideBest(userId: string): Promise<void> {
+  try {
+    const { data: prof } = await sb.from("profiles").select("plan, timezone").eq("id", userId).maybeSingle();
+    if (!prof || (prof.plan !== "pro" && prof.plan !== "pro_max")) return;
+    const tz = prof.timezone || "Africa/Lagos";
+    const today = tzDay(new Date().toISOString(), tz);
+    const { data: done } = await sb.from("onside_best").select("id").eq("user_id", userId).eq("set_date", today).maybeSingle();
+    if (done) return; // one Best per day
+    const { data: strats } = await sb.from("strategies").select("id, target_day, timezone, last_run_at").eq("user_id", userId).eq("status", "running");
+    const running = strats ?? [];
+    if (running.length < 2) return; // the multi-agent perk — a single agent's feed IS its best
+    // "all agents delivered": every agent SCHEDULED for today (sat/sun agents only count on
+    // their day) has run today in its own timezone
+    const scheduledToday = running.filter((s: any) => {
+      const stz = s.timezone || tz;
+      const t = s.target_day || "same_day";
+      const dow = tzDow(stz);
+      if (t === "saturday" && dow !== 6) return false;
+      if (t === "sunday" && dow !== 0) return false;
+      return true;
+    });
+    if (!scheduledToday.length) return;
+    if (!scheduledToday.every((s: any) => s.last_run_at && tzDay(s.last_run_at, s.timezone || tz) === tzDay(new Date().toISOString(), s.timezone || tz))) return;
+    const [dayStart] = tzDayBoundsISO(tz, 0);
+    const { data: dels } = await sb.from("deliveries")
+      .select("id, market_label, edge, tier, model_prob, market_prob, strategies(name), fixtures(home_team, away_team, kickoff_utc, status, leagues(name, country))")
+      .eq("user_id", userId).eq("result", "pending").gte("delivered_at", dayStart).limit(120);
+    // only games that haven't kicked off — Best must be actionable, not a recap
+    const pool = ((dels ?? []) as any[]).filter((d) => d.fixtures && !FINISHED_LIVE.includes(d.fixtures.status) && !DEAD.includes(d.fixtures.status));
+    if (pool.length < 6) return; // a tiny board already is its own best-of
+    const akey = await anthropicKey();
+    if (!akey) return;
+    const row = (d: any) => {
+      const f = d.fixtures, lg = f?.leagues;
+      const agent = Array.isArray(d.strategies) ? d.strategies[0]?.name : d.strategies?.name;
+      return `${d.id} | ${f.home_team} v ${f.away_team} | ${lg?.name ?? "?"} (${lg?.country ?? "?"}) | ko ${f.kickoff_utc} | bet: ${d.market_label ?? "?"} | agent: ${agent ?? "?"} | model ${d.model_prob ?? "-"} market ${d.market_prob ?? "-"} edge ${d.edge ?? "-"} tier ${d.tier ?? "-"}`;
+    };
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": akey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-5", max_tokens: 2500,
+        thinking: { type: "disabled" },
+        output_config: { format: { type: "json_schema", schema: BEST_SCHEMA } },
+        messages: [{ role: "user", content: `You are Onside Best — the pick-of-the-picks layer over a bettor's AI agents. Below is every not-yet-started pick the user's agents delivered today. Select the STRONGEST, at most 15 — fewer beats padding. Judge on: edge (model minus market; PREFER 0.03-0.12 and DISTRUST edges above 0.15, those are usually model error), tier (elite > strong > wide), model probability, and price sanity. At most ONE pick per fixture. Rank best first. reason = one concrete line quoting the numbers, no fluff. summary = 1-2 sentences on the board as a whole. Return ONLY JSON; copy delivery_id values EXACTLY.\n\nPICKS:\n${pool.map(row).join("\n")}` }],
+      }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const block = (data.content ?? []).find((b: any) => b.type === "text");
+    const out = JSON.parse(block?.text ?? "{}");
+    const valid = new Set(pool.map((d: any) => String(d.id)));
+    const seenIds = new Set<string>();
+    const picks = (Array.isArray(out.picks) ? out.picks : [])
+      .filter((p: any) => typeof p?.delivery_id === "string" && valid.has(p.delivery_id) && !seenIds.has(p.delivery_id) && seenIds.add(p.delivery_id))
+      .slice(0, 15)
+      .map((p: any, i: number) => ({ delivery_id: p.delivery_id, rank: i + 1, reason: String(p.reason ?? "").slice(0, 300) }));
+    if (!picks.length) return;
+    const { error } = await sb.from("onside_best").insert({ user_id: userId, set_date: today, picks, summary: String(out.summary ?? "").slice(0, 500) });
+    if (!error) await sendPush(userId, "⭐ Onside Best", `Your agents' ${picks.length} strongest picks today — tap to see.`, "/agent", "onside-best");
+  } catch { /* non-fatal — Best is a bonus layer, it never blocks agent runs */ }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -1754,6 +1833,9 @@ Deno.serve(async (req) => {
 
     let inserted = 0;
     for (const s of strategies) inserted += await runStrategy(s, model, statM, aggCache, key, mem, memM);
+    // Onside Best rides the tail of the runs: for each user whose agents just ran, check
+    // whether the whole board is now in and distil it (all gating lives inside)
+    for (const uid of Array.from(new Set(strategies.map((s: any) => s.user_id)))) await maybeOnsideBest(String(uid));
     return json({ strategies: strategies.length, inserted, oddsCalls, temp: TEMP });
   } catch (e) {
     console.error("run-strategies failed:", e);

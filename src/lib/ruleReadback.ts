@@ -5,11 +5,14 @@
 // raw key so a vocabulary addition can never break the builder.
 
 export type RuleCond = { field: string; op: string; value: number; value2: number };
+// branches carry a when-LIST (all must hold; empty = default) — the legacy single
+// when_field shape from older stored parses still renders
 export type RuleBranch = {
-  when_field: string;
-  when_op: string;
-  when_value: number;
-  when_value2: number;
+  when?: RuleCond[];
+  when_field?: string;
+  when_op?: string;
+  when_value?: number;
+  when_value2?: number;
   market_key: string;
   side: string;
   line: number;
@@ -91,13 +94,18 @@ export function describeRule(p: ParsedRule | null | undefined): { lines: string[
   let hasDefault = false;
   for (const b of select) {
     const m = MARKET[b.market_key] ?? b.market_key.replace(/_/g, " ");
+    const conds: RuleCond[] = Array.isArray(b.when)
+      ? b.when
+      : !b.when_field || b.when_field === "always" || b.when_op === "always"
+        ? []
+        : [{ field: b.when_field, op: b.when_op ?? "", value: b.when_value ?? 0, value2: b.when_value2 ?? 0 }];
     // a default branch always fires — anything after it is dead, exactly like the engine
-    if (!b.when_field || b.when_field === "always" || b.when_op === "always") {
+    if (conds.length === 0) {
       lines.push(`Otherwise → bet ${m}.`);
       hasDefault = true;
       break;
     }
-    lines.push(`If ${cond(b.when_field, b.when_op, b.when_value, b.when_value2)} → bet ${m}.`);
+    lines.push(`If ${conds.map((c) => cond(c.field, c.op, c.value, c.value2)).join(" and ")} → bet ${m}.`);
   }
   if (select.length && !hasDefault) lines.push("If none of those match → skip the game.");
   return { lines, empty: false };
