@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 };
 
 const COMPANY = process.env.NEXT_PUBLIC_COMPANY_NAME ?? "Thinka Platforms LTD";
-const SUPPORT = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@onside.ng";
+const SUPPORT = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@onside.com.ng";
 const UPDATED = "5 August 2026";
 
 function H({ children }: { children: React.ReactNode }) {
