@@ -188,59 +188,69 @@ Deno.serve(async (req) => {
       imageBlocks.push({ type: "image", source: { type: "base64", media_type: mime, data: b64 } });
     }
     const promptText = (paths.length > 1 ? MULTI_PREFIX(paths.length) : "") + PROMPT;
-
     const key = await anthropicKey();
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        // generous budget so a long accumulator (many verbose custom/player legs) is never
-        // truncated mid-list — truncation was one reason legs went missing before
-        max_tokens: 8000,
-        output_config: { format: { type: "json_schema", schema: SCHEMA } },
-        messages: [{ role: "user", content: [...imageBlocks, { type: "text", text: promptText }] }],
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) return json({ error: `vision api ${res.status}: ${data?.error?.message ?? "error"}` }, 502);
-    if (data.stop_reason === "refusal") return json({ error: "could not read this image" }, 400);
-    if (data.stop_reason === "max_tokens") console.warn("parse-slip hit max_tokens — slip may be very long");
-    const textBlock = (data.content ?? []).find((b: any) => b.type === "text");
-    const parsed = JSON.parse(textBlock?.text ?? "{}");
-    let selections: any[] = parsed.selections ?? [];
 
-    // slip-level money summary (stake / potential win / currency / bookmaker) — nulls when unseen
-    const rawSlip = parsed.slip ?? {};
-
-    // top-up pass: the slip prints its own fold count — when the model returned fewer legs than
-    // that, ask ONCE for only the missed ones (a 32-leg slip coming back as 27 was real). The
-    // extra call only happens on a shortfall, and the merge dedupes, so over-returning is safe.
-    const expected = Math.round(Number(rawSlip.leg_count)) || 0;
-    if (expected > selections.length && expected <= 64) {
-      try {
-        const res2 = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-          body: JSON.stringify({
-            model: MODEL,
-            max_tokens: 8000,
-            output_config: { format: { type: "json_schema", schema: SCHEMA } },
-            messages: [
-              { role: "user", content: [...imageBlocks, { type: "text", text: promptText }] },
-              { role: "assistant", content: textBlock?.text ?? "{}" },
-              { role: "user", content: `The slip shows ${expected} selections but you returned ${selections.length}. Re-scan every image carefully (especially near the top/bottom edges of each image, where a leg can be partially cut) and return ONLY the selections you missed, in the same JSON shape (repeat the slip object). Do NOT repeat selections you already returned.` },
-            ],
-          }),
-        });
-        const data2 = await res2.json();
-        if (res2.ok && data2.stop_reason !== "refusal") {
-          const t2 = (data2.content ?? []).find((b: any) => b.type === "text");
-          const extra: any[] = JSON.parse(t2?.text ?? "{}").selections ?? [];
-          selections = [...selections, ...extra];
-        }
-      } catch { /* keep the first pass */ }
+    // one vision pass over the full image set -> { selections, slip }; throws on a hard failure
+    async function runPass(): Promise<{ selections: any[]; slip: any }> {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: MODEL,
+          // generous budget so a long accumulator (many verbose custom/player legs) is never
+          // truncated mid-list — truncation was one reason legs went missing before
+          max_tokens: 8000,
+          output_config: { format: { type: "json_schema", schema: SCHEMA } },
+          messages: [{ role: "user", content: [...imageBlocks, { type: "text", text: promptText }] }],
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(`vision api ${r.status}: ${d?.error?.message ?? "error"}`);
+      if (d.stop_reason === "refusal") throw new Error("REFUSAL");
+      if (d.stop_reason === "max_tokens") console.warn("parse-slip hit max_tokens — slip may be very long");
+      const tb = (d.content ?? []).find((b: any) => b.type === "text");
+      const p = JSON.parse(tb?.text ?? "{}");
+      return { selections: Array.isArray(p.selections) ? p.selections : [], slip: p.slip ?? {} };
     }
+
+    // Vision is non-deterministic on tall multi-strip slips: one pass of a long slip can under-read
+    // badly (an 18-leg slip came back as 2 on a retry). Take the UNION of up to 3 passes, stopping as
+    // soon as a pass adds nothing new. A single un-sliced screenshot reads reliably in one pass, so
+    // only multi-image slips pay for the extra passes. Dedup key matches the one used below.
+    const selKey = (s: any) => `${norm(s.home)}|${norm(s.away)}|${s.market_key}|${s.line ?? ""}|${norm(s.value ?? "")}|${norm(s.market_label ?? "")}`;
+    const selections: any[] = [];
+    const rawSlip: any = { bookmaker: null, stake: null, potential_return: null, currency: null, leg_count: 0 };
+    const seenPass = new Set<string>();
+    const maxPasses = paths.length > 1 ? 3 : 1;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let res: { selections: any[]; slip: any };
+      try {
+        res = await runPass();
+      } catch (e) {
+        if (pass === 0) {
+          const m = String(e instanceof Error ? e.message : e);
+          if (m === "REFUSAL") return json({ error: "could not read this image" }, 400);
+          return json({ error: m.startsWith("vision api") ? m : `vision api: ${m}` }, 502);
+        }
+        break; // a later pass failing just ends the union early — keep what we have
+      }
+      // the money summary sits in only one strip, so first non-null value across passes wins
+      rawSlip.bookmaker = rawSlip.bookmaker || res.slip.bookmaker || null;
+      rawSlip.currency = rawSlip.currency || res.slip.currency || null;
+      if (!rawSlip.stake && Number(res.slip.stake) > 0) rawSlip.stake = res.slip.stake;
+      if (!rawSlip.potential_return && Number(res.slip.potential_return) > 0) rawSlip.potential_return = res.slip.potential_return;
+      if (!rawSlip.leg_count && Number(res.slip.leg_count) > 0) rawSlip.leg_count = res.slip.leg_count;
+      let addedThis = 0;
+      for (const s of res.selections) {
+        const k = selKey(s);
+        if (seenPass.has(k)) continue;
+        seenPass.add(k);
+        selections.push(s);
+        addedThis++;
+      }
+      if (pass >= 1 && addedThis === 0) break; // converged — nothing new this pass
+    }
+    const expected = Math.round(Number(rawSlip.leg_count)) || 0;
     const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
     const str = (v: unknown) => { const s = String(v ?? "").trim(); return s ? s : null; };
     const slip = {
