@@ -38,7 +38,7 @@ type RawDelivery = {
   fixtures: TrackedTicket["fixtures"];
 };
 
-type PeekItem = { id: string; t: TrackedTicket; ms: MatchState | null; source: "tracker" | "agent"; agent: string | null };
+type PeekItem = { id: string; t: TrackedTicket; ms: MatchState | null; source: "tracker" | "agent"; agent: string | null; more: number };
 
 // a delivery grades on `result`; map it onto the ticket shape's `status` so stateOf/groupOf/betSignal work
 function deliveryAsTicket(d: RawDelivery): TrackedTicket {
@@ -93,36 +93,55 @@ export default function LiveGamesFab() {
   }, [hidden]);
 
   const { live, upcoming } = useMemo(() => {
-    const items: PeekItem[] = [];
-    const seen = new Set<string>();
-    let up = 0;
+    // ONE ROW PER GAME. Several of your bets can sit on the same fixture (a tracked pick plus
+    // other agents' markets on that game) — the peek collapses them into a single row with a
+    // "+N more" note instead of listing the match twice. The exact-bet key still dedups a
+    // tracked agent pick against its source delivery, so tracking a pick never adds a row OR
+    // a "+1 more" of itself. The pill therefore counts live GAMES, not bets.
+    const rows = new Map<number | string, PeekItem>();
+    const seenBets = new Set<string>();
+    const upFx = new Set<number | string>();
+
+    const add = (fxKey: number | string, betKey: string, make: () => PeekItem) => {
+      if (seenBets.has(betKey)) return; // same bet from the other source
+      seenBets.add(betKey);
+      const cur = rows.get(fxKey);
+      if (cur) cur.more++;
+      else rows.set(fxKey, make());
+    };
 
     for (const t of tickets ?? []) {
       if (t.tracker_hidden || !t.fixtures) continue;
       const ms = stateOf(t, now);
       const g = groupOf(t, ms);
-      const k = dedupKey(t.fixture_id, t.market_key, t.side ?? null);
-      if (g === "live") { seen.add(k); items.push({ id: `tk-${t.id}`, t, ms, source: "tracker", agent: null }); }
-      else if (g === "upcoming") { seen.add(k); up++; }
+      const fxKey = t.fixture_id ?? `tk-${t.id}`;
+      const betKey = dedupKey(t.fixture_id, t.market_key, t.side ?? null);
+      if (g === "live") add(fxKey, betKey, () => ({ id: `tk-${t.id}`, t, ms, source: "tracker", agent: null, more: 0 }));
+      else if (g === "upcoming") { seenBets.add(betKey); upFx.add(fxKey); }
     }
     for (const d of deliveries ?? []) {
       if (!d.fixtures) continue;
-      const k = dedupKey(d.fixture_id, d.market_key, d.side);
-      if (seen.has(k)) continue; // already tracked → don't double-count
       const t = deliveryAsTicket(d);
       const ms = stateOf(t, now);
       const g = groupOf(t, ms);
+      const fxKey = d.fixture_id ?? `ag-${d.id}`;
+      const betKey = dedupKey(d.fixture_id, d.market_key, d.side);
       if (g === "live") {
-        seen.add(k);
         const agent = Array.isArray(d.strategies) ? d.strategies[0]?.name ?? null : d.strategies?.name ?? null;
-        items.push({ id: `ag-${d.id}`, t, ms, source: "agent", agent });
-      } else if (g === "upcoming") { seen.add(k); up++; }
+        add(fxKey, betKey, () => ({ id: `ag-${d.id}`, t, ms, source: "agent", agent, more: 0 }));
+      } else if (g === "upcoming" && !seenBets.has(betKey)) { seenBets.add(betKey); upFx.add(fxKey); }
     }
-    return { live: items, upcoming: up };
+    return { live: Array.from(rows.values()), upcoming: upFx.size };
   }, [tickets, deliveries, now]);
 
   if (hidden) return null;
   const isLive = live.length > 0;
+  // every live row from the agent (nothing tracked by hand) → say so up front and point the
+  // footer at /agent first, so following the pulse never lands on an empty tracker page
+  const allAgent = isLive && live.every((i) => i.source === "agent");
+  const links = allAgent
+    ? [{ href: "/agent", label: "Agent" }, { href: "/tracker", label: "Tracker" }]
+    : [{ href: "/tracker", label: "Tracker" }, { href: "/agent", label: "Agent" }];
 
   return (
     // mobile: centered above the tab bar (clears the bottom-right slip button); desktop: bottom-right
@@ -137,7 +156,7 @@ export default function LiveGamesFab() {
             <div className="flex items-center gap-2">
               {isLive ? <LivePulse /> : <span className="h-2.5 w-2.5 flex-none rounded-full bg-white/25" />}
               <span className="font-mono text-[11px] uppercase tracking-wide text-chalk">
-                {isLive ? `Live now · ${live.length}` : "Your games"}
+                {isLive ? (allAgent ? `Agent picks live · ${live.length}` : `Live now · ${live.length}`) : "Your games"}
               </span>
             </div>
             <button
@@ -151,7 +170,7 @@ export default function LiveGamesFab() {
 
           {isLive ? (
             <div className="no-scrollbar max-h-[min(60vh,26rem)] divide-y divide-white/5 overflow-y-auto">
-              {live.map(({ id, t, ms, source, agent }) => {
+              {live.map(({ id, t, ms, source, agent, more }) => {
                 const f = t.fixtures!;
                 const hg = f.home_goals ?? 0, ag = f.away_goals ?? 0;
                 const sig = betSignal(t, hg, ag);
@@ -175,6 +194,7 @@ export default function LiveGamesFab() {
                           </span>
                         )}
                         {pick && <><span className="opacity-40">·</span><span className="truncate">{pick}</span></>}
+                        {more > 0 && <span className="flex-none text-onpitch-mute/70">+{more} more</span>}
                       </div>
                     </div>
                   </div>
@@ -188,14 +208,14 @@ export default function LiveGamesFab() {
             </div>
           )}
 
-          {/* the only navigation — explicit opt-out to the full views */}
+          {/* the only navigation — explicit opt-out to the full views (ordered so the first
+              link is where the live games actually are) */}
           <div className="flex divide-x divide-white/10 border-t border-white/10">
-            <Link href="/tracker" onClick={() => setOpen(false)} className="flex-1 px-4 py-2.5 text-center font-mono text-[11px] font-bold uppercase tracking-wide text-flood transition-colors hover:bg-white/5">
-              Tracker &rarr;
-            </Link>
-            <Link href="/agent" onClick={() => setOpen(false)} className="flex-1 px-4 py-2.5 text-center font-mono text-[11px] font-bold uppercase tracking-wide text-flood transition-colors hover:bg-white/5">
-              Agent &rarr;
-            </Link>
+            {links.map((l) => (
+              <Link key={l.href} href={l.href} onClick={() => setOpen(false)} className="flex-1 px-4 py-2.5 text-center font-mono text-[11px] font-bold uppercase tracking-wide text-flood transition-colors hover:bg-white/5">
+                {l.label} &rarr;
+              </Link>
+            ))}
           </div>
         </div>
       )}
