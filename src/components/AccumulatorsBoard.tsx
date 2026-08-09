@@ -292,10 +292,11 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
           <div className="text-right font-mono">
             {hasStake ? (
               <>
-                <div className="text-[13px] text-ink-mute">
-                  stake <b className="font-bold text-ink">{money(acca.currency, acca.stake)}</b> → potential
+                {/* one line on mobile: shorter label + smaller amount so ₦13M-scale numbers don't wrap */}
+                <div className="whitespace-nowrap text-[13px] text-ink-mute">
+                  stake <b className="font-bold text-ink">{money(acca.currency, acca.stake)}</b> → <span className="sm:hidden">pot</span><span className="hidden sm:inline">potential</span>
                 </div>
-                <div className={`mt-0.5 font-disp text-2xl font-extrabold tracking-tight ${dead ? "text-brick line-through decoration-2" : won ? "text-grass-deep" : "text-ink"}`}>
+                <div className={`mt-0.5 whitespace-nowrap font-disp text-xl font-extrabold tracking-tight sm:text-2xl ${dead ? "text-brick line-through decoration-2" : won ? "text-grass-deep" : "text-ink"}`}>
                   {money(acca.currency, acca.potential_return)}
                 </div>
               </>
