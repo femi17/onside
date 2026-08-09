@@ -185,16 +185,17 @@ export default function ImportSlip({
     setFindResults(null);
   }
 
-  // a stable key so the same leg from an overlapping screenshot isn't added twice
-  function keyOf(s: { home: string; away: string; market_key: string; line: number | null; fixture_id: number | null }) {
+  // a stable key so the same leg from an overlapping screenshot isn't added twice. Label + value
+  // are part of it so two DIFFERENT bets on the same game (e.g. two custom markets) both survive.
+  function keyOf(s: { home: string; away: string; market_key: string; market_label?: string | null; value?: string | null; line: number | null; fixture_id: number | null }) {
     const who = s.fixture_id ?? `${s.home.toLowerCase().trim()}|${s.away.toLowerCase().trim()}`;
-    return `${who}|${s.market_key}|${s.line ?? ""}`;
+    return `${who}|${s.market_key}|${s.line ?? ""}|${(s.value ?? "").toLowerCase().trim()}|${(s.market_label ?? "").toLowerCase().trim()}`;
   }
 
   // one slip can span several screenshots (a long acca) AND each screenshot can be a tall
   // strip-able image — ALL of them go up and parse-slip reads them together as ONE slip
   // (one read). This is why picking 3 screenshots now returns every leg, not just the first.
-  async function readSlip(files: File[]): Promise<{ added: number; parsed: number; error?: string }> {
+  async function readSlip(files: File[]): Promise<{ added: number; parsed: number; total: number; expected: number; error?: string }> {
     try {
       const paths: string[] = [];
       for (const file of files) {
@@ -241,6 +242,7 @@ export default function ImportSlip({
         }));
       }
       let added = 0;
+      let total = 0;
       setSels((prev) => {
         const existing = prev ?? [];
         const seen = new Set(existing.map(keyOf));
@@ -250,11 +252,13 @@ export default function ImportSlip({
           .filter((p) => !seen.has(keyOf(p)))
           .map((p) => ({ ...p, on: !!p.fixture_id }));
         added = additions.length;
-        return [...existing, ...additions];
+        const next = [...existing, ...additions];
+        total = next.length;
+        return next;
       });
-      return { added, parsed: parsed.length };
+      return { added, parsed: parsed.length, total, expected: Number(data?.expected ?? 0) || 0 };
     } catch (err) {
-      return { added: 0, parsed: 0, error: err instanceof Error ? err.message : "read failed" };
+      return { added: 0, parsed: 0, total: 0, expected: 0, error: err instanceof Error ? err.message : "read failed" };
     }
   }
 
@@ -273,10 +277,15 @@ export default function ImportSlip({
     const r = await readSlip(picked);
     if (!r.error) setReadsUsed((n) => n + 1);
     setBusy(null);
-    // one outcome, one message: a green success or a red error — never a quota lecture
+    // one outcome, one message: a green success or a red error — never a quota lecture.
+    // When the slip prints its own fold count, be honest about a partial read instead of
+    // pretending completeness ("already on your slip" on a 27-of-32 read hid 5 games).
+    const short = r.expected > 0 && r.total < r.expected;
     if (r.error) setMsg(r.error);
     else if (r.parsed === 0) setMsg("Couldn't read any games from that slip. Try a clearer, full-length screenshot.");
+    else if (r.added === 0 && short) setMsg(`Still ${r.total} of the ${r.expected} games on this slip — nothing new this time. Screenshot the missing games closer and upload again.`);
     else if (r.added === 0) setMsg("Those games are already on your slip.");
+    else if (short) setOk(`✓ Read ${r.total} of the ${r.expected} games on this slip. Screenshot the missing ones closer and upload again — games already read are skipped.`);
     else setOk(`✓ Read ${r.added} game${r.added === 1 ? "" : "s"} from your slip. Track them below.`);
   }
 

@@ -42,8 +42,9 @@ const SCHEMA = {
         stake: { type: "number" },
         potential_return: { type: "number" },
         currency: { type: "string" },
+        leg_count: { type: "number" },
       },
-      required: ["bookmaker", "stake", "potential_return", "currency"],
+      required: ["bookmaker", "stake", "potential_return", "currency", "leg_count"],
     },
     selections: {
       type: "array",
@@ -85,6 +86,7 @@ Also fill the top-level "slip" object from the slip's money summary (usually at 
 - potential_return: the potential winnings ("Potential Win", "Possible Win", "To Return", "Est. Payout", "Potential Return"). If the slip shows both a base win and a final amount with bonus, use the FINAL payout amount.
 - currency: a 3-letter code inferred from the symbol or text: ₦/NGN -> "NGN", GH₵/GHS -> "GHS", KSh/KES -> "KES", TSh -> "TZS", USh -> "UGX", R -> "ZAR", $ -> "USD", € -> "EUR", £ -> "GBP"; otherwise the symbol exactly as printed.
 - bookmaker: the bookmaker's name if identifiable from the slip's branding/layout (e.g. "SportyBet", "Bet365", "1xBet", "Betway", "BetKing", "MSport", "Paripesa").
+- leg_count: the selection/fold count PRINTED on the slip (e.g. "32 Games", "15-fold", "8 selections"); 0 if none is shown. This is used to verify you returned every leg.
 Use 0 for any amount that is not visible and "" for unknown currency/bookmaker. Never invent amounts.
 Return only the structured JSON.`;
 
@@ -206,10 +208,39 @@ Deno.serve(async (req) => {
     if (data.stop_reason === "max_tokens") console.warn("parse-slip hit max_tokens — slip may be very long");
     const textBlock = (data.content ?? []).find((b: any) => b.type === "text");
     const parsed = JSON.parse(textBlock?.text ?? "{}");
-    const selections: any[] = parsed.selections ?? [];
+    let selections: any[] = parsed.selections ?? [];
 
     // slip-level money summary (stake / potential win / currency / bookmaker) — nulls when unseen
     const rawSlip = parsed.slip ?? {};
+
+    // top-up pass: the slip prints its own fold count — when the model returned fewer legs than
+    // that, ask ONCE for only the missed ones (a 32-leg slip coming back as 27 was real). The
+    // extra call only happens on a shortfall, and the merge dedupes, so over-returning is safe.
+    const expected = Math.round(Number(rawSlip.leg_count)) || 0;
+    if (expected > selections.length && expected <= 64) {
+      try {
+        const res2 = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify({
+            model: MODEL,
+            max_tokens: 8000,
+            output_config: { format: { type: "json_schema", schema: SCHEMA } },
+            messages: [
+              { role: "user", content: [...imageBlocks, { type: "text", text: promptText }] },
+              { role: "assistant", content: textBlock?.text ?? "{}" },
+              { role: "user", content: `The slip shows ${expected} selections but you returned ${selections.length}. Re-scan every image carefully (especially near the top/bottom edges of each image, where a leg can be partially cut) and return ONLY the selections you missed, in the same JSON shape (repeat the slip object). Do NOT repeat selections you already returned.` },
+            ],
+          }),
+        });
+        const data2 = await res2.json();
+        if (res2.ok && data2.stop_reason !== "refusal") {
+          const t2 = (data2.content ?? []).find((b: any) => b.type === "text");
+          const extra: any[] = JSON.parse(t2?.text ?? "{}").selections ?? [];
+          selections = [...selections, ...extra];
+        }
+      } catch { /* keep the first pass */ }
+    }
     const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
     const str = (v: unknown) => { const s = String(v ?? "").trim(); return s ? s : null; };
     const slip = {
@@ -224,8 +255,10 @@ Deno.serve(async (req) => {
     const out = [];
     const seen = new Set<string>();
     for (const s of selections) {
-      // drop a leg the model repeated across an image overlap (same teams + market + line + value)
-      const dedupe = `${norm(s.home)}|${norm(s.away)}|${s.market_key}|${s.line ?? ""}|${norm(s.value ?? "")}`;
+      // drop a leg the model repeated across an image overlap or the top-up pass. The label is part
+      // of the key so two DIFFERENT custom bets on the same game (both value "", line 0) never
+      // collapse into one — a real repeat reads back with the same label anyway.
+      const dedupe = `${norm(s.home)}|${norm(s.away)}|${s.market_key}|${s.line ?? ""}|${norm(s.value ?? "")}|${norm(s.market_label ?? "")}`;
       if (seen.has(dedupe)) continue;
       seen.add(dedupe);
       const match = await matchFixture(s.home, s.away, winStart, aliases);
@@ -270,10 +303,10 @@ Deno.serve(async (req) => {
       user_id: user.id,
       storage_path: paths[0],
       status: "parsed",
-      parsed: { slip, selections: out },
+      parsed: { slip, expected, selections: out },
     });
 
-    return json({ slip, selections: out });
+    return json({ slip, expected, selections: out });
   } catch (e) {
     console.error("parse-slip failed:", e);
     return json({ error: String(e instanceof Error ? e.message : e) }, 500);
