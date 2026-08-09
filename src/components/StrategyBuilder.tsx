@@ -156,6 +156,15 @@ export type MixItem = {
   bet_value: string | null;
 };
 
+// Tappable starters for the rule box — one filter-style, one form-style, one if/else. Each is
+// known to parse cleanly (they use the engine's native signals), so a new user's first contact
+// with rules is a green read-back, not a red "will be ignored".
+const RULE_EXAMPLES = [
+  { label: "Odds band", text: "Only pick games where the odds on the pick are between 1.40 and 1.90." },
+  { label: "Scoring form", text: "Only pick games where the home team scores at least 2.0 goals per game and the combined blend is at least 3.0." },
+  { label: "Win or cover", text: "If the home win odds are at most 1.70, bet home win. Otherwise bet double chance 1X." },
+];
+
 export default function StrategyBuilder({
   userId,
   plan,
@@ -893,6 +902,17 @@ export default function StrategyBuilder({
           </button>
         </>
       )}
+
+      {/* free plan = 1 delivery DAY per month — say so HERE, or the agent looks broken when it
+          goes quiet after its first day (the single biggest "is this working?" confusion) */}
+      {plan === "free" && (
+        <p className="mt-3 rounded-xl bg-ink/[0.05] px-3.5 py-2.5 text-center text-[11.5px] leading-snug text-ink-mute">
+          Free plan: your agent delivers <b className="text-ink">1 day per month</b>, then waits for the next month.{" "}
+          <Link href="/profile" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
+            Go Pro for daily deliveries →
+          </Link>
+        </p>
+      )}
     </>
   );
 
@@ -1094,6 +1114,21 @@ export default function StrategyBuilder({
               placeholder={"Write your logic in plain English — the agent applies it exactly.\n\ne.g. Back home to win. If home odds are under 1.60, take the straight win. Otherwise take double chance (home or draw)."}
               className="min-h-[96px] w-full resize-y rounded-xl border border-ink/15 bg-white p-3.5 text-sm leading-relaxed text-ink focus:outline focus:outline-2 focus:outline-flood"
             />
+            {/* tap-to-insert examples: replaces the box, and the read-back below confirms it */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">Try:</span>
+              {RULE_EXAMPLES.map((ex) => (
+                <button
+                  key={ex.label}
+                  type="button"
+                  onClick={() => setRule(ex.text)}
+                  title={ex.text}
+                  className="rounded-full border border-ink/15 px-2.5 py-1 font-mono text-[10.5px] font-bold text-ink-mute transition hover:border-ink/40 hover:text-ink"
+                >
+                  {ex.label}
+                </button>
+              ))}
+            </div>
             <p className="mt-2.5 text-[12.5px] leading-relaxed text-ink-mute">
               Conditions, odds checks and fallbacks are understood. <b className="text-ink">“If odds &lt; 1.6 → straight win, else double chance”</b> becomes a real rule the agent runs on every game. Optional.
             </p>
