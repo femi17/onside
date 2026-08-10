@@ -222,9 +222,19 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], h
   // self-tuning log (Pro Max learning agents), filtered to the same agent + timeframe
   const tunes = useMemo(() => {
     const floor = days ? Date.now() - days * 86400000 : 0;
-    return (events ?? []).filter((e) => {
+    const filtered = (events ?? []).filter((e) => {
       if (agent && evAgent(e) !== agent) return false;
       if (floor && (!e.created_at || Date.parse(e.created_at) < floor)) return false;
+      return true;
+    });
+    // a re-run can log the SAME adjustment twice (same agent + before→after + basis); collapse
+    // those so the log never shows a repeat. Genuine step-by-step tunes differ, so they're kept.
+    // events arrive newest-first, so the first occurrence we keep is the most recent.
+    const seen = new Set<string>();
+    return filtered.filter((e) => {
+      const key = `${evAgent(e)}|${e.prev_min_edge ?? ""}|${e.new_min_edge ?? ""}|${e.basis ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
       return true;
     });
   }, [events, agent, days]);
