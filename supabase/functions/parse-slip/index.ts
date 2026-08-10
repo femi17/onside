@@ -312,13 +312,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // record the successful vision call so it counts against the daily cap (one read per slip)
-    await sb.from("screenshot_imports").insert({
-      user_id: user.id,
-      storage_path: paths[0],
-      status: "parsed",
-      parsed: { slip, expected, selections: out },
-    });
+    // record the successful vision call so it counts against the daily cap (one read per slip).
+    // ONLY charge when the read actually produced selections — an empty read (unreadable image)
+    // shows "Failed, try again" on the client, so it must not burn one of the day's reads.
+    if (out.length > 0) {
+      await sb.from("screenshot_imports").insert({
+        user_id: user.id,
+        storage_path: paths[0],
+        status: "parsed",
+        parsed: { slip, expected, selections: out },
+      });
+    }
 
     return json({ slip, expected, selections: out });
   } catch (e) {

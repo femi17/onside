@@ -246,11 +246,19 @@ export default function ImportSlip({
       setSels((prev) => {
         const existing = prev ?? [];
         const seen = new Set(existing.map(keyOf));
-        // it's an acca — every matched leg is on by default; the user only unticks any they
-        // didn't play (unmatched legs stay off until resolved via "Find game")
-        const additions = parsed
-          .filter((p) => !seen.has(keyOf(p)))
-          .map((p) => ({ ...p, on: !!p.fixture_id }));
+        // Dedup BOTH against what's already on the slip AND within this same batch. Overlapping
+        // image strips (and multi-pass reads) can return the identical leg twice, so filtering
+        // only against `existing` let both copies through — each game came out duplicated. Adding
+        // each key to `seen` as we go collapses the in-batch repeats too.
+        // It's an acca — every matched leg is on by default; the user only unticks any they didn't
+        // play (unmatched legs stay off until resolved via "Find game").
+        const additions: Sel[] = [];
+        for (const p of parsed) {
+          const k = keyOf(p);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          additions.push({ ...p, on: !!p.fixture_id });
+        }
         added = additions.length;
         const next = [...existing, ...additions];
         total = next.length;
@@ -306,7 +314,9 @@ export default function ImportSlip({
           bookmaker: slipMeta?.bookmaker ?? null,
           stake: slipMeta?.stake ?? null,
           potential_return: slipMeta?.potential_return ?? null,
-          currency: slipMeta?.currency ?? null,
+          // currency is NOT NULL (default NGN); an explicit null bypasses the default and errors,
+          // so fall back to NGN when the slip didn't show a currency
+          currency: slipMeta?.currency ?? "NGN",
         })
         .select("id")
         .single();
