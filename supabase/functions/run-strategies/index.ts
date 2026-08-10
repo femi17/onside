@@ -1511,12 +1511,15 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
 
   let room = strategyRoom;
   try {
-    const { data: prof } = await sb.from("profiles").select("plan").eq("id", strategy.user_id).maybeSingle();
+    const { data: prof } = await sb.from("profiles").select("plan, created_at").eq("id", strategy.user_id).maybeSingle();
     const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction, monthly_agent_runs").eq("plan", prof?.plan ?? "free").maybeSingle();
-    // plans with a monthly run allowance (free: 1) get that many delivery DAYS per calendar month;
-    // paid plans carry null = unlimited. This is also the backstop for a lapsed subscription: the
-    // downgrade cron pauses the strategies, and even a resumed one only runs on the free allowance.
-    if (lim?.monthly_agent_runs != null) {
+    // plans with a monthly run allowance (free) get that many delivery DAYS per calendar month;
+    // paid plans carry null = unlimited. New accounts get a 7-DAY TRIAL of DAILY delivery first, so
+    // a free user actually feels the daily loop before the wall — then it throttles to the monthly
+    // allowance. This is also the backstop for a lapsed subscription: the downgrade cron pauses the
+    // strategies, and even a resumed one only runs on the free allowance.
+    const inTrial = prof?.created_at != null && Date.now() - Date.parse(prof.created_at) < 7 * 86400000;
+    if (lim?.monthly_agent_runs != null && !inTrial) {
       const ms = new Date(); ms.setUTCDate(1); ms.setUTCHours(0, 0, 0, 0);
       const { data: mdel } = await sb.from("deliveries").select("delivered_at").eq("user_id", strategy.user_id).gte("delivered_at", ms.toISOString()).limit(1000);
       const runDays = new Set((mdel ?? []).map((d: any) => String(d.delivered_at).slice(0, 10)));
