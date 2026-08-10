@@ -609,10 +609,19 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
             </div>
           )}
           <div className="mt-6 flex flex-col gap-7">
-            {days.map(([key, day]) => (
+            {days.map(([key, day]) => {
+              // per-day scoreboard: how many settled picks landed (won of won+lost) — void/pending excluded
+              const won = day.items.filter((p) => p.status === "won").length;
+              const settled = day.items.filter((p) => p.status === "won" || p.status === "lost").length;
+              return (
               <section key={key}>
-                <div className="mb-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">
-                  {day.label} · {day.items.length}
+                <div className="mb-2.5 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">
+                  <span>{day.label} · {day.items.length}</span>
+                  {settled > 0 && (
+                    <span className="rounded bg-grass/15 px-1.5 py-0.5 text-grass" title={`${won} of ${settled} settled picks landed`}>
+                      {won}/{settled} landed
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-col gap-2">
                   {day.items.map((p) => (
@@ -620,7 +629,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                   ))}
                 </div>
               </section>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
