@@ -5,7 +5,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
-import { type TrackedTicket, stateOf, liveTrack } from "@/lib/ticket";
+import { type TrackedTicket, stateOf, liveTrack, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
+import { settleFixtureByScore, voidFixture } from "@/lib/settle";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import { usePulse } from "@/lib/usePulse";
 import type { MatchState } from "@/lib/matchState";
@@ -78,7 +79,7 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
-function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; onSettle?: (id: string, result: "won" | "lost" | "void") => void; busy?: boolean; dead?: boolean; settling?: boolean }) {
+function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; onSettle?: (id: string, result: "won" | "lost" | "void", score?: string) => void; busy?: boolean; dead?: boolean; settling?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
   const voided = leg.status === "void";
@@ -86,6 +87,9 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
   const f = leg.fixtures;
   const market = leg.market_label ?? leg.custom_market ?? "Tracked market";
   const pulse = usePulse(`${leg.current_value ?? ""}|${ms?.score ?? ""}`);
+  const [hStr, setHStr] = useState("");
+  const [aStr, setAStr] = useState("");
+  const canScore = SCORE_GRADABLE.has(leg.market_key ?? "");
 
   let sc = "";
   let mn = "";
@@ -172,11 +176,36 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
       )}
     </div>
       {showManual && (
-        <div className="flex items-center gap-2 px-2.5 pb-2 pt-0.5">
-          <span className="mr-auto font-mono text-[9.5px] uppercase tracking-wide text-ink-mute">No result — settle</span>
-          <button onClick={() => onSettle!(leg.id, "won")} disabled={settling} className="rounded-md bg-grass/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-grass-deep transition-colors hover:bg-grass/30 disabled:opacity-50">Landed</button>
-          <button onClick={() => onSettle!(leg.id, "lost")} disabled={settling} className="rounded-md bg-brick/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-brick transition-colors hover:bg-brick/30 disabled:opacity-50">Missed</button>
-          <button onClick={() => onSettle!(leg.id, "void")} disabled={settling} title="Game off (postponed/abandoned) — void" className="rounded-md bg-ink/10 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/20 disabled:opacity-50">Void</button>
+        <div className="px-2.5 pb-2 pt-0.5">
+          {canScore ? (
+            // enter the final score → grades this leg AND every other bet you hold on this game
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-auto font-mono text-[9.5px] uppercase tracking-wide text-ink-mute">Final score</span>
+              <input type="number" min={0} inputMode="numeric" value={hStr} onChange={(e) => setHStr(e.target.value)} placeholder="H" className="w-10 rounded-md border border-ink/20 bg-white px-1.5 py-0.5 text-center font-mono text-xs text-ink" />
+              <span className="font-mono text-ink-mute">–</span>
+              <input type="number" min={0} inputMode="numeric" value={aStr} onChange={(e) => setAStr(e.target.value)} placeholder="A" className="w-10 rounded-md border border-ink/20 bg-white px-1.5 py-0.5 text-center font-mono text-xs text-ink" />
+              <button
+                disabled={settling || hStr === "" || aStr === ""}
+                onClick={() => {
+                  const h = Number(hStr), a = Number(aStr);
+                  if (!Number.isFinite(h) || !Number.isFinite(a) || h < 0 || a < 0) return;
+                  const r = (scoreGrade(leg.market_key ?? null, leg.side ?? null, leg.line ?? null, h, a) ?? "void") as "won" | "lost" | "void";
+                  onSettle!(leg.id, r, `${h}-${a}`);
+                }}
+                className="rounded-md bg-ink px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-chalk-2 disabled:opacity-40"
+              >
+                Settle
+              </button>
+              <button onClick={() => onSettle!(leg.id, "void")} disabled={settling} title="Game off — void" className="rounded-md bg-ink/10 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/20 disabled:opacity-50">Void</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="mr-auto font-mono text-[9.5px] uppercase tracking-wide text-ink-mute">No result — settle</span>
+              <button onClick={() => onSettle!(leg.id, "won")} disabled={settling} className="rounded-md bg-grass/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-grass-deep transition-colors hover:bg-grass/30 disabled:opacity-50">Landed</button>
+              <button onClick={() => onSettle!(leg.id, "lost")} disabled={settling} className="rounded-md bg-brick/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-brick transition-colors hover:bg-brick/30 disabled:opacity-50">Missed</button>
+              <button onClick={() => onSettle!(leg.id, "void")} disabled={settling} title="Game off (postponed/abandoned) — void" className="rounded-md bg-ink/10 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/20 disabled:opacity-50">Void</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -275,11 +304,27 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
   // settle a leg the feed never graded (a stuck game, or a custom bet) — the same soft manual
   // settle as the tracker: flips this leg's ticket, and won/lost/void flows into the acca's standing
   // (a voided leg drops out of the calc). RLS scopes the update to the caller's own ticket.
-  async function settleLeg(id: string, result: "won" | "lost" | "void") {
+  // Settle once, everywhere: a final SCORE grades every bet on the fixture (this acca leg + tracker +
+  // agent pick) by its own market; a VOID voids them all. A direct Landed/Missed with no score
+  // settles just this leg.
+  async function settleLeg(id: string, result: "won" | "lost" | "void", score?: string) {
+    const leg = (acca.tickets ?? []).find((t) => t.id === id);
+    const fixtureId = (leg?.fixtures as { id?: number } | null | undefined)?.id;
     setBusyId(id);
-    const { error } = await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
-    setBusyId(null);
-    if (error) { if (typeof window !== "undefined") window.alert(`Couldn't settle this leg: ${error.message}`); return; }
+    try {
+      if (result === "void" && fixtureId) {
+        await voidFixture(supabase, fixtureId);
+      } else if (score && fixtureId) {
+        const [h, a] = score.split("-").map(Number);
+        if (Number.isFinite(h) && Number.isFinite(a)) await settleFixtureByScore(supabase, fixtureId, h, a);
+        else await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+      } else {
+        const { error } = await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+        if (error && typeof window !== "undefined") window.alert(`Couldn't settle this leg: ${error.message}`);
+      }
+    } finally {
+      setBusyId(null);
+    }
     router.refresh();
   }
 

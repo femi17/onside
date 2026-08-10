@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { type TrackedTicket, stateOf, liveTrack, groupOf, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
+import { settleFixtureByScore, voidFixture } from "@/lib/settle";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
@@ -418,14 +419,26 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   // settle a no-data delivery (provider never covered the game) so it stops showing "no feed data".
   // Goes through an RPC that only flips result + stores the entered score for the caller's own
   // pending delivery.
+  // Settle once, everywhere: a final SCORE grades every bet on the fixture (agent pick + tracker +
+  // acca) by its own market; a VOID voids them all. A direct Landed/Missed with no score settles
+  // just this pick (via the settle_delivery RPC).
   async function settleDelivery(id: string, result: "won" | "lost" | "void", score?: string) {
+    const pick = picks.find((p) => p.id === id);
+    const fixtureId = (pick?.fixtures as { id?: number } | null | undefined)?.id;
     setSettlingId(id);
-    const { error } = await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
-    setSettlingId(null);
-    if (error) {
-      // surface it instead of silently doing nothing
-      if (typeof window !== "undefined") window.alert(`Couldn't settle this pick: ${error.message}`);
-      return;
+    try {
+      if (result === "void" && fixtureId) {
+        await voidFixture(supabase, fixtureId);
+      } else if (score && fixtureId) {
+        const [h, a] = score.split("-").map(Number);
+        if (Number.isFinite(h) && Number.isFinite(a)) await settleFixtureByScore(supabase, fixtureId, h, a);
+        else await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
+      } else {
+        const { error } = await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
+        if (error && typeof window !== "undefined") window.alert(`Couldn't settle this pick: ${error.message}`);
+      }
+    } finally {
+      setSettlingId(null);
     }
     router.refresh();
   }

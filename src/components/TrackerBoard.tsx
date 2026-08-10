@@ -32,6 +32,7 @@ import {
   SCORE_GRADABLE,
   scoreGrade,
 } from "@/lib/ticket";
+import { settleFixtureByScore, voidFixture } from "@/lib/settle";
 
 export type Ticket = TrackedTicket;
 
@@ -228,7 +229,7 @@ function ManualSettle({
 }: {
   t: Ticket;
   busy: boolean;
-  onSettle: (id: string, result: "won" | "lost" | "void") => void;
+  onSettle: (id: string, result: "won" | "lost" | "void", score?: string) => void;
 }) {
   const [homeStr, setHomeStr] = useState("");
   const [awayStr, setAwayStr] = useState("");
@@ -247,7 +248,7 @@ function ManualSettle({
           <input type="number" min={0} inputMode="numeric" value={awayStr} onChange={(e) => setAwayStr(e.target.value)} placeholder="A" className="w-14 rounded-lg border border-ink/20 bg-white px-2 py-1.5 text-center font-mono text-sm text-ink" />
           <button
             disabled={busy || !valid || result == null}
-            onClick={() => result && onSettle(t.id, result)}
+            onClick={() => result && onSettle(t.id, result, `${h}-${a}`)}
             className={`ml-auto rounded-lg px-3 py-1.5 font-mono text-[11px] font-bold uppercase transition-colors disabled:opacity-40 ${
               result === "won" ? "bg-grass/20 text-grass-deep hover:bg-grass/30" : result === "lost" ? "bg-brick/20 text-brick hover:bg-brick/30" : "bg-ink/10 text-ink-mute"
             }`}
@@ -316,7 +317,7 @@ function Card({
   t: Ticket;
   compact?: boolean;
   busy: boolean;
-  onSettle: (id: string, result: "won" | "lost" | "void") => void;
+  onSettle: (id: string, result: "won" | "lost" | "void", score?: string) => void;
   onRemove: (id: string) => void;
   nowMs?: number;
 }) {
@@ -749,14 +750,27 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   const supabase = createClient();
   const confirm = useConfirm();
 
-  async function manualSettle(id: string, result: "won" | "lost" | "void") {
+  // Settle once, everywhere: a final SCORE grades every bet on the fixture (tracker + acca + agent
+  // pick) by its own market; a VOID voids them all. A direct Landed/Missed with no score (a non-score
+  // market) settles just this bet.
+  async function manualSettle(id: string, result: "won" | "lost" | "void", score?: string) {
+    const bet = tickets.find((t) => t.id === id);
+    const fixtureId = (bet?.fixtures as { id?: number } | null | undefined)?.id;
     setBusyId(id);
-    const { error } = await supabase
-      .from("tickets")
-      .update({ status: result, settled_at: new Date().toISOString() })
-      .eq("id", id);
-    setBusyId(null);
-    if (!error) router.refresh();
+    try {
+      if (result === "void" && fixtureId) {
+        await voidFixture(supabase, fixtureId);
+      } else if (score && fixtureId) {
+        const [h, a] = score.split("-").map(Number);
+        if (Number.isFinite(h) && Number.isFinite(a)) await settleFixtureByScore(supabase, fixtureId, h, a);
+        else await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+      } else {
+        await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+      }
+    } finally {
+      setBusyId(null);
+    }
+    router.refresh();
   }
 
   async function remove(id: string) {
