@@ -114,6 +114,10 @@ export default function ImportSlip({
   // reads consumed in this session — quota is checked server-side, but we mirror it
   // here so the UI can stop them before a call goes out (and before they get charged)
   const [readsUsed, setReadsUsed] = useState(0);
+  // uploadsLeft comes fresh from the server on every refresh and ALREADY reflects reads charged so
+  // far. Reset the session mirror when it changes, or a read gets subtracted twice (server value +
+  // this counter) and a single upload reads as "counted as 2".
+  useEffect(() => { setReadsUsed(0); }, [uploadsLeft]);
   const [ok, setOk] = useState<string | null>(null); // success line
   // inline "find game" search for a selection we couldn't auto-match
   const [findRow, setFindRow] = useState<number | null>(null);
