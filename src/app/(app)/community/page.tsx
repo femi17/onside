@@ -27,7 +27,7 @@ export default async function CommunityPage() {
     supabase.from("community_reactions").select("post_id").eq("user_id", user.id),
     supabase.from("community_blocks").select("blocked_handle").eq("blocker_id", user.id),
     // cross-member leaderboard (only opted-in members appear; aggregate only)
-    supabase.from("community_agent_stats").select("user_id, handle, agent_name, edge, sample_size").order("edge", { ascending: false }).limit(10),
+    supabase.from("community_agent_stats").select("user_id, handle, agent_name, landed, sample_size").order("landed", { ascending: false }).limit(3),
     // recent settled picks — attachable results for the composer
     supabase
       .from("deliveries")
@@ -41,7 +41,7 @@ export default async function CommunityPage() {
     id: string; result: string; market_label: string | null; market_key: string | null;
     fixtures: { home_team: string; away_team: string; leagues: { name: string | null } | null } | null;
   };
-  const board = (lb ?? []) as { user_id: string; handle: string; agent_name: string; edge: number; sample_size: number }[];
+  const board = (lb ?? []) as { user_id: string; handle: string; agent_name: string; landed: number; sample_size: number }[];
   const myHandle = prof?.handle ?? null;
 
   const blockedHandles = (myBlocks ?? []).map((b) => b.blocked_handle as string);
@@ -121,10 +121,10 @@ export default async function CommunityPage() {
 
           {/* this week's edge — cross-member leaderboard (opted-in members only) */}
           <div className="min-w-0">
-            <SectionLabel>This week&apos;s edge</SectionLabel>
+            <SectionLabel>Most landed</SectionLabel>
             <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
-              <div className="font-disp text-base font-bold text-chalk">Top agents · vs market</div>
-              <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">Members beating the price the most</div>
+              <div className="font-disp text-base font-bold text-chalk">Top agents · landed</div>
+              <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">Members landing the most picks</div>
               <div className="mt-3">
                 {board.length ? (
                   board.map((r, i) => {
@@ -135,8 +135,8 @@ export default async function CommunityPage() {
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-chalk">
                           <span className={mine ? "text-flood" : ""}>{mine ? "You" : r.handle}</span> · {r.agent_name}
                         </span>
-                        <span className={`flex-none font-mono text-[13px] font-bold ${r.edge >= 0 ? "text-grass" : "text-brick"}`}>
-                          {r.edge >= 0 ? "+" : ""}{(r.edge * 100).toFixed(1)}%
+                        <span className="flex-none rounded-md bg-grass/15 px-2 py-0.5 font-mono text-[12.5px] font-bold text-grass" title={`${r.landed} of ${r.sample_size} settled picks landed`}>
+                          {r.landed}/{r.sample_size}
                         </span>
                       </div>
                     );
