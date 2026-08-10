@@ -903,11 +903,11 @@ export default function StrategyBuilder({
         </>
       )}
 
-      {/* free plan = 1 delivery DAY per month — say so HERE, or the agent looks broken when it
-          goes quiet after its first day (the single biggest "is this working?" confusion) */}
+      {/* free plan = a 7-day daily trial, then ~weekly — say so HERE, or the agent looks broken when
+          it throttles (the single biggest "is this working?" confusion) */}
       {plan === "free" && (
         <p className="mt-3 rounded-xl bg-ink/[0.05] px-3.5 py-2.5 text-center text-[11.5px] leading-snug text-ink-mute">
-          Free plan: your agent delivers <b className="text-ink">1 day per month</b>, then waits for the next month.{" "}
+          Free plan: your agent delivers <b className="text-ink">daily for your first 7 days</b>, then about <b className="text-ink">once a week</b>.{" "}
           <Link href="/profile" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
             Go Pro for daily deliveries →
           </Link>
