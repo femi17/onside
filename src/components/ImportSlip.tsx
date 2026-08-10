@@ -292,7 +292,7 @@ export default function ImportSlip({
     // report the real count of games read — no "of N" (the slip's printed fold count is unreliable,
     // it misreads a 18-leg slip as 2) and no "screenshot closer" nag.
     if (r.error || r.parsed === 0) setMsg("Failed, try again.");
-    else if (r.added === 0) setOk("✓ Those games are already on your slip.");
+    else if (r.added === 0) setOk("✓ Already read — every game is on your slip below. Pick the ones you played and track them.");
     else setOk(`✓ Read ${r.added} game${r.added === 1 ? "" : "s"} from your slip. Track them below.`);
   }
 
