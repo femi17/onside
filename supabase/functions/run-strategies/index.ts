@@ -1481,15 +1481,26 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     const prev = strategy.min_edge ?? 0;
     strategy.min_edge = learned.next;
     await sb.from("strategies").update({ min_edge: learned.next }).eq("id", strategy.id);
-    // log the adjustment so Performance can show what/why the agent self-tuned
-    await sb.from("strategy_learning_events").insert({
-      strategy_id: strategy.id, user_id: strategy.user_id,
-      prev_min_edge: prev, new_min_edge: learned.next,
-      avg_roi: learned.basis === "roi" ? learned.metric : null,
-      // cross_agent metric is in CLV units too (the community's clamped market-family score)
-      avg_clv: learned.basis === "clv" || learned.basis === "cross_agent" ? learned.metric : null,
-      basis: learned.basis, sample_size: learned.sample,
-    });
+    // Don't re-log a tune we've already recorded. If the most recent learning event already moved
+    // the bar to this exact value, the bar was just reset (an agent edit/save writes the base bar
+    // back over the learned one) and we're only RE-APPLYING the learned value — keep min_edge
+    // correct above, but skip a duplicate timeline entry so Performance never shows the same tune
+    // twice. A genuinely new adjustment (last event ended somewhere else) still logs.
+    const { data: lastEv } = await sb.from("strategy_learning_events")
+      .select("new_min_edge").eq("strategy_id", strategy.id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const alreadyLogged = lastEv != null && Number(lastEv.new_min_edge) === Number(learned.next);
+    if (!alreadyLogged) {
+      // log the adjustment so Performance can show what/why the agent self-tuned
+      await sb.from("strategy_learning_events").insert({
+        strategy_id: strategy.id, user_id: strategy.user_id,
+        prev_min_edge: prev, new_min_edge: learned.next,
+        avg_roi: learned.basis === "roi" ? learned.metric : null,
+        // cross_agent metric is in CLV units too (the community's clamped market-family score)
+        avg_clv: learned.basis === "clv" || learned.basis === "cross_agent" ? learned.metric : null,
+        basis: learned.basis, sample_size: learned.sample,
+      });
+    }
   }
   const today = tzDay(nowIso, tz);
   const { data: existing } = await sb.from("deliveries").select("fixture_id, delivered_at").eq("strategy_id", strategy.id);
