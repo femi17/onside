@@ -907,7 +907,7 @@ export default function StrategyBuilder({
           it throttles (the single biggest "is this working?" confusion) */}
       {plan === "free" && (
         <p className="mt-3 rounded-xl bg-ink/[0.05] px-3.5 py-2.5 text-center text-[11.5px] leading-snug text-ink-mute">
-          Free plan: your agent delivers <b className="text-ink">daily for your first 7 days</b>, then about <b className="text-ink">once a week</b>.{" "}
+          Free plan: your agent delivers <b className="text-ink">daily for your first 7 days</b>, then about <b className="text-ink">twice a week</b>.{" "}
           <Link href="/profile" className="font-bold text-ink underline decoration-ink/30 underline-offset-2 hover:decoration-ink">
             Go Pro for daily deliveries →
           </Link>
