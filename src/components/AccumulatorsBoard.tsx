@@ -78,7 +78,7 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
-function LegRow({ leg, nowMs, onDetach, onTrack, busy, dead }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; busy?: boolean; dead?: boolean }) {
+function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; onSettle?: (id: string, result: "won" | "lost" | "void") => void; busy?: boolean; dead?: boolean; settling?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
   const voided = leg.status === "void";
@@ -112,7 +112,16 @@ function LegRow({ leg, nowMs, onDetach, onTrack, busy, dead }: { leg: AccaLeg; n
   }
   const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : pulse ? "text-flood-deep" : "text-ink";
 
+  // a leg the feed never graded — a game well past kickoff still not settled (no coverage), or a
+  // custom bet the engine can't auto-grade once it has kicked off — gets manual settle controls
+  const overdueNoFeed = !!f?.kickoff_utc && Date.parse(f.kickoff_utc) < nowMs - 2.5 * 3600 * 1000;
+  const kicked = !!f?.kickoff_utc && Date.parse(f.kickoff_utc) < nowMs;
+  const showManual =
+    !!onSettle && !dead && leg.status !== "won" && leg.status !== "lost" && leg.status !== "void" &&
+    (overdueNoFeed || (leg.market_key === "custom" && kicked));
+
   return (
+    <div>
     <div className={`grid ${onDetach ? "grid-cols-[26px_1fr_auto_auto]" : "grid-cols-[26px_1fr_auto]"} items-center gap-3 rounded-[10px] px-2.5 py-2.5 transition-colors hover:bg-ink/[0.04] ${voided ? "opacity-60" : ""}`}>
       <span className={`grid h-[22px] w-[22px] place-items-center rounded-[7px] font-mono text-xs font-bold ${voided ? "bg-ink/[0.07] text-ink-mute" : MK[cat].cls}`}>
         {voided ? "–" : MK[cat].glyph}
@@ -160,6 +169,15 @@ function LegRow({ leg, nowMs, onDetach, onTrack, busy, dead }: { leg: AccaLeg; n
         >
           ×
         </button>
+      )}
+    </div>
+      {showManual && (
+        <div className="flex items-center gap-2 px-2.5 pb-2 pt-0.5">
+          <span className="mr-auto font-mono text-[9.5px] uppercase tracking-wide text-ink-mute">No result — settle</span>
+          <button onClick={() => onSettle!(leg.id, "won")} disabled={settling} className="rounded-md bg-grass/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-grass-deep transition-colors hover:bg-grass/30 disabled:opacity-50">Landed</button>
+          <button onClick={() => onSettle!(leg.id, "lost")} disabled={settling} className="rounded-md bg-brick/20 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-brick transition-colors hover:bg-brick/30 disabled:opacity-50">Missed</button>
+          <button onClick={() => onSettle!(leg.id, "void")} disabled={settling} title="Game off (postponed/abandoned) — void" className="rounded-md bg-ink/10 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/20 disabled:opacity-50">Void</button>
+        </div>
       )}
     </div>
   );
@@ -253,6 +271,18 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     setBusyId(null);
     router.refresh();
   }
+
+  // settle a leg the feed never graded (a stuck game, or a custom bet) — the same soft manual
+  // settle as the tracker: flips this leg's ticket, and won/lost/void flows into the acca's standing
+  // (a voided leg drops out of the calc). RLS scopes the update to the caller's own ticket.
+  async function settleLeg(id: string, result: "won" | "lost" | "void") {
+    setBusyId(id);
+    const { error } = await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+    setBusyId(null);
+    if (error) { if (typeof window !== "undefined") window.alert(`Couldn't settle this leg: ${error.message}`); return; }
+    router.refresh();
+  }
+
   const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0 };
   const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], soon: [] };
   for (const leg of legs) {
@@ -261,7 +291,9 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     grouped[c].push(leg);
   }
   const dead = acca.status === "lost" || counts.cut > 0;
-  const won = acca.status === "won" || (legs.length > 0 && legs.every((l) => l.status === "won"));
+  // a voided leg drops out — the acca is won when every non-void leg landed
+  const countedLegs = legs.filter((l) => l.status !== "void");
+  const won = acca.status === "won" || (countedLegs.length > 0 && countedLegs.every((l) => l.status === "won"));
   const fold = acca.leg_count ?? legs.length;
   const hasStake = acca.potential_return != null;
 
@@ -377,7 +409,7 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
                 <span className={`h-2 w-2 rounded-full ${g.dot}`} /> {g.label} · {grouped[g.cat].length}
               </div>
               {grouped[g.cat].map((leg) => (
-                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} onTrack={() => retrackLeg(leg)} busy={busyId === leg.id} dead={dead} />
+                <LegRow key={leg.id} leg={leg} nowMs={nowMs} onDetach={() => detachLeg(leg)} onTrack={() => retrackLeg(leg)} onSettle={settleLeg} settling={busyId === leg.id} busy={busyId === leg.id} dead={dead} />
               ))}
             </div>
           ) : null
@@ -438,7 +470,9 @@ type AccaState = "won" | "cut" | "live" | "soon";
 function accaState(acca: Acca, nowMs: number): AccaState {
   const legs = acca.tickets ?? [];
   if (acca.status === "lost" || legs.some((l) => l.status === "lost")) return "cut";
-  if (acca.status === "won" || (legs.length > 0 && legs.every((l) => l.status === "won"))) return "won";
+  // a voided leg drops out (stake back) — the acca wins if every REMAINING leg won
+  const counted = legs.filter((l) => l.status !== "void");
+  if (acca.status === "won" || (counted.length > 0 && counted.every((l) => l.status === "won"))) return "won";
   const anyLive = legs.some((l) => l.status === "live" || stateOf(l, nowMs)?.phase === "live");
   return anyLive ? "live" : "soon";
 }

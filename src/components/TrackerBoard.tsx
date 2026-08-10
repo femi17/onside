@@ -228,7 +228,7 @@ function ManualSettle({
 }: {
   t: Ticket;
   busy: boolean;
-  onSettle: (id: string, result: "won" | "lost") => void;
+  onSettle: (id: string, result: "won" | "lost" | "void") => void;
 }) {
   const [homeStr, setHomeStr] = useState("");
   const [awayStr, setAwayStr] = useState("");
@@ -255,6 +255,14 @@ function ManualSettle({
             {result === "won" ? "Landed ✓" : result === "lost" ? "Missed ✕" : "Settle"}
           </button>
         </div>
+        {/* game didn't happen (postponed/abandoned)? void it — no score needed */}
+        <button
+          disabled={busy}
+          onClick={() => onSettle(t.id, "void")}
+          className="mt-2 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink-mute underline decoration-ink/30 underline-offset-2 transition-colors hover:text-ink disabled:opacity-50"
+        >
+          Game off? Void it
+        </button>
         {valid && result == null && (
           <div className="mt-2 flex items-center gap-2">
             <span className="mr-auto font-mono text-[10.5px] text-ink-mute">Push / void for this market — mark it:</span>
@@ -283,6 +291,15 @@ function ManualSettle({
       >
         Missed
       </button>
+      {/* postponed / abandoned → void (stake back, leg drops out of an acca) */}
+      <button
+        disabled={busy}
+        onClick={() => onSettle(t.id, "void")}
+        title="Game off (postponed/abandoned) — void it"
+        className="rounded-lg bg-ink/10 px-2.5 py-1 font-mono text-[10px] font-bold uppercase text-ink-mute transition-colors hover:bg-ink/20 disabled:opacity-50"
+      >
+        Void
+      </button>
     </div>
   );
 }
@@ -299,7 +316,7 @@ function Card({
   t: Ticket;
   compact?: boolean;
   busy: boolean;
-  onSettle: (id: string, result: "won" | "lost") => void;
+  onSettle: (id: string, result: "won" | "lost" | "void") => void;
   onRemove: (id: string) => void;
   nowMs?: number;
 }) {
@@ -732,7 +749,7 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   const supabase = createClient();
   const confirm = useConfirm();
 
-  async function manualSettle(id: string, result: "won" | "lost") {
+  async function manualSettle(id: string, result: "won" | "lost" | "void") {
     setBusyId(id);
     const { error } = await supabase
       .from("tickets")
