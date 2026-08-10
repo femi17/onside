@@ -249,7 +249,7 @@ function Item({
   onTrack: (p: AgentPick) => void;
   tracked: boolean;
   busy: boolean;
-  onSettle: (id: string, result: "won" | "lost", score?: string) => void;
+  onSettle: (id: string, result: "won" | "lost" | "void", score?: string) => void;
   settling: boolean;
   onExplain: () => void;
 }) {
@@ -384,12 +384,15 @@ function Item({
                   {scored === "won" ? "Landed ✓" : scored === "lost" ? "Missed ✕" : "Settle"}
                 </button>
               )}
+              {/* game off (postponed/abandoned)? void it — no score needed */}
+              <button disabled={settling} onClick={() => onSettle(p.id, "void")} title="Game off — void" className={`${settleBtn} bg-ink/10 text-ink-mute`}>Void</button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <span className="mr-auto font-mono text-[10px] uppercase tracking-wide text-ink-mute">Mark result</span>
               <button disabled={settling} onClick={() => onSettle(p.id, "won")} className={`${settleBtn} bg-grass/20 text-grass-deep`}>Landed</button>
               <button disabled={settling} onClick={() => onSettle(p.id, "lost")} className={`${settleBtn} bg-brick/20 text-brick`}>Missed</button>
+              <button disabled={settling} onClick={() => onSettle(p.id, "void")} title="Game off — void" className={`${settleBtn} bg-ink/10 text-ink-mute`}>Void</button>
             </div>
           )}
         </div>
@@ -415,7 +418,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   // settle a no-data delivery (provider never covered the game) so it stops showing "no feed data".
   // Goes through an RPC that only flips result + stores the entered score for the caller's own
   // pending delivery.
-  async function settleDelivery(id: string, result: "won" | "lost", score?: string) {
+  async function settleDelivery(id: string, result: "won" | "lost" | "void", score?: string) {
     setSettlingId(id);
     const { error } = await supabase.rpc("settle_delivery", { p_id: id, p_result: result, p_score: score ?? null });
     setSettlingId(null);
