@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { recognizeBet, recognizedFromClassification } from "@/lib/betCatalog";
+import { recognizeBet, recognizedFromClassification, canonicalMarket } from "@/lib/betCatalog";
 
 // same normalisation parse-slip uses, so the alias we teach here matches next time
 const norm = (s: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
@@ -346,7 +346,12 @@ export default function ImportSlip({
           /* keep the recognizer result / custom */
         }
       }
-      const key = rec?.gradeable ? rec.marketKey : s.market_key === "custom" ? "custom" : s.market_key;
+      const key0 = rec?.gradeable ? rec.marketKey : s.market_key === "custom" ? "custom" : s.market_key;
+      // team totals arrive from parse-slip pre-classified as home_goals_ou/away_goals_ou (the label is
+      // the team name, so recognizeBet can't re-derive them). Canonicalise so "team over 0.5" folds to
+      // "team to score" — the same outcome shouldn't land on the tracker twice under two names.
+      const canon = canonicalMarket(key0, rec?.line ?? s.line, rec?.side ?? s.side ?? null);
+      const key = canon.marketKey;
       rows.push({
         user_id: userId,
         accumulator_id: accumulatorId,
@@ -354,10 +359,8 @@ export default function ImportSlip({
         market_key: key,
         market_label: s.market_label,
         custom_market: key === "custom" ? s.market_label : null,
-        line: rec?.line ?? s.line,
-        // team totals come from parse-slip as home_goals_ou/away_goals_ou with a side; the label is
-        // the team name so recognizeBet won't re-derive it — fall back to the parse-slip side/key.
-        side: rec?.side ?? s.side ?? null,
+        line: canon.line,
+        side: canon.side,
         period: rec?.period ?? "ft",
         bet_value: rec?.value ?? s.value ?? null,
         source: "screenshot",

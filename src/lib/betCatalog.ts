@@ -320,6 +320,26 @@ const statName = (raw: string): string => {
  * flags a value the UI must collect (player, score, range); `value` holds one we
  * already lifted out of the text; `period` carries 1st/2nd-half selection.
  */
+/**
+ * Fold markets that are the SAME outcome under different names down to one canonical key, so they
+ * never double up on the tracker and grade identically. A team scoring "over 0.5 goals" is exactly
+ * that team "to score"; the whole-match "over 0.5" is `over_0_5`. Applied to keys that arrive
+ * pre-classified (e.g. straight off a parsed slip) without going back through recognizeBet's text.
+ */
+export function canonicalMarket(
+  marketKey: string | null | undefined,
+  line: number | string | null | undefined,
+  side: string | null | undefined
+): { marketKey: string | null | undefined; line: number | null; side: string | null } {
+  const ln = line == null || line === "" ? null : Number(line);
+  if (ln === 0.5 && side === "over") {
+    if (marketKey === "home_goals_ou") return { marketKey: "home_to_score", line: null, side: "home" };
+    if (marketKey === "away_goals_ou") return { marketKey: "away_to_score", line: null, side: "away" };
+    if (marketKey === "total_goals_ou") return { marketKey: "over_0_5", line: 0.5, side: "over" };
+  }
+  return { marketKey, line: ln, side: side ?? null };
+}
+
 export function recognizeBet(input: string): RecognizedBet | null {
   const raw = norm(input);
   if (!raw) return null;
@@ -622,6 +642,9 @@ export function recognizeBet(input: string): RecognizedBet | null {
   if (teamOu && (teamOu[2] || /\.5$/.test(teamOu[3]))) {
     const team = teamOu[1];
     const over = !teamOu[2] || teamOu[2] === "over" || teamOu[2] === "o";
+    // "Home over 0.5" is exactly "home to score" — fold to the canonical to-score key so the two
+    // never show up as separate bets on the tracker and grade identically.
+    if (over && teamOu[3] === "0.5") return wp({ marketKey: `${team}_to_score`, label: `${cap(team)} team to score`, line: null, side: team, gradeable: true, period });
     return wp({ marketKey: `${team}_goals_ou`, label: `${cap(team)} ${over ? "over" : "under"} ${teamOu[3]}`, line: Number(teamOu[3]), side: over ? "over" : "under", gradeable: true, period });
   }
 
