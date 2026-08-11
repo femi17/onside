@@ -337,6 +337,10 @@ export function canonicalMarket(
     if (marketKey === "away_goals_ou") return { marketKey: "away_to_score", line: null, side: "away" };
     if (marketKey === "total_goals_ou") return { marketKey: "over_0_5", line: 0.5, side: "over" };
   }
+  // side is implied by the to-score key but has been stored inconsistently (null vs "home"); pin it so
+  // the same bet matches whether it arrived from an agent pick, a slip, or a hand-typed bet.
+  if (marketKey === "home_to_score") return { marketKey, line: null, side: "home" };
+  if (marketKey === "away_to_score") return { marketKey, line: null, side: "away" };
   return { marketKey, line: ln, side: side ?? null };
 }
 

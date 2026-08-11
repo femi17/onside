@@ -455,7 +455,11 @@ function Card({
   // covering it — let the user settle it themselves instead of waiting forever
   const overdue = !!f?.kickoff_utc && Date.parse(f.kickoff_utc) < (nowMs ?? Date.now()) - 2.5 * 3600 * 1000;
   const stuck = group === "upcoming" && overdue && (t.status === "pending" || t.status === "live");
-  const showManual = needsManual || stuck;
+  // a void isn't final — the game may have actually been played (provider void, wrong postponement).
+  // keep the settle controls on void legs so the user can enter the real score (which fans out to the
+  // acca + agent pick) or flip it.
+  const revoid = t.status === "void";
+  const showManual = needsManual || stuck || revoid;
   // past kickoff but the feed still says not-started — we're waiting on the data provider to flip it live
   const awaitingFeed = group === "upcoming" && !stuck && !!f?.kickoff_utc && Date.parse(f.kickoff_utc) < (nowMs ?? Date.now());
 

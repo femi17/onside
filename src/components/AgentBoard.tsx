@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { type TrackedTicket, stateOf, liveTrack, groupOf, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
 import { settleFixtureByScore, voidFixture } from "@/lib/settle";
+import { canonicalMarket } from "@/lib/betCatalog";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
@@ -456,13 +457,21 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
 
   const fixtureId = (p: AgentPick) => (p.fixtures as { id?: number } | null)?.id ?? null;
   const isTrackable = (p: AgentPick) => p.status !== "won" && p.status !== "lost" && p.status !== "void" && !!fixtureId(p) && !tracked.has(p.id);
-  const dupKey = (fx: number, mk: string | null | undefined, side: string | null | undefined) => `${fx}:${mk ?? ""}:${side ?? ""}`;
-  const ticketRow = (p: AgentPick, fx: number) => ({
-    user_id: userId, accumulator_id: null, fixture_id: fx,
-    market_key: p.market_key, market_label: p.market_label, custom_market: p.custom_market,
-    line: p.line, side: p.side, period: p.period ?? "ft", bet_value: p.bet_value ?? null,
-    source: "agent", status: "pending",
-  });
+  // canonicalise so the same outcome under a different name (e.g. "home over 0.5" vs "home to score")
+  // matches an existing tracker leg and never doubles up
+  const dupKey = (fx: number, mk: string | null | undefined, line: number | null | undefined, side: string | null | undefined) => {
+    const c = canonicalMarket(mk, line, side);
+    return `${fx}:${c.marketKey ?? ""}:${c.side ?? ""}`;
+  };
+  const ticketRow = (p: AgentPick, fx: number) => {
+    const c = canonicalMarket(p.market_key, p.line, p.side);
+    return {
+      user_id: userId, accumulator_id: null, fixture_id: fx,
+      market_key: c.marketKey, market_label: p.market_label, custom_market: p.custom_market,
+      line: c.line, side: c.side, period: p.period ?? "ft", bet_value: p.bet_value ?? null,
+      source: "agent", status: "pending",
+    };
+  };
 
   // copy one agent pick onto the user's own tracker as a standalone bet (de-duped so tapping twice —
   // or an existing manual bet — won't double up)
@@ -471,10 +480,11 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     if (!fx || tracked.has(p.id)) return;
     setBusyId(p.id);
     const { data: existing } = await supabase
-      .from("tickets").select("id")
-      .eq("user_id", userId).eq("fixture_id", fx).eq("market_key", p.market_key).eq("side", p.side ?? "")
-      .in("status", ["pending", "live"]).limit(1);
-    if (!existing?.length) await supabase.from("tickets").insert(ticketRow(p, fx));
+      .from("tickets").select("market_key, line, side")
+      .eq("user_id", userId).eq("fixture_id", fx).in("status", ["pending", "live"]);
+    const key = dupKey(fx, p.market_key, p.line, p.side);
+    const dup = (existing ?? []).some((t) => dupKey(fx, t.market_key as string, t.line as number | null, t.side as string) === key);
+    if (!dup) await supabase.from("tickets").insert(ticketRow(p, fx));
     setTracked((s) => new Set(s).add(p.id));
     setBusyId(null);
   }
@@ -486,11 +496,11 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     setBulkBusy(true);
     const fxIds = Array.from(new Set(candidates.map((p) => fixtureId(p)!)));
     const { data: existing } = await supabase
-      .from("tickets").select("fixture_id, market_key, side")
+      .from("tickets").select("fixture_id, market_key, line, side")
       .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds);
-    const taken = new Set((existing ?? []).map((r) => dupKey(r.fixture_id as number, r.market_key as string, r.side as string)));
+    const taken = new Set((existing ?? []).map((r) => dupKey(r.fixture_id as number, r.market_key as string, r.line as number | null, r.side as string)));
     const rows = candidates
-      .filter((p) => !taken.has(dupKey(fixtureId(p)!, p.market_key, p.side)))
+      .filter((p) => !taken.has(dupKey(fixtureId(p)!, p.market_key, p.line, p.side)))
       .map((p) => ticketRow(p, fixtureId(p)!));
     if (rows.length) await supabase.from("tickets").insert(rows);
     setTracked((s) => { const n = new Set(s); candidates.forEach((p) => n.add(p.id)); return n; });

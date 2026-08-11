@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
 import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
+import { canonicalMarket } from "@/lib/betCatalog";
 
 export default async function AgentPage() {
   const supabase = createClient();
@@ -53,17 +54,23 @@ export default async function AgentPage() {
   );
 
   // which of these picks are already on the user's tracker (so their button shows "On tracker"
-  // instead of prompting to add again on reload) — matched by fixture + market + side
+  // instead of prompting to add again) — matched by fixture + market + side, CANONICALISED so the
+  // same outcome under a different name (e.g. "home over 0.5" vs "home to score") still counts as
+  // already tracked and the user isn't invited to add a duplicate.
   const { data: myTickets } = await supabase
     .from("tickets")
-    .select("fixture_id, market_key, side")
+    .select("fixture_id, market_key, line, side")
     .eq("user_id", user.id)
     .in("fixture_id", fixtureIds.length ? fixtureIds : [-1]);
-  const taken = new Set((myTickets ?? []).map((t) => `${t.fixture_id}:${t.market_key ?? ""}:${t.side ?? ""}`));
+  const takenKey = (fx: number, mk: string | null | undefined, line: number | null | undefined, side: string | null | undefined) => {
+    const c = canonicalMarket(mk, line, side);
+    return `${fx}:${c.marketKey ?? ""}:${c.side ?? ""}`;
+  };
+  const taken = new Set((myTickets ?? []).map((t) => takenKey(t.fixture_id as number, t.market_key, t.line as number | null, t.side)));
   const initialTracked = picks
     .filter((p) => {
       const fx = (p.fixtures as { id?: number } | null)?.id;
-      return fx != null && taken.has(`${fx}:${p.market_key ?? ""}:${p.side ?? ""}`);
+      return fx != null && taken.has(takenKey(fx, p.market_key, p.line, p.side));
     })
     .map((p) => p.id);
 
