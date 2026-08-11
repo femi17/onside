@@ -35,7 +35,9 @@ type DblState = "won" | "cut" | "live" | "soon";
 function doubleState(dbl: OnsideDouble, deliveries: Record<string, LegDelivery>, nowMs: number): DblState {
   const legs = (dbl.legs ?? []).map((l) => deliveries[l.delivery_id] ?? null);
   if (legs.some((t) => t?.status === "lost")) return "cut";
-  if (legs.length > 0 && legs.every((t) => t?.status === "won")) return "won";
+  // a voided leg (game postponed/off) drops out — the double resolves on the remaining legs
+  const counted = legs.filter((t) => t?.status !== "void");
+  if (counted.length > 0 && counted.every((t) => t?.status === "won")) return "won";
   const anyLive = legs.some((t) => t && (t.status === "live" || stateOf(t, nowMs)?.phase === "live"));
   return anyLive ? "live" : "soon";
 }

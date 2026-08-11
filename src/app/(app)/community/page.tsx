@@ -27,7 +27,7 @@ export default async function CommunityPage() {
     supabase.from("community_reactions").select("post_id").eq("user_id", user.id),
     supabase.from("community_blocks").select("blocked_handle").eq("blocker_id", user.id),
     // cross-member leaderboard (only opted-in members appear; aggregate only)
-    supabase.from("community_agent_stats").select("user_id, handle, agent_name, landed, sample_size").order("landed", { ascending: false }).limit(3),
+    supabase.rpc("community_daily_leaderboard"),
     // recent settled picks — attachable results for the composer
     supabase
       .from("deliveries")
@@ -41,7 +41,7 @@ export default async function CommunityPage() {
     id: string; result: string; market_label: string | null; market_key: string | null;
     fixtures: { home_team: string; away_team: string; leagues: { name: string | null } | null } | null;
   };
-  const board = (lb ?? []) as { user_id: string; handle: string; agent_name: string; landed: number; sample_size: number }[];
+  const board = (lb ?? []) as { user_id: string; handle: string; agent_name: string; landed: number; settled: number }[];
   const myHandle = prof?.handle ?? null;
 
   const blockedHandles = (myBlocks ?? []).map((b) => b.blocked_handle as string);
@@ -121,10 +121,10 @@ export default async function CommunityPage() {
 
           {/* this week's edge — cross-member leaderboard (opted-in members only) */}
           <div className="min-w-0">
-            <SectionLabel>Most landed</SectionLabel>
+            <SectionLabel>Today&apos;s best</SectionLabel>
             <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
-              <div className="font-disp text-base font-bold text-chalk">Top agents · landed</div>
-              <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">Members landing the most picks</div>
+              <div className="font-disp text-base font-bold text-chalk">Best agents today</div>
+              <div className="mt-0.5 font-mono text-[11px] text-onpitch-mute">Most of today&apos;s picks landed</div>
               <div className="mt-3">
                 {board.length ? (
                   board.map((r, i) => {
@@ -135,15 +135,15 @@ export default async function CommunityPage() {
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-chalk">
                           <span className={mine ? "text-flood" : ""}>{mine ? "You" : r.handle}</span> · {r.agent_name}
                         </span>
-                        <span className="flex-none rounded-md bg-grass/15 px-2 py-0.5 font-mono text-[12.5px] font-bold text-grass" title={`${r.landed} of ${r.sample_size} settled picks landed`}>
-                          {r.landed}/{r.sample_size}
+                        <span className="flex-none rounded-md bg-grass/15 px-2 py-0.5 font-mono text-[12.5px] font-bold text-grass" title={`${r.landed} of ${r.settled} of today's settled picks landed`}>
+                          {r.landed}/{r.settled}
                         </span>
                       </div>
                     );
                   })
                 ) : (
                   <p className="mt-2 font-mono text-[12px] leading-relaxed text-onpitch-mute">
-                    No members on the board yet — opt in below to be first (needs an agent that&apos;s run a full day — all its picks settled — with 20+ settled picks).
+                    No landed picks on the board yet today — opt in below and your agents&apos; results will show here as today&apos;s games finish.
                   </p>
                 )}
               </div>
