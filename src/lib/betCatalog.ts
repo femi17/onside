@@ -643,6 +643,13 @@ export function recognizeBet(input: string): RecognizedBet | null {
     const m = s.match(/([0-9]\s*\+|[0-9]\s*(?:-|to)\s*[0-9]|[0-9])/);
     if (m) {
       const val = m[1].replace(/\s+/g, "").replace("to", "-");
+      // "Excluded … 0" = the goal count won't be 0 = at least one goal, i.e. that team (or the
+      // match) TO SCORE. Grade it as the well-supported to-score / over 0.5 market so it settles
+      // from the scoreline the moment a goal goes in — not the exotic excluded-count path.
+      if (val === "0") {
+        if (team) return wp({ marketKey: team === "home" ? "home_to_score" : "away_to_score", label: `${cap(team)} team to score`, line: null, side: team, gradeable: true, period });
+        return wp({ marketKey: "over_0_5", label: "Over 0.5 goals", line: 0.5, side: "over", gradeable: true, period });
+      }
       const key = team === "home" ? "excluded_home_goals" : team === "away" ? "excluded_away_goals" : "excluded_goals";
       return wp({ marketKey: key, label: `Excluded ${team ? cap(team) + " " : ""}${val} goals`, line: null, side: null, gradeable: true, period, value: val });
     }
