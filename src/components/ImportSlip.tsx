@@ -364,7 +364,29 @@ export default function ImportSlip({
         status: "pending",
       });
     }
-    const { error } = await supabase.from("tickets").insert(rows);
+    // Don't double up the tracker: a leg you already added (an agent pick you tracked earlier, or the
+    // same slip read twice) must not spawn a second row. Match existing pending/live tickets on
+    // fixture + market + side; fold a standalone match into this acca instead of re-inserting it.
+    const dk = (fx: number | null, mk: string | null | undefined, side: string | null | undefined) => `${fx}:${mk ?? ""}:${side ?? ""}`;
+    const fxIds = Array.from(new Set(rows.map((r) => r.fixture_id).filter((v): v is number => v != null)));
+    const { data: existing } = await supabase
+      .from("tickets").select("id, fixture_id, market_key, side, accumulator_id")
+      .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds);
+    const byKey = new Map((existing ?? []).map((r) => [dk(r.fixture_id as number, r.market_key as string, r.side as string), r]));
+    const toInsert: typeof rows = [];
+    const absorb: string[] = [];
+    for (const r of rows) {
+      const hit = byKey.get(dk(r.fixture_id, r.market_key, r.side));
+      if (hit) {
+        // already on the tracker — pull the standalone bet into this acca rather than duplicating it
+        if (accumulatorId && hit.accumulator_id == null) absorb.push(hit.id as string);
+        continue;
+      }
+      toInsert.push(r);
+    }
+    let error: { message: string } | null = null;
+    if (toInsert.length) ({ error } = await supabase.from("tickets").insert(toInsert));
+    if (!error && absorb.length && accumulatorId) ({ error } = await supabase.from("tickets").update({ accumulator_id: accumulatorId }).in("id", absorb));
     setBusy(null);
     if (error) {
       setMsg(error.message);
