@@ -85,9 +85,14 @@ function LegRow({ leg, del, nowMs }: { leg: DoubleLeg; del: LegDelivery | null; 
   const cat = legCat(del, ms);
   const f = del?.fixtures ?? null;
 
+  const voided = del?.status === "void";
   let sc = "";
   let mn = "";
-  if (cat === "safe") {
+  if (voided) {
+    // game off (postponed/abandoned) — struck through, doesn't count toward the double
+    sc = "—";
+    mn = "void";
+  } else if (cat === "safe") {
     sc = ms?.score ?? "✓";
     mn = del?.status === "won" ? "landed" : "FT";
   } else if (cat === "cut") {
@@ -100,14 +105,14 @@ function LegRow({ leg, del, nowMs }: { leg: DoubleLeg; del: LegDelivery | null; 
     sc = `${leg.prob}%`;
     mn = ms?.label ?? "upcoming";
   }
-  const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : cat === "live" ? "text-flood-deep" : "text-ink";
+  const scColor = voided ? "text-ink-mute" : cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : cat === "live" ? "text-flood-deep" : "text-ink";
 
   return (
     <div className="grid grid-cols-[24px_1fr_auto] items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 transition-colors hover:bg-ink/[0.04]">
-      <span className={`grid h-[22px] w-[22px] place-items-center rounded-[7px] font-mono text-xs font-bold ${MK[cat].cls}`}>{MK[cat].glyph}</span>
-      <div className="min-w-0">
+      <span className={`grid h-[22px] w-[22px] place-items-center rounded-[7px] font-mono text-xs font-bold ${voided ? "bg-ink/[0.07] text-ink-mute" : MK[cat].cls}`}>{voided ? "–" : MK[cat].glyph}</span>
+      <div className={`min-w-0 ${voided ? "opacity-60" : ""}`}>
         {f?.leagues && <LeagueTag lg={f.leagues} />}
-        <div className="mt-0.5 truncate text-[13.5px] font-bold leading-tight text-ink">{leg.game}</div>
+        <div className={`mt-0.5 truncate text-[13.5px] font-bold leading-tight text-ink ${voided ? "line-through" : ""}`}>{leg.game}</div>
         <div className="mt-0.5 truncate font-mono text-[10.5px] font-bold uppercase tracking-wide text-flood-deep">
           {leg.market}
           <span className="font-normal text-ink-mute"> · {leg.agent}</span>
@@ -215,9 +220,12 @@ export default function OnsideDoubleTracker({ doubles, deliveries }: { doubles: 
       {doubles.length > 1 && (
         <div className="flex flex-col gap-2">
           <div className="px-1 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute/70">Previous doubles</div>
-          {doubles.map((d) => (
-            <DoubleRow key={d.id} dbl={d} deliveries={deliveries} active={d.id === selected?.id} onClick={() => setSelId(d.id)} nowMs={nowMs} />
-          ))}
+          {/* show ~3, scroll (invisibly) for the rest */}
+          <div className="no-scrollbar flex max-h-[13.5rem] flex-col gap-2 overflow-y-auto">
+            {doubles.map((d) => (
+              <DoubleRow key={d.id} dbl={d} deliveries={deliveries} active={d.id === selected?.id} onClick={() => setSelId(d.id)} nowMs={nowMs} />
+            ))}
+          </div>
         </div>
       )}
     </div>
