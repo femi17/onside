@@ -30,13 +30,14 @@ export type Acca = {
   tickets: AccaLeg[];
 };
 
-type Cat = "cut" | "live" | "safe" | "soon";
+type Cat = "cut" | "live" | "safe" | "soon" | "void";
 
 const GROUPS: { cat: Cat; label: string; dot: string }[] = [
   { cat: "cut", label: "Cut", dot: "bg-brick" },
   { cat: "live", label: "Live now", dot: "bg-flood" },
   { cat: "safe", label: "Safe", dot: "bg-grass" },
   { cat: "soon", label: "Upcoming", dot: "bg-ink/30" },
+  { cat: "void", label: "Void", dot: "bg-ink/25" },
 ];
 
 const MK: Record<Cat, { glyph: string; cls: string }> = {
@@ -44,14 +45,15 @@ const MK: Record<Cat, { glyph: string; cls: string }> = {
   live: { glyph: "●", cls: "bg-flood/20 text-flood-deep" },
   safe: { glyph: "✓", cls: "bg-grass/15 text-grass-deep" },
   soon: { glyph: "◷", cls: "bg-ink/[0.07] text-ink-mute" },
+  void: { glyph: "–", cls: "bg-ink/[0.07] text-ink-mute" },
 };
 
-// Only the leg that actually lost is "cut". A voided leg (the acca already died on
-// another leg) is shown by its real game state, muted — never cut, never safe.
+// Only the leg that actually lost is "cut". A voided leg doesn't count toward the acca (stake back)
+// — call it out as "void" rather than folding it back into upcoming/live.
 function legCat(leg: TrackedTicket, ms: MatchState | null): Cat {
+  if (leg.status === "void") return "void";
   if (leg.status === "lost") return "cut";
   if (leg.status === "won") return "safe";
-  if (leg.status === "void") return ms?.phase === "live" ? "live" : "soon";
   if (leg.status === "live" || ms?.phase === "live") return "live";
   if (ms?.phase === "done") return "safe";
   return "soon";
@@ -328,8 +330,8 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     router.refresh();
   }
 
-  const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0 };
-  const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], soon: [] };
+  const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0, void: 0 };
+  const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], soon: [], void: [] };
   for (const leg of legs) {
     const c = legCat(leg, stateOf(leg, nowMs));
     counts[c]++;
@@ -390,12 +392,14 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
           {counts.live > 0 && <span className="rounded-sm bg-flood" style={{ flex: counts.live }} />}
           {counts.cut > 0 && <span className="rounded-sm bg-brick" style={{ flex: counts.cut }} />}
           {counts.soon > 0 && <span className="rounded-sm bg-ink/20" style={{ flex: counts.soon }} />}
+          {counts.void > 0 && <span className="rounded-sm bg-ink/10" style={{ flex: counts.void }} />}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-4 font-mono text-[11px] text-ink-mute">
           {counts.safe > 0 && <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm bg-grass" /> {counts.safe} safe</span>}
           {counts.live > 0 && <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm bg-flood" /> {counts.live} live</span>}
           {counts.cut > 0 && <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm bg-brick" /> {counts.cut} cut</span>}
           {counts.soon > 0 && <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm bg-ink/30" /> {counts.soon} upcoming</span>}
+          {counts.void > 0 && <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-sm bg-ink/25" /> {counts.void} void</span>}
         </div>
 
         {dead && (
