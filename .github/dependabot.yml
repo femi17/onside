@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # npm packages for the Next.js app (package.json / package-lock.json)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups: # batch related bumps into one PR instead of many
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      next:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+      dev-tooling:
+        dependency-type: "development"
+
+  # GitHub Actions used by workflows (.github/workflows/*)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
