@@ -6,7 +6,7 @@ import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTr
 import { canonicalMarket } from "@/lib/betCatalog";
 
 export default async function AgentPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

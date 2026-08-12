@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import StrategyBuilder, { type LeagueOpt } from "@/components/StrategyBuilder";
 
 export default async function NewStrategyPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

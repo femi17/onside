@@ -9,7 +9,7 @@ import MobileLogo from "@/components/MobileLogo";
 // against the market. The header (LCP element) renders immediately; the heavy deliveries query
 // (up to 3000 rows) + the board stream in behind Suspense so first paint no longer waits on it.
 export default async function PerformancePage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -33,7 +33,7 @@ export default async function PerformancePage() {
 }
 
 async function PerfData() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const [{ data }, { data: events }, { data: learners }] = await Promise.all([
     supabase
       .from("deliveries")

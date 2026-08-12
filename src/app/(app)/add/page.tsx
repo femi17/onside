@@ -10,7 +10,7 @@ import StickyHeader from "@/components/StickyHeader";
 // The header (the LCP element) renders immediately off a fast auth+quota check; the heavy fixture /
 // market / coverage queries stream in behind Suspense, so first paint no longer waits on them.
 export default async function AddPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -63,7 +63,7 @@ export default async function AddPage() {
 
 // Heavy data lives here so it streams in AFTER the header has painted.
 async function AddGames({ userId }: { userId: string }) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const now = new Date().toISOString();
   // no match is live more than ~4h after kickoff; guards against any fixture stranded in a
   // live status (feed dropped it) still showing here as "live 73'"

@@ -4,8 +4,9 @@ import StrategyBuilder, { type LeagueOpt, type ExistingStrategy } from "@/compon
 
 // Edit an existing agent in the builder. Same shell as /strategies/new, but pre-filled and saving
 // in place (no new slot, no immediate run — see StrategyBuilder.save).
-export default async function EditStrategyPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+export default async function EditStrategyPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -25,7 +26,7 @@ export default async function EditStrategyPage({ params }: { params: { id: strin
       .select(
         "id, name, status, market_key, market_label, custom_market, side, line, period, bet_value, rule_text, rule_parsed, kickoff_at, league_ids, league_mode, selectivity, max_per_prediction, deliver_at, target_day, channels, learning, markets"
       )
-      .eq("id", params.id)
+      .eq("id", id)
       .eq("user_id", user.id)
       .maybeSingle(),
   ]);

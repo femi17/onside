@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import StrategiesBoard, { type StrategyCard } from "@/components/StrategiesBoard";
 
 export default async function StrategiesPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

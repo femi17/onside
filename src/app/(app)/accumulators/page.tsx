@@ -3,7 +3,7 @@ import RealtimeRefresh from "@/components/RealtimeRefresh";
 import AccumulatorsBoard, { type Acca } from "@/components/AccumulatorsBoard";
 
 export default async function AccumulatorsPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -9,7 +9,7 @@ import LeaderboardOptIn from "@/components/LeaderboardOptIn";
 // Community — built to design-reference/community.html. Real feed (Phase A+B): join with a handle,
 // post notes / attach results, like + report. Leaderboard = your own agents' value vs market.
 export default async function CommunityPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

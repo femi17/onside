@@ -20,7 +20,7 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 export default async function ProfilePage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -6,11 +6,11 @@ import { getPlanCode } from "@/lib/paystack";
 
 // Standalone checkout (outside the app shell, like /onboarding) so the "must onboard" gate never
 // bounces a paying user away. Only reachable for a valid paid plan and a signed-in account.
-export default async function CheckoutPage({ searchParams }: { searchParams: { plan?: string } }) {
-  const plan = searchParams.plan;
+export default async function CheckoutPage({ searchParams }: { searchParams: Promise<{ plan?: string }> }) {
+  const { plan } = await searchParams;
   if (!isPaidPlan(plan)) redirect("/onboarding");
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

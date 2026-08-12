@@ -7,7 +7,7 @@ import ModerationQueue, { type QueueItem } from "@/components/ModerationQueue";
 // Moderation queue — staff-only. Gated on profiles.is_admin here and again inside the
 // admin_moderation_queue / admin_moderate RPCs (defence in depth). Non-admins get a 404, not a redirect.
 export default async function ModerationPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

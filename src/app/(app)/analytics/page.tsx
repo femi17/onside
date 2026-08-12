@@ -7,7 +7,7 @@ import AdminAnalytics, { type AdminStats } from "@/components/AdminAnalytics";
 // Platform analytics — admin-only. Gated on profiles.is_admin here and again inside the
 // admin_analytics RPC (defence in depth). Non-admins get a 404, not a redirect.
 export default async function AnalyticsPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

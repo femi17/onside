@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 // token are read server-side and never exposed to the browser. Access stays until plan_until; the
 // hourly cron then drops the account to free.
 export async function POST() {
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   const claimsUpgrade = payload.upgrade === true && plan === "pro_max";
 
   // who's paying — from the auth cookie, not the request body
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

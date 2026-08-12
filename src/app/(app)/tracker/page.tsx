@@ -4,7 +4,7 @@ import RealtimeRefresh from "@/components/RealtimeRefresh";
 import TrackerBoard, { type Ticket } from "@/components/TrackerBoard";
 
 export default async function TrackerPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: tickets } = await supabase
     .from("tickets")
     .select(
