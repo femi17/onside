@@ -30,7 +30,7 @@ export default function NotificationSettings({ userId }: { userId: string }) {
       const { data } = await supabase.from("notification_prefs").select("*").eq("user_id", userId).maybeSingle();
       if (data) {
         setPrefs({
-          agent_picks: data.agent_picks, results: data.results, kickoff: data.kickoff,
+          agent_picks: data.agent_picks, agent_games: data.agent_games ?? false, results: data.results, kickoff: data.kickoff,
           full_time: data.full_time, goals: data.goals, cards: data.cards ?? false,
           build_up: data.build_up ?? false, community: data.community,
         });

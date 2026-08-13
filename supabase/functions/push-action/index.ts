@@ -10,7 +10,7 @@ const SERVICE = Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SE
 const admin = createClient(SB_URL, SERVICE);
 
 // whitelist doubles as an injection guard for the dynamic column upsert below
-const CATEGORIES = new Set(["agent_picks", "results", "kickoff", "full_time", "goals", "cards", "build_up", "community"]);
+const CATEGORIES = new Set(["agent_picks", "agent_games", "results", "kickoff", "full_time", "goals", "cards", "build_up", "community"]);
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "content-type",
