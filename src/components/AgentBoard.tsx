@@ -10,7 +10,6 @@ import { canonicalMarket } from "@/lib/betCatalog";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
-import AgentAlertsToggle from "@/components/AgentAlertsToggle";
 import OnsideDoubleTracker, { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
 import OnsideTripleTracker, { type OnsideTriple } from "@/components/OnsideTripleTracker";
 
@@ -540,35 +539,32 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col px-5 pb-10 md:px-8 lg:h-full lg:pb-0">
-      {/* fixed header; transparent at rest, frosts only when scrolled */}
-      <div className="shrink-0">
-        <StickyHeader className="-mx-5 px-5 pb-4 pt-6 md:-mx-8 md:px-8">
-          <MobileLogo />
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Everything your agents sent</p>
-              <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
-                Agent <span className="text-onpitch-mute">feed.</span>
-              </h1>
-            </div>
-            {/* new agent: compact icon on mobile, full-text button on desktop */}
-            <Link
-              href="/strategies/new"
-              aria-label="New agent"
-              title="New agent"
-              className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-flood font-bold text-ink shadow-lg transition-transform hover:-translate-y-0.5 md:h-auto md:w-auto md:px-4 md:py-3"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-5 w-5 md:hidden" aria-hidden="true">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              <span className="hidden md:inline">+ New agent</span>
-            </Link>
+      {/* fixed header — a DIRECT child of the flex-col root (no shrink-0 wrapper) so it sticks to the app
+          scroll container on mobile, like every other page. Transparent at rest, frosts on scroll. */}
+      <StickyHeader className="-mx-5 px-5 pb-4 pt-6 md:-mx-8 md:px-8">
+        <MobileLogo />
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Everything your agents sent</p>
+            <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
+              Agent <span className="text-onpitch-mute">feed.</span>
+            </h1>
           </div>
-          {/* opt-in to live/result alerts for your agents' games (the agent_games push category) */}
-          <AgentAlertsToggle userId={userId} />
-        </StickyHeader>
-      </div>
+          {/* new agent: compact icon on mobile, full-text button on desktop */}
+          <Link
+            href="/strategies/new"
+            aria-label="New agent"
+            title="New agent"
+            className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-flood font-bold text-ink shadow-lg transition-transform hover:-translate-y-0.5 md:h-auto md:w-auto md:px-4 md:py-3"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-5 w-5 md:hidden" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span className="hidden md:inline">+ New agent</span>
+          </Link>
+        </div>
+      </StickyHeader>
 
       <div className="flex min-h-0 flex-1 gap-6">
         <main className="no-scrollbar min-w-0 flex-1 lg:overflow-y-auto lg:pb-10">

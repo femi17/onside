@@ -697,7 +697,9 @@ export default function AccumulatorsBoard({ accas, plan = "free", cap = null, up
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col px-5 pb-10 md:px-8 lg:h-full lg:pb-0">
-      <div className="shrink-0">{header}</div>
+      {/* header is a DIRECT child of the flex-col root (not wrapped in a short shrink-0 div) so its
+          sticky positioning has the full page height to stick against on mobile, like every other page */}
+      {header}
 
       {/* mobile: horizontal switcher between slips */}
       <div className="no-scrollbar -mx-5 mb-4 flex shrink-0 gap-2 overflow-x-auto px-5 lg:hidden">
