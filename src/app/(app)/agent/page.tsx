@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
 import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
+import { type OnsideTriple } from "@/components/OnsideTripleTracker";
 import { canonicalMarket } from "@/lib/betCatalog";
 
 export default async function AgentPage() {
@@ -137,11 +138,49 @@ export default async function AgentPage() {
     }
   }
 
-  // realtime covers the feed's games AND the double's legs (past-day legs may be off-feed)
+  // 🎲 Onside Triple — the bolder 3-leg banker (opt-in to play), tracked day by day like the double
+  const { data: trpRows } = await supabase
+    .from("onside_triple")
+    .select("id, set_date, summary, legs, created_at")
+    .eq("user_id", user.id)
+    .order("set_date", { ascending: false })
+    .limit(14);
+  const triples = (trpRows ?? []) as unknown as OnsideTriple[];
+
+  const trpLegIds = Array.from(
+    new Set(triples.flatMap((t) => (t.legs ?? []).map((l) => l.delivery_id)).filter(Boolean))
+  );
+  const tripleDeliveries: Record<string, LegDelivery> = {};
+  if (trpLegIds.length) {
+    const { data: trpDels } = await supabase
+      .from("deliveries")
+      .select(
+        "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
+      )
+      .in("id", trpLegIds);
+    for (const r of (trpDels ?? []) as Record<string, unknown>[]) {
+      tripleDeliveries[r.id as string] = {
+        id: r.id as string,
+        market_key: (r.market_key as string) ?? null,
+        market_label: (r.market_label as string) ?? null,
+        custom_market: null,
+        line: (r.line as number) ?? null,
+        side: (r.side as string) ?? null,
+        period: (r.period as string) ?? null,
+        bet_value: (r.bet_value as string) ?? null,
+        status: (r.result as string) ?? "pending",
+        settle_score: (r.settle_score as string) ?? null,
+        current_value: (r.current_value as number) ?? null,
+        fixtures: (r.fixtures as LegDelivery["fixtures"]) ?? null,
+      };
+    }
+  }
+
+  // realtime covers the feed's games AND the double's + triple's legs (past-day legs may be off-feed)
   const liveFixtureIds = Array.from(
     new Set([
       ...fixtureIds,
-      ...Object.values(doubleDeliveries)
+      ...[...Object.values(doubleDeliveries), ...Object.values(tripleDeliveries)]
         .map((d) => (d.fixtures as { id?: number } | null)?.id)
         .filter((v): v is number => v != null),
     ])
@@ -150,7 +189,7 @@ export default async function AgentPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={liveFixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} triples={triples} tripleDeliveries={tripleDeliveries} noGamesToday={noGamesToday} />
     </>
   );
 }
