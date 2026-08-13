@@ -12,7 +12,7 @@ export const CATEGORY_DEFAULTS: Record<NotifCategory, boolean> = {
   agent_picks: false, results: true, kickoff: true, full_time: true, goals: false, cards: false, build_up: false, community: true,
 };
 export const CATEGORY_META: { key: NotifCategory; label: string; desc: string }[] = [
-  { key: "agent_picks", label: "Agent predictions", desc: "Get a push when your agent submits new picks (off by default — they always show in the app)" },
+  { key: "agent_picks", label: "Agent predictions", desc: "Alerts for your agents — new picks, and how their games go live/settle (off by default; picks always show in the app)" },
   { key: "results", label: "Results", desc: "When your picks land or miss" },
   { key: "kickoff", label: "Kick-off", desc: "When a match you're on starts" },
   { key: "full_time", label: "Full-time", desc: "When a match you're on ends" },

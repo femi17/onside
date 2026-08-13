@@ -84,7 +84,7 @@ async function sendPush(userId: string, title: string, body: string, url: string
     await fetch(`${SB_URL}/functions/v1/send-push`, {
       method: "POST",
       headers: { "content-type": "application/json", "Authorization": `Bearer ${SB_KEY}` },
-      body: JSON.stringify({ user_id: userId, title, body, url, tag, category: "agent_picks" }),
+      body: JSON.stringify({ user_id: userId, title, body, url, tag, category: "agent_picks", mute: true }),
     });
   } catch { /* non-fatal */ }
 }

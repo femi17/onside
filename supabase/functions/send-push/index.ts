@@ -85,7 +85,13 @@ Deno.serve(async (req) => {
     .from("push_subscriptions").select("endpoint, p256dh, auth").in("user_id", targets);
   if (!subs?.length) return json({ sent: 0, optedOut, note: "no subscriptions" });
 
-  const payload = JSON.stringify({ title, body: message, url, tag, icon: "/icons/icon-192.png" });
+  // opt-in "Mute" action button: a caller (e.g. agent deliveries) sets mute:true, and the SW POSTs the
+  // device's own push endpoint to push-action to turn THIS category off — no app open, no JWT needed.
+  const mute = !!body.mute && !!category;
+  const payload = JSON.stringify({
+    title, body: message, url, tag, icon: "/icons/icon-192.png",
+    ...(mute ? { actions: [{ action: "mute", title: "Mute agent alerts" }], muteUrl: `${SB_URL}/functions/v1/push-action`, muteCategory: category } : {}),
+  });
   let sent = 0, pruned = 0;
   await Promise.all(subs.map(async (s) => {
     try {
