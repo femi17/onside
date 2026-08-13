@@ -425,18 +425,45 @@ export default function ImportSlip({
       const canon = teamTotal
         ? canonicalMarket(s.market_key, s.line, s.side ?? (s.market_key === "home_goals_ou" ? "home" : "away"))
         : canonicalMarket(key0, rec?.line ?? s.line, rec?.side ?? s.side ?? null);
-      const key = canon.marketKey;
+      let key = canon.marketKey;
+      let line = canon.line;
+      let side = canon.side;
+      let period: string = teamTotal ? "ft" : rec?.period ?? "ft";
+      let label = s.market_label;
+      let value: string | null = teamTotal ? null : rec?.value ?? s.value ?? null;
+
+      // A 1st/2nd-HALF total goals over/under. parse-slip has no period field and splits the slip into a
+      // noisy label ("1st Half - Over/Under") + a value ("Over 0.5"), which defeats the recognizer and
+      // leaves a full-match over_0_5 that settles on the WHOLE game. Recover the half + line here and store
+      // the agent's canonical (total_goals_ou + period) so it grades on the right half AND collapses with
+      // an agent's identical pick instead of showing twice under two names.
+      if (!teamTotal) {
+        const txt = `${s.market_label ?? ""} ${s.value ?? ""}`.toLowerCase();
+        const half = /\b(1st|first)\s*half\b/.test(txt) ? "1h" : /\b(2nd|second)\s*half\b/.test(txt) ? "2h" : null;
+        const isGoals = !/(corner|card|book|shot|foul|offside|assist)/.test(txt);
+        const ouM = txt.match(/\b(over|under)\b\s*(\d+(?:\.5)?)/);
+        const fixed = /^(over|under)_(\d)_5$/.exec(key ?? "");
+        if (half && isGoals && (ouM || fixed || key === "total_goals_ou")) {
+          side = ouM ? (ouM[1] === "under" ? "under" : "over") : fixed ? fixed[1] : side ?? "over";
+          line = ouM ? Number(ouM[2]) : fixed ? Number(`${fixed[2]}.5`) : line;
+          key = "total_goals_ou";
+          period = half;
+          value = null;
+          label = `${half === "1h" ? "1st" : "2nd"} half — ${side === "under" ? "Under" : "Over"} ${line} goals`;
+        }
+      }
+
       rows.push({
         user_id: userId,
         accumulator_id: accumulatorId,
         fixture_id: s.fixture_id,
         market_key: key,
-        market_label: s.market_label,
-        custom_market: key === "custom" ? s.market_label : null,
-        line: canon.line,
-        side: canon.side,
-        period: teamTotal ? "ft" : rec?.period ?? "ft",
-        bet_value: teamTotal ? null : rec?.value ?? s.value ?? null,
+        market_label: label,
+        custom_market: key === "custom" ? label : null,
+        line,
+        side,
+        period,
+        bet_value: value,
         source: "screenshot",
         status: "pending",
       });

@@ -44,10 +44,20 @@ const LIVE_COMPACT_AT = 6;
 // holds in several accumulators into ONE tracker card: it's a single event that feeds them all, so N
 // identical live cards (sometimes under different labels) are noise. Fixture identity is teams+kickoff
 // because the tracked-ticket shape doesn't carry the fixture id.
+// The fixed over_X_5/under_X_5 keys, total_goals_ou, and "excluded 0 goals" are all the SAME goals-total
+// bet under different names (agent picks, slip reads, and exotic markets resolve to different keys) —
+// normalise them so they collapse together instead of stacking as duplicates.
+const marketSig = (t: Ticket) => {
+  const mk = t.market_key ?? "";
+  const o = mk.match(/^over_(\d)_5$/); if (o) return `gtot|over|${o[1]}.5`;
+  const u = mk.match(/^under_(\d)_5$/); if (u) return `gtot|under|${u[1]}.5`;
+  if (mk === "total_goals_ou" && t.line != null) return `gtot|${t.side ?? "over"}|${t.line}`;
+  return `${mk}|${t.side ?? ""}|${t.line ?? ""}|${t.bet_value ?? ""}`;
+};
 const eventKey = (t: Ticket) => {
   const f = t.fixtures;
   const game = f ? `${f.home_team}|${f.away_team}|${f.kickoff_utc}` : t.id;
-  return `${game}|${t.market_key ?? ""}|${t.side ?? ""}|${t.line ?? ""}|${t.period ?? "ft"}|${t.bet_value ?? ""}`;
+  return `${game}|${marketSig(t)}|${t.period ?? "ft"}`;
 };
 
 function League({ f }: { f: Ticket["fixtures"] }) {
