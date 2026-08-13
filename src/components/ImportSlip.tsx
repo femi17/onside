@@ -416,11 +416,15 @@ export default function ImportSlip({
           /* keep the recognizer result / custom */
         }
       }
-      const key0 = rec?.gradeable ? rec.marketKey : s.market_key === "custom" ? "custom" : s.market_key;
-      // team totals arrive from parse-slip pre-classified as home_goals_ou/away_goals_ou (the label is
-      // the team name, so recognizeBet can't re-derive them). Canonicalise so "team over 0.5" folds to
-      // "team to score" — the same outcome shouldn't land on the tracker twice under two names.
-      const canon = canonicalMarket(key0, rec?.line ?? s.line, rec?.side ?? s.side ?? null);
+      // Team totals arrive from parse-slip pre-classified as home_goals_ou/away_goals_ou with the TEAM
+      // NAME as the label. The label recognizer would read that "over 0.5" as the MATCH total and flatten
+      // it to over_0_5 — then an OPPONENT goal wrongly lands the bet. So trust parse-slip's key/side/line
+      // here and skip the recognizer override. Canonicalise so "team over 0.5" folds to "team to score".
+      const teamTotal = s.market_key === "home_goals_ou" || s.market_key === "away_goals_ou";
+      const key0 = teamTotal ? s.market_key : rec?.gradeable ? rec.marketKey : s.market_key === "custom" ? "custom" : s.market_key;
+      const canon = teamTotal
+        ? canonicalMarket(s.market_key, s.line, s.side ?? (s.market_key === "home_goals_ou" ? "home" : "away"))
+        : canonicalMarket(key0, rec?.line ?? s.line, rec?.side ?? s.side ?? null);
       const key = canon.marketKey;
       rows.push({
         user_id: userId,
@@ -431,8 +435,8 @@ export default function ImportSlip({
         custom_market: key === "custom" ? s.market_label : null,
         line: canon.line,
         side: canon.side,
-        period: rec?.period ?? "ft",
-        bet_value: rec?.value ?? s.value ?? null,
+        period: teamTotal ? "ft" : rec?.period ?? "ft",
+        bet_value: teamTotal ? null : rec?.value ?? s.value ?? null,
         source: "screenshot",
         status: "pending",
       });

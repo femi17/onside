@@ -324,6 +324,31 @@ Deno.serve(async (req) => {
           label = `${isHome ? match.home_team : match.away_team} ${ou.side} ${ou.line}`;
         }
       }
+      // Same team-total, but the model tagged it "custom" because it kept the TEAM NAME in the label
+      // (e.g. "FC RFS Over/Under" + value "Over 0.5") instead of the "Home over N" convention — so the
+      // ouParts branch above never fired. Recover it from the custom text: an Over/Under line + a named
+      // team + no corner/card/shot words = that team's GOALS total. Without this it flattens downstream
+      // to a match total and an OPPONENT goal wrongly lands it.
+      if (mk === "custom" && match) {
+        const hint = `${s.market_label ?? ""} ${s.raw_market ?? ""}`;
+        const ouM = `${hint} ${value}`.match(/\b(over|under)\b\s*(\d+(?:\.\d)?)/i);
+        const looksOU = /over\s*\/?\s*under|\btotal\b|\bo\s*\/\s*u\b/i.test(hint);
+        const isGoals = !/corner|card|book|shot|foul|offside|save|tackle|assist|pass/i.test(hint);
+        if (ouM && looksOU && isGoals) {
+          const nameToks = toks(hint);
+          const homeHit = overlap(toks(s.home), nameToks);
+          const awayHit = overlap(toks(s.away), nameToks);
+          if ((homeHit > 0 || awayHit > 0) && homeHit !== awayHit) {
+            const isHome = homeHit > awayHit;
+            const sd = ouM[1].toLowerCase() === "under" ? "under" : "over";
+            const ln = Number(ouM[2]);
+            mk = isHome ? "home_goals_ou" : "away_goals_ou";
+            side = sd;
+            outLine = ln;
+            label = `${isHome ? match.home_team : match.away_team} ${sd} ${ln}`;
+          }
+        }
+      }
       const row = {
         home: s.home, away: s.away, league: s.league,
         market_key: mk, market_label: label, value: value || null, side,
