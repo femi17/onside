@@ -9,6 +9,45 @@ import { recognizeBet, recognizedFromClassification, canonicalMarket } from "@/l
 // same normalisation parse-slip uses, so the alias we teach here matches next time
 const norm = (s: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 
+// --- loose team-name comparison, so a partial read of a game and its full read line up ---
+const legToks = (s: string) => norm(s).split(" ").filter((w) => w.length >= 3);
+const tokOverlap = (a: string, b: string) =>
+  legToks(a).some((t) => legToks(b).some((u) => u === t || u.startsWith(t) || t.startsWith(u)));
+// every real token of `part` is present in `full` (an empty/short `part` — a name the screenshot cut
+// off — counts as a subset so it can't block the match). "Ars" ⊆ "Arsenal", but "Leeds" ⊄ "Man Utd".
+const subsetOf = (part: string, full: string) => {
+  const p = legToks(part), f = legToks(full);
+  return p.every((t) => f.some((u) => u === t || u.startsWith(t) || t.startsWith(u)));
+};
+const subsetEither = (x: string, y: string) => subsetOf(x, y) || subsetOf(y, x);
+
+type MergeLeg = {
+  home: string; away: string;
+  market_key: string; market_label?: string | null;
+  value?: string | null; side?: string | null;
+  line: number | null; fixture_id: number | null;
+  confidence?: "high" | "low";
+};
+// Two legs describe the SAME bet on the SAME game — even when one was read from a screenshot that cut
+// the game off (partial name, no fixture match) and the other from a clearer shot. Match by fixture
+// when both matched, else by subset-compatible team names. This lets a fuller later read UPGRADE an
+// earlier partial one in place instead of landing as a duplicate or being skipped as "already read".
+function sameBet(a: MergeLeg, b: MergeLeg): boolean {
+  if (a.market_key !== b.market_key) return false;
+  if ((a.line ?? "") !== (b.line ?? "")) return false;
+  if ((a.side ?? "") !== (b.side ?? "")) return false;
+  // custom bets carry their meaning in the value/label, so keep two different customs on one game apart
+  if (a.market_key === "custom" && norm((a.value ?? a.market_label) ?? "") !== norm((b.value ?? b.market_label) ?? "")) return false;
+  if (a.fixture_id && b.fixture_id) return a.fixture_id === b.fixture_id;
+  // at least one leg is unmatched: same game if each side's names are subset-compatible AND at least
+  // one side really overlaps — so a bare shared word like "United" alone can't fuse two different games.
+  const homeReal = tokOverlap(a.home, b.home);
+  const awayReal = tokOverlap(a.away, b.away);
+  return subsetEither(a.home, b.home) && subsetEither(a.away, b.away) && (homeReal || awayReal);
+}
+// prefer a leg matched to a fixture, then a high-confidence read
+const legRank = (s: MergeLeg) => (s.fixture_id ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+
 // The vision API downscales any single image to ~1.15MP, so a tall stacked accumulator
 // loses per-leg resolution and the lower legs go unread. Slice a tall screenshot into
 // vertical strips (with overlap so no leg is cut in half) — parse-slip reads them as one
@@ -189,17 +228,10 @@ export default function ImportSlip({
     setFindResults(null);
   }
 
-  // a stable key so the same leg from an overlapping screenshot isn't added twice. Label + value
-  // are part of it so two DIFFERENT bets on the same game (e.g. two custom markets) both survive.
-  function keyOf(s: { home: string; away: string; market_key: string; market_label?: string | null; value?: string | null; line: number | null; fixture_id: number | null }) {
-    const who = s.fixture_id ?? `${s.home.toLowerCase().trim()}|${s.away.toLowerCase().trim()}`;
-    return `${who}|${s.market_key}|${s.line ?? ""}|${(s.value ?? "").toLowerCase().trim()}|${(s.market_label ?? "").toLowerCase().trim()}`;
-  }
-
   // one slip can span several screenshots (a long acca) AND each screenshot can be a tall
   // strip-able image — ALL of them go up and parse-slip reads them together as ONE slip
   // (one read). This is why picking 3 screenshots now returns every leg, not just the first.
-  async function readSlip(files: File[]): Promise<{ added: number; parsed: number; total: number; expected: number; error?: string }> {
+  async function readSlip(files: File[]): Promise<{ added: number; upgraded: number; parsed: number; total: number; expected: number; error?: string }> {
     try {
       const paths: string[] = [];
       for (const file of files) {
@@ -246,31 +278,34 @@ export default function ImportSlip({
         }));
       }
       let added = 0;
+      let upgraded = 0;
       let total = 0;
       setSels((prev) => {
-        const existing = prev ?? [];
-        const seen = new Set(existing.map(keyOf));
-        // Dedup BOTH against what's already on the slip AND within this same batch. Overlapping
-        // image strips (and multi-pass reads) can return the identical leg twice, so filtering
-        // only against `existing` let both copies through — each game came out duplicated. Adding
-        // each key to `seen` as we go collapses the in-batch repeats too.
-        // It's an acca — every matched leg is on by default; the user only unticks any they didn't
-        // play (unmatched legs stay off until resolved via "Find game").
-        const additions: Sel[] = [];
+        // Fold each read leg into what's already on the slip. A leg the model repeated across an image
+        // overlap (or a multi-pass read) collapses onto its twin; a FULLER read of a game we only partly
+        // caught before — unmatched now matched, or low- now high-confidence — REPLACES the earlier
+        // partial leg in place rather than being dropped as a dup or "already read". Only a genuinely new
+        // game grows the list. It's an acca, so a matched leg is on by default; the user unticks any they
+        // didn't play (unmatched legs stay off until resolved via "Find game").
+        const next = [...(prev ?? [])];
         for (const p of parsed) {
-          const k = keyOf(p);
-          if (seen.has(k)) continue;
-          seen.add(k);
-          additions.push({ ...p, on: !!p.fixture_id });
+          const cand: Sel = { ...p, on: !!p.fixture_id };
+          const i = next.findIndex((e) => sameBet(e, cand));
+          if (i === -1) { next.push(cand); added++; continue; }
+          const ex = next[i];
+          if (legRank(cand) > legRank(ex)) {
+            // an unmatched leg becoming matched is the upgrade users notice; keep their tick if set
+            if (cand.fixture_id && !ex.fixture_id) upgraded++;
+            next[i] = { ...cand, on: ex.on || !!cand.fixture_id };
+          }
+          // else the existing leg is as good or better — leave it (a plain duplicate)
         }
-        added = additions.length;
-        const next = [...existing, ...additions];
         total = next.length;
         return next;
       });
-      return { added, parsed: parsed.length, total, expected: Number(data?.expected ?? 0) || 0 };
+      return { added, upgraded, parsed: parsed.length, total, expected: Number(data?.expected ?? 0) || 0 };
     } catch (err) {
-      return { added: 0, parsed: 0, total: 0, expected: 0, error: err instanceof Error ? err.message : "read failed" };
+      return { added: 0, upgraded: 0, parsed: 0, total: 0, expected: 0, error: err instanceof Error ? err.message : "read failed" };
     }
   }
 
@@ -292,7 +327,8 @@ export default function ImportSlip({
     // report the real count of games read — no "of N" (the slip's printed fold count is unreliable,
     // it misreads a 18-leg slip as 2) and no "screenshot closer" nag.
     if (r.error || r.parsed === 0) setMsg("Failed, try again.");
-    else if (r.added === 0) setOk("✓ Already read — your games are on the slip below, ready to track.");
+    else if (r.added === 0 && r.upgraded === 0) setOk("✓ Already read — your games are on the slip below, ready to track.");
+    else if (r.added === 0) setOk(`✓ Filled in ${r.upgraded} game${r.upgraded === 1 ? "" : "s"} from a clearer read — check the slip below.`);
     else setOk(`✓ Read ${r.added} game${r.added === 1 ? "" : "s"} from your slip. Track them below.`);
   }
 

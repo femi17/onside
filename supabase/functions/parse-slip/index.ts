@@ -118,6 +118,31 @@ function tokMatch(x: string, y: string): boolean {
 }
 const overlap = (slip: string[], fx: string[]) => slip.filter((s) => fx.some((f) => tokMatch(s, f))).length;
 
+// --- same-game dedup across overlapping images ---
+// A game split across two screenshots (or read twice by the top-up passes) can come back once partial
+// (name cut off, no fixture match) and once full. tokOverlap = the two names share a real token;
+// subsetOf = every token of a (possibly cut-off) name appears in the other, so "Ars" ⊆ "Arsenal" and
+// an empty name is a subset of anything — but "Leeds" ⊄ "Man Utd", so distinct games never fuse.
+const tokOverlap = (a: string, b: string) =>
+  toks(a).some((t) => toks(b).some((u) => u === t || u.startsWith(t) || t.startsWith(u)));
+const subsetOf = (part: string, full: string) => {
+  const p = toks(part), f = toks(full);
+  return p.every((t) => f.some((u) => u === t || u.startsWith(t) || t.startsWith(u)));
+};
+const subsetEither = (x: string, y: string) => subsetOf(x, y) || subsetOf(y, x);
+// two built rows are the same bet on the same game: same market/line/side (custom keyed on its
+// value/label), then same fixture when both matched, else subset-compatible names with a real overlap.
+function sameBet(a: any, b: any): boolean {
+  if (a.market_key !== b.market_key) return false;
+  if ((a.line ?? "") !== (b.line ?? "")) return false;
+  if ((a.side ?? "") !== (b.side ?? "")) return false;
+  if (a.market_key === "custom" && norm((a.value ?? a.market_label) ?? "") !== norm((b.value ?? b.market_label) ?? "")) return false;
+  if (a.fixture_id && b.fixture_id) return a.fixture_id === b.fixture_id;
+  return subsetEither(a.home, b.home) && subsetEither(a.away, b.away) && (tokOverlap(a.home, b.home) || tokOverlap(a.away, b.away));
+}
+// prefer a leg matched to a fixture, then a high-confidence read
+const legRank = (s: any) => (s.fixture_id ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+
 // total Over/Under key -> {side, line}; null for anything else (incl. corners). Used to remap a
 // total O/U to a TEAM total when the printed market text names one of the two teams.
 function ouParts(mk: string): { side: "over" | "under"; line: number } | null {
@@ -299,7 +324,7 @@ Deno.serve(async (req) => {
           label = `${isHome ? match.home_team : match.away_team} ${ou.side} ${ou.line}`;
         }
       }
-      out.push({
+      const row = {
         home: s.home, away: s.away, league: s.league,
         market_key: mk, market_label: label, value: value || null, side,
         line: outLine,
@@ -309,7 +334,14 @@ Deno.serve(async (req) => {
         league_name: lg?.name ?? (s.league || null),
         league_flag: lg?.flag_url ?? null,
         league_tier: lg?.tier ?? null,
-      });
+      };
+      // The string dedupe above only catches identical repeats. When the same leg is read once partial
+      // (name cut off at an image edge → unmatched) and once full across overlapping screenshots, both
+      // survive that filter — so fold here: a fuller/matched read REPLACES the earlier partial one for
+      // the same game, and only a genuinely different bet is appended. One game returns once, matched.
+      const dup = out.findIndex((e) => sameBet(e, row));
+      if (dup === -1) out.push(row);
+      else if (legRank(row) > legRank(out[dup])) out[dup] = row;
     }
 
     // record the successful vision call so it counts against the daily cap (one read per slip).
