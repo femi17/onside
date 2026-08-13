@@ -19,6 +19,12 @@ updates:
           - "eslint-config-next"
       dev-tooling:
         dependency-type: "development"
+    ignore:
+      # Skip major-version jumps (Next 16, React 19, Tailwind 4, TS 7, …). Majors need a deliberate,
+      # tested upgrade — not an auto-PR that fails CI. Minor/patch bumps still flow through for
+      # routine security and maintenance. Bump a major by hand when you choose to take it on.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by workflows (.github/workflows/*)
   - package-ecosystem: "github-actions"
