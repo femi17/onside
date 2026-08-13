@@ -9,10 +9,10 @@ export const VAPID = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 // Category defaults MUST mirror send-push's CATEGORY_DEFAULT_ON so the UI and the sender agree.
 export type NotifCategory = "agent_picks" | "results" | "kickoff" | "full_time" | "goals" | "cards" | "build_up" | "community";
 export const CATEGORY_DEFAULTS: Record<NotifCategory, boolean> = {
-  agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, cards: false, build_up: false, community: true,
+  agent_picks: false, results: true, kickoff: true, full_time: true, goals: false, cards: false, build_up: false, community: true,
 };
 export const CATEGORY_META: { key: NotifCategory; label: string; desc: string }[] = [
-  { key: "agent_picks", label: "Agent predictions", desc: "When your agent submits new picks" },
+  { key: "agent_picks", label: "Agent predictions", desc: "Get a push when your agent submits new picks (off by default — they always show in the app)" },
   { key: "results", label: "Results", desc: "When your picks land or miss" },
   { key: "kickoff", label: "Kick-off", desc: "When a match you're on starts" },
   { key: "full_time", label: "Full-time", desc: "When a match you're on ends" },

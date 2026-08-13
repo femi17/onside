@@ -20,7 +20,9 @@ const admin = createClient(SB_URL, SERVICE);
 // goals + build_up are noisy so they only fire when explicitly enabled. The keys also whitelist the
 // category (SQL-injection guard for the dynamic column select below).
 const CATEGORY_DEFAULT_ON: Record<string, boolean> = {
-  agent_picks: true, results: true, kickoff: true, full_time: true, goals: false, community: true,
+  // agent_picks is OPT-IN: agent deliveries are for games the user may not be tracking, so they push
+  // only when explicitly turned on (they still appear in-app). goals/build_up/cards are opt-in for noise.
+  agent_picks: false, results: true, kickoff: true, full_time: true, goals: false, community: true,
   build_up: false, cards: false,
 };
 
