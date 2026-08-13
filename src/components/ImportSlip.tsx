@@ -27,11 +27,24 @@ type MergeLeg = {
   value?: string | null; side?: string | null;
   line: number | null; fixture_id: number | null;
   confidence?: "high" | "low";
+  matched?: string | null; // "Home v Away" once resolved to a fixture
 };
+// Every name we can compare a leg by: what the screenshot read, plus the RESOLVED fixture names when
+// it matched. So an unmatched "Man Utd" leg and a matched leg on "Manchester United" can still be seen
+// as the same game (the resolved name, not the abbreviation the screenshot showed, is what lines up).
+function nameSources(s: MergeLeg): { homes: string[]; aways: string[] } {
+  const homes = [s.home], aways = [s.away];
+  if (s.matched && s.matched.includes(" v ")) {
+    const parts = s.matched.split(" v ");
+    if (parts.length === 2) { homes.push(parts[0]); aways.push(parts[1]); }
+  }
+  return { homes: homes.filter(Boolean), aways: aways.filter(Boolean) };
+}
 // Two legs describe the SAME bet on the SAME game — even when one was read from a screenshot that cut
 // the game off (partial name, no fixture match) and the other from a clearer shot. Match by fixture
-// when both matched, else by subset-compatible team names. This lets a fuller later read UPGRADE an
-// earlier partial one in place instead of landing as a duplicate or being skipped as "already read".
+// when both matched, else by subset-compatible team names (raw read OR resolved fixture name). This
+// lets a fuller later read UPGRADE an earlier partial one in place instead of duplicating or being
+// skipped as "already read".
 function sameBet(a: MergeLeg, b: MergeLeg): boolean {
   if (a.market_key !== b.market_key) return false;
   if ((a.line ?? "") !== (b.line ?? "")) return false;
@@ -39,11 +52,27 @@ function sameBet(a: MergeLeg, b: MergeLeg): boolean {
   // custom bets carry their meaning in the value/label, so keep two different customs on one game apart
   if (a.market_key === "custom" && norm((a.value ?? a.market_label) ?? "") !== norm((b.value ?? b.market_label) ?? "")) return false;
   if (a.fixture_id && b.fixture_id) return a.fixture_id === b.fixture_id;
-  // at least one leg is unmatched: same game if each side's names are subset-compatible AND at least
-  // one side really overlaps — so a bare shared word like "United" alone can't fuse two different games.
-  const homeReal = tokOverlap(a.home, b.home);
-  const awayReal = tokOverlap(a.away, b.away);
-  return subsetEither(a.home, b.home) && subsetEither(a.away, b.away) && (homeReal || awayReal);
+  // at least one leg is unmatched: same game if some home name and some away name are subset-compatible
+  // AND at least one side really overlaps — so a bare shared word like "United" alone can't fuse two
+  // different games. Compare across raw + resolved names so an abbreviation still lines up with a match.
+  const A = nameSources(a), B = nameSources(b);
+  const anyPair = (xs: string[], ys: string[], f: (x: string, y: string) => boolean) => xs.some((x) => ys.some((y) => f(x, y)));
+  const homeOk = anyPair(A.homes, B.homes, subsetEither);
+  const awayOk = anyPair(A.aways, B.aways, subsetEither);
+  const homeReal = anyPair(A.homes, B.homes, tokOverlap);
+  const awayReal = anyPair(A.aways, B.aways, tokOverlap);
+  return homeOk && awayOk && (homeReal || awayReal);
+}
+function collapseDupes<T extends MergeLeg & { on?: boolean }>(list: T[]): T[] {
+  // Final safety net before the slip is shown: fold any remaining same-bet legs into one, keeping the
+  // better (matched / higher-confidence) read and its ticked state. Idempotent — a clean list is untouched.
+  const out: T[] = [];
+  for (const leg of list) {
+    const i = out.findIndex((e) => sameBet(e, leg));
+    if (i === -1) { out.push(leg); continue; }
+    if (legRank(leg) > legRank(out[i])) out[i] = { ...leg, on: (out[i].on || !!leg.fixture_id) } as T;
+  }
+  return out;
 }
 // prefer a leg matched to a fixture, then a high-confidence read
 const legRank = (s: MergeLeg) => (s.fixture_id ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
@@ -300,8 +329,13 @@ export default function ImportSlip({
           }
           // else the existing leg is as good or better — leave it (a plain duplicate)
         }
-        total = next.length;
-        return next;
+        // Guarantee: never show the same bet twice. The fold above dedups new-vs-existing, but a leg
+        // that only became matchable to an earlier one via its RESOLVED name is caught by this final
+        // full-list collapse. Recompute added so the success message reflects what's actually shown.
+        const deduped = collapseDupes(next);
+        added = Math.max(0, deduped.length - (prev?.length ?? 0));
+        total = deduped.length;
+        return deduped;
       });
       return { added, upgraded, parsed: parsed.length, total, expected: Number(data?.expected ?? 0) || 0 };
     } catch (err) {

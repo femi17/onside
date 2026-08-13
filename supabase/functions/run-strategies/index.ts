@@ -1629,16 +1629,26 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       ...(Object.keys(criteria).length ? { criteria } : {}),
     };
   });
-  if (rows.length) await sb.from("deliveries").insert(rows);
+  // Idempotent on (strategy_id, fixture_id): overlapping cron runs can both clear the app-side
+  // `takenAll` check and try to insert the same pick. The unique index makes the loser's rows a
+  // silent no-op instead of a duplicate delivery (one game per strategy, ever). `.select()` returns
+  // only the rows this run actually inserted, so a race-loser notifies for nothing it didn't deliver.
+  let delivered = rows;
+  if (rows.length) {
+    const { data: ins } = await sb.from("deliveries")
+      .upsert(rows, { onConflict: "strategy_id,fixture_id", ignoreDuplicates: true })
+      .select("fixture_id");
+    if (ins) { const got = new Set(ins.map((r: any) => r.fixture_id)); delivered = rows.filter((r) => got.has(r.fixture_id)); }
+  }
 
   // per-run push summary to the user's devices — one notification per run, tagged so the next run
   // replaces it rather than stacking. Independent of the agent's app/telegram channels (push is a
   // separate per-device opt-in set in Profile).
-  if (rows.length) {
+  if (delivered.length) {
     await sendPush(
       strategy.user_id,
       `🤖 ${strategy.name}`,
-      `${rows.length} new pick${rows.length === 1 ? "" : "s"} cleared your bar — tap to view.`,
+      `${delivered.length} new pick${delivered.length === 1 ? "" : "s"} cleared your bar — tap to view.`,
       "/agent",
       `agent-${strategy.id}`,
     );
@@ -1647,14 +1657,14 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // NOTE: agent picks are NOT auto-posted to the community feed (removed by request — the
   // "Publish my agents here" toggle now only feeds the aggregate leaderboard, never game lists).
 
-  if (rows.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+  if (delivered.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
     const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
     const chatId = prof?.telegram_chat_id;
     if (chatId) {
-      const { data: fx } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc, leagues(name, country, tier)").in("id", rows.map((r) => r.fixture_id));
+      const { data: fx } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc, leagues(name, country, tier)").in("id", delivered.map((r) => r.fixture_id));
       const fxMap = new Map((fx ?? []).map((g: any) => [g.id, g]));
       const rankByFx = new Map(ranked.map((r) => [r.f.id, r]));
-      const blocks = rows.map((r) => {
+      const blocks = delivered.map((r) => {
         const g: any = fxMap.get(r.fixture_id);
         const rk: any = rankByFx.get(r.fixture_id);
         const match = g ? `${g.home_team} v ${g.away_team}` : `Fixture ${r.fixture_id}`;
@@ -1672,7 +1682,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         const names = (lgs ?? []).map((l: any) => `${flagFor(l.country ?? null, l.tier ?? null)} ${l.name}`.trim()).filter(Boolean);
         if (names.length) rolledNote = `\n🎲 rolled: ${names.join(", ")}`;
       }
-      const header = `🤖 ${strategy.name} — ${rows.length} pick${rows.length === 1 ? "" : "s"}`;
+      const header = `🤖 ${strategy.name} — ${delivered.length} pick${delivered.length === 1 ? "" : "s"}`;
       const legend = `\n🟢 high · 🟡 solid · 🟠 lower confidence`;
       await sendTelegram(chatId, `${header}${rolledNote}\n\n${blocks.join("\n\n")}\n${legend}`);
     }
@@ -1688,7 +1698,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   }
 
   await sb.from("strategies").update({ last_run_at: nowIso }).eq("id", strategy.id);
-  return rows.length;
+  return delivered.length;
 }
 
 Deno.serve(async (req) => {
