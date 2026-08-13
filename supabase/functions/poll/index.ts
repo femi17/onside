@@ -293,13 +293,20 @@ function earlyResult(t: { market_key: string; side?: string | null; line?: numbe
 }
 async function updateRowsLive(table: string, rows: any[], liveFx: any, statusCol = "status"): Promise<number> {
   const hg = liveFx.goals?.home ?? 0, ag = liveFx.goals?.away ?? 0;
-  const regTime = REG_TIME.includes(liveFx.fixture?.status?.short);
+  const short = liveFx.fixture?.status?.short;
+  const regTime = REG_TIME.includes(short);
   const elapsed = liveFx.fixture?.status?.elapsed ?? null;
   let settled = 0;
   for (const t of rows) {
     if (t.market_key === "over_8_5_corners") continue;
     const value = liveValue(t.market_key, hg, ag, 0);
-    const early = regTime && t.period === "ft" ? earlyResult(t, hg, ag, elapsed) : null;
+    // Early settlement pays a DECIDED over / to-score / btts the instant it clears. A full-match bet can
+    // settle any time in regulation; a 1st-HALF bet can settle early ONLY during the 1st half, where the
+    // live score IS the 1st-half score (after that settleHalfTime finalises it at HT). Without this a
+    // "1st half over 0.5" sat live until HT while the identical full-match over paid the moment a goal went in.
+    const period = t.period ?? "ft";
+    const canEarly = period === "ft" ? regTime : period === "1h" && short === "1H";
+    const early = canEarly ? earlyResult(t, hg, ag, elapsed) : null;
     if (early) { await sb.from(table).update({ [statusCol]: early, current_value: value, settled_at: new Date().toISOString() }).eq("id", t.id); settled++; }
     else await sb.from(table).update(statusCol === "status" ? { status: "live", current_value: value } : { current_value: value }).eq("id", t.id);
   }
@@ -666,13 +673,16 @@ async function settleRows(table: string, rows: any[], facts: Facts, statusCol = 
   }
 }
 const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou"]);
-async function revertVarSettles(table: string, statusCol: string, fixtureId: number, hg: number, ag: number, regTime: boolean): Promise<number> {
+async function revertVarSettles(table: string, statusCol: string, fixtureId: number, hg: number, ag: number, regTime: boolean, short?: string): Promise<number> {
   if (!regTime) return 0;
   const { data: rows } = await sb.from(table).select("id,market_key,side,line,period").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
   const openVal = statusCol === "status" ? "live" : "pending";
   let n = 0;
   for (const r of rows ?? []) {
-    if ((r.period ?? "ft") !== "ft" || !EARLY_MARKETS.has(r.market_key)) continue;
+    // mirror the early-settle window: full-match any time in regulation, 1st-half only during the 1st half
+    const period = r.period ?? "ft";
+    const eligible = period === "ft" ? true : period === "1h" && short === "1H";
+    if (!eligible || !EARLY_MARKETS.has(r.market_key)) continue;
     if (earlyResult(r, hg, ag) === null) {
       await sb.from(table).update({ [statusCol]: openVal, current_value: hg + ag, settled_at: null }).eq("id", r.id);
       n++;
@@ -786,7 +796,8 @@ async function poll() {
     await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", id);
     updated++;
     const hg = fx.goals?.home ?? 0, ag = fx.goals?.away ?? 0, tot = hg + ag;
-    const regTime = REG_TIME.includes(fx.fixture?.status?.short);
+    const short = fx.fixture?.status?.short;
+    const regTime = REG_TIME.includes(short);
     const tickets = byFixture.get(id);
     if (tickets) settledLive += await updateRowsLive("tickets", tickets, fx);
     const apk = apByFixture.get(id);
@@ -795,9 +806,9 @@ async function poll() {
     if (dlk) settledLive += await updateRowsLive("deliveries", dlk, fx, "result");
 
     if (earlyIds.has(id) && regTime) {
-      const rv = (await revertVarSettles("tickets", "status", id, hg, ag, regTime))
-        + (await revertVarSettles("agent_picks", "status", id, hg, ag, regTime))
-        + (await revertVarSettles("deliveries", "result", id, hg, ag, regTime));
+      const rv = (await revertVarSettles("tickets", "status", id, hg, ag, regTime, short))
+        + (await revertVarSettles("agent_picks", "status", id, hg, ag, regTime, short))
+        + (await revertVarSettles("deliveries", "result", id, hg, ag, regTime, short));
       reverted += rv;
     }
 
