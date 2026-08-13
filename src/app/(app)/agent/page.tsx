@@ -91,6 +91,12 @@ export default async function AgentPage() {
     .filter((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat && !deliveredTodayNames.has(s.name as string))
     .map((s) => ({ id: s.id as string, agent_name: (s.name as string) ?? "Agent", ran_at: s.last_run_at as string }));
 
+  // no banker double is built on a day with no fixtures — surface that in the tracker instead of
+  // leaving an older day's card at the top. "No games today" = agents ran today (WAT) yet delivered
+  // nothing today, so no game could feed the double.
+  const anyRanToday = (runningStrategies ?? []).some((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat);
+  const noGamesToday = anyRanToday && deliveredTodayNames.size === 0;
+
   // 🎯 Onside Double — the daily 2-leg banker, tracked day by day in the feed's sidebar
   const { data: dblRows } = await supabase
     .from("onside_double")
@@ -144,7 +150,7 @@ export default async function AgentPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={liveFixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} />
     </>
   );
 }

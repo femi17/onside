@@ -196,18 +196,34 @@ function DoubleRow({ dbl, deliveries, active, onClick, nowMs }: { dbl: OnsideDou
 
 // Embeddable Onside Double tracker: today's cream banker card + a switchable history of previous
 // days' doubles. Used inside the agent feed (right sidebar on desktop, top block on mobile).
-export default function OnsideDoubleTracker({ doubles, deliveries }: { doubles: OnsideDouble[]; deliveries: Record<string, LegDelivery> }) {
+// `noGamesToday`: the agents have run for the day but cleared no fixtures, so no double could form —
+// say so, instead of silently leaving an older day's card sitting at the top as if it were current.
+export default function OnsideDoubleTracker({ doubles, deliveries, noGamesToday = false }: { doubles: OnsideDouble[]; deliveries: Record<string, LegDelivery>; noGamesToday?: boolean }) {
   const nowMs = useMinuteTick();
   const [selId, setSelId] = useState<string | null>(doubles[0]?.id ?? null);
   const selected = doubles.find((d) => d.id === selId) ?? doubles[0] ?? null;
+
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+  const hasToday = doubles.some((d) => d.set_date === today);
+  const showNoGames = noGamesToday && !hasToday;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="px-1 font-mono text-[10.5px] uppercase tracking-[0.2em] text-onpitch-mute">🎯 Onside Double</div>
 
+      {showNoGames && (
+        <div className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-4 text-center">
+          <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-ink/[0.06] text-lg text-onpitch-mute">◷</div>
+          <p className="text-[13px] font-bold text-chalk">No games today</p>
+          <p className="mt-1 text-[11.5px] leading-snug text-onpitch-mute">
+            Your agents ran but no fixtures cleared — so there&apos;s no banker double today.
+          </p>
+        </div>
+      )}
+
       {selected ? (
         <DoubleCard dbl={selected} deliveries={deliveries} nowMs={nowMs} />
-      ) : (
+      ) : showNoGames ? null : (
         <div className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-5 text-center">
           <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-flood/15 text-lg">🎯</div>
           <p className="text-[13px] font-bold text-chalk">No banker double yet</p>

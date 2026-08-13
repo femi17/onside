@@ -10,6 +10,7 @@ import { canonicalMarket } from "@/lib/betCatalog";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
+import AgentAlertsToggle from "@/components/AgentAlertsToggle";
 import OnsideDoubleTracker, { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
 
 type TeamForm5 = { w: number; d: number; l: number; gf: number; ga: number; n: number };
@@ -405,7 +406,7 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {} }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery> }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
@@ -563,6 +564,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               <span className="hidden md:inline">+ New agent</span>
             </Link>
           </div>
+          {/* opt-in to live/result alerts for your agents' games (the agent_games push category) */}
+          <AgentAlertsToggle userId={userId} />
         </StickyHeader>
       </div>
 
@@ -649,7 +652,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         {/* fixed sidebar (right) — your banker double, tracked day by day (cream card) */}
         <aside className="hidden w-[320px] shrink-0 flex-col lg:flex">
           <div className="no-scrollbar flex-1 overflow-y-auto pb-10">
-            <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} />
+            <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} noGamesToday={noGamesToday} />
           </div>
         </aside>
       </div>
@@ -695,7 +698,7 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                 <button onClick={() => setDoubleOpen(false)} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg bg-white/5 font-mono text-lg text-onpitch-mute transition-colors hover:text-chalk">×</button>
               </div>
               <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto pb-1">
-                <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} />
+                <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} noGamesToday={noGamesToday} />
               </div>
             </div>
           </div>
