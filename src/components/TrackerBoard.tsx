@@ -40,6 +40,16 @@ export type Ticket = TrackedTicket;
 // so we switch live to a tighter, glanceable layout.
 const LIVE_COMPACT_AT = 6;
 
+// Same underlying bet — same game, market, side, line, period, value. Used to collapse a bet the user
+// holds in several accumulators into ONE tracker card: it's a single event that feeds them all, so N
+// identical live cards (sometimes under different labels) are noise. Fixture identity is teams+kickoff
+// because the tracked-ticket shape doesn't carry the fixture id.
+const eventKey = (t: Ticket) => {
+  const f = t.fixtures;
+  const game = f ? `${f.home_team}|${f.away_team}|${f.kickoff_utc}` : t.id;
+  return `${game}|${t.market_key ?? ""}|${t.side ?? ""}|${t.line ?? ""}|${t.period ?? "ft"}|${t.bet_value ?? ""}`;
+};
+
 function League({ f }: { f: Ticket["fixtures"] }) {
   const lg = f?.leagues;
   return (
@@ -313,6 +323,7 @@ function Card({
   onSettle,
   onRemove,
   nowMs,
+  accas = 1,
 }: {
   t: Ticket;
   compact?: boolean;
@@ -320,6 +331,7 @@ function Card({
   onSettle: (id: string, result: "won" | "lost" | "void", score?: string) => void;
   onRemove: (id: string) => void;
   nowMs?: number;
+  accas?: number; // how many accumulators this one event feeds (>1 → collapsed card)
 }) {
   const f = t.fixtures;
   const ms = stateOf(t, nowMs);
@@ -535,6 +547,11 @@ function Card({
         </div>
         <div className="mt-1 flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{shownMarket}</span>
+          {accas > 1 && (
+            <span className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-flood-deep" title={`One bet — feeds ${accas} accumulators`}>
+              {accas} accas
+            </span>
+          )}
           {yesNoPick && (
             <span
               className={`flex-none rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${
@@ -700,7 +717,14 @@ function Card({
       <div className="mt-3 min-w-0 text-xl">
         <Teams f={f} size="lg" />
       </div>
-      <div className="mt-0.5 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{marketName}</div>
+      <div className="mt-0.5 flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{marketName}</span>
+        {accas > 1 && (
+          <span className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-flood-deep" title={`One bet — feeds ${accas} accumulators`}>
+            {accas} accas
+          </span>
+        )}
+      </div>
       <div className="mt-4 flex items-end justify-between gap-3">
         <div className="font-mono text-4xl font-bold leading-none tracking-tight text-ink-mute">—</div>
         <div className={`text-right text-[11px] leading-snug ${awaitingFeed ? "text-flood-deep" : "text-ink-mute"}`}>
@@ -754,12 +778,22 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   const supabase = createClient();
   const confirm = useConfirm();
 
+  // all tickets that are the SAME bet as `id` (the collapsed card may stand for the same leg held in
+  // several accas). A card's actions must touch every one of them, not just the representative row.
+  const siblingTickets = (id: string) => {
+    const self = tickets.find((x) => x.id === id);
+    if (!self) return [] as Ticket[];
+    const k = eventKey(self);
+    return tickets.filter((x) => eventKey(x) === k);
+  };
+
   // Settle once, everywhere: a final SCORE grades every bet on the fixture (tracker + acca + agent
   // pick) by its own market; a VOID voids them all. A direct Landed/Missed with no score (a non-score
-  // market) settles just this bet.
+  // market) settles this bet in every acca it feeds.
   async function manualSettle(id: string, result: "won" | "lost" | "void", score?: string) {
     const bet = tickets.find((t) => t.id === id);
     const fixtureId = (bet?.fixtures as { id?: number } | null | undefined)?.id;
+    const ids = siblingTickets(id).map((x) => x.id);
     setBusyId(id);
     try {
       if (result === "void" && fixtureId) {
@@ -767,9 +801,9 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
       } else if (score && fixtureId) {
         const [h, a] = score.split("-").map(Number);
         if (Number.isFinite(h) && Number.isFinite(a)) await settleFixtureByScore(supabase, fixtureId, h, a);
-        else await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+        else await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).in("id", ids.length ? ids : [id]);
       } else {
-        await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).eq("id", id);
+        await supabase.from("tickets").update({ status: result, settled_at: new Date().toISOString() }).in("id", ids.length ? ids : [id]);
       }
     } finally {
       setBusyId(null);
@@ -778,18 +812,22 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   }
 
   async function remove(id: string) {
-    // an acca leg is part of a slip — removing it from the tracker must NOT delete it from the
-    // accumulator, so we just hide it here; a standalone bet is deleted outright
-    const leg = tickets.find((x) => x.id === id);
-    const isAccaLeg = !!leg?.accumulator_id;
-    const ok = isAccaLeg
-      ? await confirm({ title: "Hide this leg?", body: "It stays part of your accumulator — this only hides it from your tracker.", confirmLabel: "Hide" })
+    // A collapsed card can stand for the same bet in several accumulators — remove hides/deletes ALL of
+    // them. Acca legs are only hidden (removing from the tracker must NOT delete them from a slip); a
+    // standalone bet is deleted outright.
+    const grp = siblingTickets(id);
+    const legs = grp.length ? grp : tickets.filter((x) => x.id === id);
+    const accaIds = legs.filter((x) => x.accumulator_id).map((x) => x.id);
+    const soloIds = legs.filter((x) => !x.accumulator_id).map((x) => x.id);
+    const nAcca = new Set(legs.filter((x) => x.accumulator_id).map((x) => x.accumulator_id)).size;
+    const ok = accaIds.length
+      ? await confirm({ title: "Hide this leg?", body: nAcca > 1 ? `It stays part of your ${nAcca} accumulators — this only hides it from your tracker.` : "It stays part of your accumulator — this only hides it from your tracker.", confirmLabel: "Hide" })
       : await confirm({ title: "Remove this bet?", body: "This removes the bet from your tracker.", confirmLabel: "Remove", tone: "danger" });
     if (!ok) return;
     setBusyId(id);
-    const { error } = isAccaLeg
-      ? await supabase.from("tickets").update({ tracker_hidden: true }).eq("id", id)
-      : await supabase.from("tickets").delete().eq("id", id);
+    let error = null as { message: string } | null;
+    if (accaIds.length) ({ error } = await supabase.from("tickets").update({ tracker_hidden: true }).in("id", accaIds));
+    if (!error && soloIds.length) ({ error } = await supabase.from("tickets").delete().in("id", soloIds));
     setBusyId(null);
     if (!error) router.refresh();
   }
@@ -836,15 +874,38 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
     return g;
   }, [tickets, since]);
 
-  const landed = useMemo(() => grouped.settled.filter((t) => t.status === "won"), [grouped]);
-  const missed = useMemo(() => grouped.settled.filter((t) => t.status === "lost"), [grouped]);
+  // Collapse the same bet held across several accumulators into ONE representative card per section,
+  // and remember how many accas each one feeds (for the badge). This is what turns "2 identical live
+  // games under different names" into a single card. Order is preserved from `grouped` (already sorted).
+  const { view, accaCountById } = useMemo(() => {
+    const accaCount = new Map<string, number>();
+    const dedupe = (list: Ticket[]) => {
+      const rep = new Map<string, Ticket>();
+      const accas = new Map<string, Set<string>>();
+      for (const t of list) {
+        const k = eventKey(t);
+        if (!rep.has(k)) { rep.set(k, t); accas.set(k, new Set<string>()); }
+        if (t.accumulator_id) accas.get(k)!.add(t.accumulator_id);
+      }
+      const out: Ticket[] = [];
+      for (const [k, t] of rep) { out.push(t); accaCount.set(t.id, accas.get(k)!.size); }
+      return out;
+    };
+    return {
+      view: { live: dedupe(grouped.live), upcoming: dedupe(grouped.upcoming), settled: dedupe(grouped.settled) },
+      accaCountById: accaCount,
+    };
+  }, [grouped]);
 
-  const compactLive = grouped.live.length > LIVE_COMPACT_AT;
+  const landed = useMemo(() => view.settled.filter((t) => t.status === "won"), [view]);
+  const missed = useMemo(() => view.settled.filter((t) => t.status === "lost"), [view]);
+
+  const compactLive = view.live.length > LIVE_COMPACT_AT;
 
   const counts = {
-    all: grouped.live.length + grouped.upcoming.length + grouped.settled.length,
-    live: grouped.live.length,
-    upcoming: grouped.upcoming.length,
+    all: view.live.length + view.upcoming.length + view.settled.length,
+    live: view.live.length,
+    upcoming: view.upcoming.length,
     landed: landed.length,
     missed: missed.length,
   };
@@ -876,9 +937,9 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
   }, [flash]);
 
   const allView = filter === "all";
-  const sections: Group[] = (["live", "upcoming", "settled"] as Group[]).filter((s) => grouped[s].length);
+  const sections: Group[] = (["live", "upcoming", "settled"] as Group[]).filter((s) => view[s].length);
   const filteredList =
-    filter === "live" ? grouped.live : filter === "upcoming" ? grouped.upcoming : filter === "landed" ? landed : filter === "missed" ? missed : [];
+    filter === "live" ? view.live : filter === "upcoming" ? view.upcoming : filter === "landed" ? landed : filter === "missed" ? missed : [];
 
   return (
     <div>
@@ -964,11 +1025,11 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
                 <div className="mb-3 flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-sm ${SECTION[s].dot} ${s === "live" ? "animate-pulse motion-reduce:animate-none" : ""}`} />
                   <h2 className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-onpitch">{SECTION[s].label}</h2>
-                  <span className="font-mono text-[11px] text-onpitch-mute">· {grouped[s].length}</span>
+                  <span className="font-mono text-[11px] text-onpitch-mute">· {view[s].length}</span>
                 </div>
                 <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {grouped[s].map((t) => (
-                    <Card key={t.id} t={t} compact={s === "live" && compactLive} busy={busyId === t.id} onSettle={manualSettle} onRemove={remove} nowMs={nowMs} />
+                  {view[s].map((t) => (
+                    <Card key={t.id} t={t} compact={s === "live" && compactLive} busy={busyId === t.id} onSettle={manualSettle} onRemove={remove} nowMs={nowMs} accas={accaCountById.get(t.id) ?? 1} />
                   ))}
                 </div>
               </section>
@@ -981,7 +1042,7 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
         ) : (
           <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {filteredList.map((t) => (
-              <Card key={t.id} t={t} compact={filter === "live" && compactLive} busy={busyId === t.id} onSettle={manualSettle} onRemove={remove} nowMs={nowMs} />
+              <Card key={t.id} t={t} compact={filter === "live" && compactLive} busy={busyId === t.id} onSettle={manualSettle} onRemove={remove} nowMs={nowMs} accas={accaCountById.get(t.id) ?? 1} />
             ))}
           </div>
         )}
