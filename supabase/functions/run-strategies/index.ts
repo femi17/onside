@@ -142,6 +142,9 @@ function isDue(s: any, now: Date): boolean {
   const dow = tzDow(tz);
   if (target === "saturday" && dow !== 6) return false;
   if (target === "sunday" && dow !== 0) return false;
+  // "This weekend" runs ONLY on the weekend (Sat/Sun) — each day delivers that day's slate. Without
+  // this gate it ran every day and pushed the weekend's fixtures out on weekdays (defeating the point).
+  if (target === "weekend" && dow !== 6 && dow !== 0) return false;
   const nowTime = now.toLocaleTimeString("en-GB", { timeZone: tz, hour12: false });
   if (nowTime < String(s.deliver_at).slice(0, 8)) return false;
   if (s.last_run_at && tzDay(s.last_run_at, tz) === now.toLocaleDateString("en-CA", { timeZone: tz })) return false;
@@ -1543,13 +1546,8 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     if (delta === 0) { fromIso = nowIso; toIso = tzEndOfTodayISO(tz); }
     else { const [s, e] = tzDayBoundsISO(tz, delta); fromIso = s; toIso = e; }
   }
-  else if (target === "weekend") {
-    const wd = tzDow(tz);
-    const daysToSat = wd === 0 ? -1 : 6 - wd;
-    const [satStart] = tzDayBoundsISO(tz, daysToSat);
-    const [, sunEnd] = tzDayBoundsISO(tz, daysToSat + 1);
-    fromIso = satStart > nowIso ? satStart : nowIso; toIso = sunEnd;
-  }
+  // "weekend" only runs on Sat/Sun now (isDue), so each day delivers THAT day's games — the default
+  // today window (fromIso=now, toIso=end of today) is exactly right, no special case needed.
   else if (target === "future") { const [, e] = tzDayBoundsISO(tz, 3); fromIso = nowIso; toIso = e; }
 
   // Resolve leagues for THIS run (surprise re-rolls fresh from the window above).
