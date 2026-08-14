@@ -11,7 +11,6 @@ import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 import OnsideDoubleTracker, { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
-import OnsideTripleTracker, { type OnsideTriple } from "@/components/OnsideTripleTracker";
 
 type TeamForm5 = { w: number; d: number; l: number; gf: number; ga: number; n: number };
 export type PickReasons = {
@@ -406,7 +405,7 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, triples = [], tripleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; triples?: OnsideTriple[]; tripleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
@@ -646,11 +645,10 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
       )}
         </main>
 
-        {/* fixed sidebar (right) — your banker slips: the safe double + the bolder, opt-in triple */}
+        {/* fixed sidebar (right) — the banker slip: the safe Onside Double */}
         <aside className="hidden w-[320px] shrink-0 flex-col lg:flex">
           <div className="no-scrollbar flex flex-1 flex-col gap-6 overflow-y-auto pb-10">
             <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} noGamesToday={noGamesToday} />
-            <OnsideTripleTracker triples={triples} deliveries={tripleDeliveries} userId={userId} noGamesToday={noGamesToday} />
           </div>
         </aside>
       </div>
@@ -681,23 +679,22 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
       <div className="lg:hidden">
         <button
           onClick={() => setDoubleOpen(true)}
-          aria-label="Onside banker slips"
-          title="Onside banker slips — double & triple"
+          aria-label="Onside Double"
+          title="Onside Double — today's banker slip"
           className="fixed bottom-[calc(84px+env(safe-area-inset-bottom))] left-5 z-40 grid h-12 w-12 place-items-center rounded-full border border-white/10 bg-pitch/90 text-xl shadow-lg backdrop-blur transition-transform active:scale-95"
         >
           🎯
-          {(doubles.length > 0 || triples.length > 0) && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-flood ring-2 ring-pitch" />}
+          {doubles.length > 0 && <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-flood ring-2 ring-pitch" />}
         </button>
         {doubleOpen && (
           <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
             <div onClick={() => setDoubleOpen(false)} className="absolute inset-0 bg-ink/60" />
-            <div role="dialog" aria-modal="true" aria-label="Onside banker slips" className="relative flex max-h-[82vh] w-full max-w-md flex-col rounded-t-2xl bg-pitch p-4 shadow-2xl sm:rounded-2xl">
+            <div role="dialog" aria-modal="true" aria-label="Onside Double" className="relative flex max-h-[82vh] w-full max-w-md flex-col rounded-t-2xl bg-pitch p-4 shadow-2xl sm:rounded-2xl">
               <div className="mb-1 flex flex-none justify-end">
                 <button onClick={() => setDoubleOpen(false)} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-lg bg-white/5 font-mono text-lg text-onpitch-mute transition-colors hover:text-chalk">×</button>
               </div>
               <div className="no-scrollbar flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pb-1">
                 <OnsideDoubleTracker doubles={doubles} deliveries={doubleDeliveries} noGamesToday={noGamesToday} />
-                <OnsideTripleTracker triples={triples} deliveries={tripleDeliveries} userId={userId} noGamesToday={noGamesToday} />
               </div>
             </div>
           </div>
