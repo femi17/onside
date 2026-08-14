@@ -381,9 +381,12 @@ export default function StrategyBuilder({
     if (remoteLeagues) base = remoteLeagues;                       // DB search across ALL leagues
     else if (windowLeagues) base = t ? windowLeagues.filter((l) => `${l.name} ${l.country ?? ""}`.toLowerCase().includes(t)) : windowLeagues; // every in-window league
     else base = t ? leagues.filter((l) => `${l.name} ${l.country ?? ""}`.toLowerCase().includes(t)) : leagues; // preloaded fallback until the window loads
-    // scope to leagues that play in the target window, and never show an already-picked league here —
-    // those live in the pinned "Selected" list so they're always removable
-    const scoped = activeLeagueIds ? base.filter((l) => activeLeagueIds.has(l.id)) : base;
+    // scope to leagues that play in the target window ONLY while browsing (no search term). While
+    // searching, surface every matching league even if it doesn't play in this day's window — so you
+    // can add a competition ahead of time (e.g. one that resumes next week) without having to come
+    // back and edit the agent once it's in season. Never show an already-picked league here — those
+    // live in the pinned "Selected" list so they're always removable.
+    const scoped = (activeLeagueIds && !t) ? base.filter((l) => activeLeagueIds.has(l.id)) : base;
     return scoped.filter((l) => !picked.has(l.id));
   }, [leagues, remoteLeagues, windowLeagues, lgSearch, activeLeagueIds, picked]);
 
@@ -1216,7 +1219,9 @@ export default function StrategyBuilder({
               ))}
             </div>
             <p className="mb-3 text-[12px] leading-snug text-ink-mute">
-              Showing leagues that play {TARGETS.find((t) => t.k === target)?.h}. Your agent hunts this window at each delivery.
+              {lgSearch.trim()
+                ? <>Searching all competitions — you can add one that doesn&apos;t play {TARGETS.find((t) => t.k === target)?.h} yet, so you don&apos;t have to edit the agent when it comes into season.</>
+                : <>Showing leagues that play {TARGETS.find((t) => t.k === target)?.h}. Your agent hunts this window at each delivery.</>}
             </p>
 
             {/* optional kickoff pin — only games starting at exactly this local time */}
@@ -1298,7 +1303,7 @@ export default function StrategyBuilder({
             <div className="no-scrollbar flex max-h-[280px] flex-col gap-1 overflow-y-auto">
               {activeLeagueIds && filteredLeagues.length === 0 && (
                 <p className="px-1 py-3 font-mono text-[11px] text-ink-mute">
-                  {lgSearch.trim() ? "No matching leagues play in this window." : picked.size ? "Every in-window league is already selected." : "No games loaded for this window yet — fixtures usually appear a few days out. Try Same day / Tomorrow, or check back closer to the weekend."}
+                  {lgSearch.trim() ? "No leagues match your search." : picked.size ? "Every in-window league is already selected." : "No games loaded for this window yet — fixtures usually appear a few days out. Try Same day / Tomorrow, or check back closer to the weekend."}
                 </p>
               )}
               {filteredLeagues.slice(0, visibleCount).map((l) => {
