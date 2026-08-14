@@ -33,6 +33,9 @@ export type AgentPick = TrackedTicket & {
   market_prob?: number | null;
   tier?: string | null;
   reasons?: PickReasons | null;
+  // the Onside score — the same ranking build_onside_double uses (bookies' % + market-type
+  // adjustment + agent-record nudge), computed at read time; null = no odds to score against
+  onside_score?: number | null;
 };
 
 // "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
@@ -146,6 +149,12 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
     }
   } else if (!r) {
     body.push(`No odds were available for this game, so the agent went on its model and your rules alone. Treat this one as lower confidence.`);
+  }
+
+  if (p.onside_score != null) {
+    body.push(
+      `Onside score: ⚡${p.onside_score.toFixed(1)} — the same day-ranking the Onside Double picks from (bookies' probability, plus a small bonus for scoring markets and this agent's track record).${p.onside_score >= 87 ? " That puts it in the elite band — historically about 9 in 10 of these land." : ""}`,
+    );
   }
 
   // Confidence tail is graded per pick — no boilerplate; each tier says what THIS grade means,
@@ -317,6 +326,18 @@ function Item({
               <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
                 {market}<b className="hidden text-flood-deep md:inline"> · {p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
               </span>
+              {/* Onside score — the Double's own ranking, on every priced pick. ≥87 = the elite
+                  band (historically ~9-in-10), so it gets the loud treatment. */}
+              {p.onside_score != null && (
+                <span
+                  title="Onside score — how this pick ranks on the same scale the Onside Double picks from (bookies' odds + market type + agent record)"
+                  className={`flex-none rounded px-1.5 py-0.5 font-mono text-[9.5px] font-bold tabular-nums ${
+                    p.onside_score >= 87 ? "bg-flood/25 text-flood-deep" : "bg-ink/[0.06] text-ink-mute"
+                  }`}
+                >
+                  ⚡{p.onside_score.toFixed(1)}
+                </span>
+              )}
               <button
                 onClick={onExplain}
                 aria-label="Why the agent picked this"

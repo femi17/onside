@@ -15,10 +15,23 @@ export default async function AgentPage() {
   const { data } = await supabase
     .from("deliveries")
     .select(
-      "id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
+      "id, strategy_id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
     )
     .order("delivered_at", { ascending: false })
     .limit(200);
+
+  // Onside score — the SAME ranking build_onside_double uses, computed per pick at read time:
+  // bookies' de-vigged % (+2 scoring market / −5 result market) + the agent's track-record nudge.
+  // Odds-less picks (market_prob null) can't be scored on this axis and show unscored.
+  const { data: aqRows } = await supabase.from("my_agent_quality").select("strategy_id, shrunk_rate");
+  const shrunkBy = new Map((aqRows ?? []).map((r) => [r.strategy_id as string, Number(r.shrunk_rate ?? 0.5)]));
+  const RESULT_MARKETS = new Set(["home_win", "away_win", "draw", "double_chance_1x", "double_chance_x2", "double_chance_12"]);
+  const onsideScore = (r: Record<string, unknown>): number | null => {
+    if (r.market_prob == null) return null;
+    const adj = RESULT_MARKETS.has((r.market_key as string) ?? "") ? -0.05 : 0.02;
+    const nudge = ((shrunkBy.get(r.strategy_id as string) ?? 0.5) - 0.5) * 0.2;
+    return Math.round((Number(r.market_prob) + adj + nudge) * 1000) / 10;
+  };
 
   const picks: AgentPick[] = (data ?? []).map((r: Record<string, unknown>) => ({
     id: r.id as string,
@@ -42,6 +55,7 @@ export default async function AgentPage() {
     tier: (r.tier as string) ?? null,
     reasons: ((r.criteria as { reasons?: unknown } | null)?.reasons as AgentPick["reasons"]) ?? null,
     delivered_at: (r.delivered_at as string) ?? null,
+    onside_score: onsideScore(r),
   }));
 
   // scope the live feed to just the games in the feed (see RealtimeRefresh)
