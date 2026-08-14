@@ -476,17 +476,31 @@ export default function ImportSlip({
     const { data: existing } = await supabase
       .from("tickets").select("id, fixture_id, market_key, side, accumulator_id")
       .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds);
-    const byKey = new Map((existing ?? []).map((r) => [dk(r.fixture_id as number, r.market_key as string, r.side as string), r]));
+    // group existing tracked bets by fixture+market+side — the SAME bet can have several rows, one per
+    // acca it belongs to (that's allowed: a game can be a leg in more than one accumulator)
+    const existingByKey = new Map<string, { id: string; accumulator_id: string | null }[]>();
+    for (const e of existing ?? []) {
+      const k = dk(e.fixture_id as number, e.market_key as string, e.side as string);
+      const arr = existingByKey.get(k) ?? [];
+      arr.push({ id: e.id as string, accumulator_id: (e.accumulator_id as string | null) ?? null });
+      existingByKey.set(k, arr);
+    }
     const toInsert: typeof rows = [];
     const absorb: string[] = [];
     for (const r of rows) {
-      const hit = byKey.get(dk(r.fixture_id, r.market_key, r.side));
-      if (hit) {
-        // already on the tracker — pull the standalone bet into this acca rather than duplicating it
-        if (accumulatorId && hit.accumulator_id == null) absorb.push(hit.id as string);
-        continue;
+      const matches = existingByKey.get(dk(r.fixture_id, r.market_key, r.side)) ?? [];
+      if (accumulatorId) {
+        // a copy already living in ANOTHER acca must NOT block this leg — the same bet can be in
+        // multiple accas, so add a fresh leg here. Only fold a LOOSE standalone tracker single into
+        // this acca (so the one you're now accumulating isn't left duplicated as a lone card).
+        const loose = matches.find((m) => m.accumulator_id == null);
+        if (loose) { absorb.push(loose.id); continue; }
+        toInsert.push(r);
+      } else {
+        // a standalone single (no acca): don't spawn a duplicate tracker card if it's already tracked
+        if (matches.length) continue;
+        toInsert.push(r);
       }
-      toInsert.push(r);
     }
     // If we created an accumulator but every leg already belongs to ANOTHER accumulator, nothing
     // attaches to the new one — delete it rather than leaving an empty acca (its card shows no games).
