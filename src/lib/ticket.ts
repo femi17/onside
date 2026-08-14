@@ -632,15 +632,14 @@ export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | nu
     // ---- exact / range / excluded goal counts — graded on the right team's goals (goals only rise) ----
     case "exact_goals": {
       const line = t.line ?? 0;
-      return tot > line ? "red" : "yellow"; // busted once overshot; fragile-but-alive until then
+      return tot === line ? "green" : "red"; // green only while the total is exactly the mark, else losing now
     }
     case "goal_range": case "home_goal_range": case "away_goal_range": {
       const band = parseGoalBand(t.bet_value); if (!band) return "yellow";
       const [lo, hi] = band;
       const n = mk === "home_goal_range" || t.side === "home" ? hg : mk === "away_goal_range" || t.side === "away" ? ag : tot;
-      if (n > hi) return "red";                                    // climbed past the range — can't come back
-      if (n >= lo) return hi === Infinity ? "green" : n === hi ? "yellow" : "green"; // inside; top edge is fragile
-      return lo - n === 1 ? "yellow" : "red";                      // below the range, still climbing toward it
+      // current standing: green while the count is inside the range (winning now), red otherwise
+      return n >= lo && n <= hi ? "green" : "red";
     }
     case "excluded_goals": case "excluded_home_goals": case "excluded_away_goals": {
       const band = parseGoalBand(t.bet_value); if (!band) return "yellow";
