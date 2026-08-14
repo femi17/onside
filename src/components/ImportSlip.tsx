@@ -488,16 +488,31 @@ export default function ImportSlip({
       }
       toInsert.push(r);
     }
+    // If we created an accumulator but every leg already belongs to ANOTHER accumulator, nothing
+    // attaches to the new one — delete it rather than leaving an empty acca (its card shows no games).
+    const attached = toInsert.length + absorb.length;
+    if (accumulatorId && attached === 0) {
+      await supabase.from("accumulators").delete().eq("id", accumulatorId);
+      setBusy(null);
+      setMsg("Those games are already in an accumulator — nothing new to track.");
+      return;
+    }
     let error: { message: string } | null = null;
     if (toInsert.length) ({ error } = await supabase.from("tickets").insert(toInsert));
     if (!error && absorb.length && accumulatorId) ({ error } = await supabase.from("tickets").update({ accumulator_id: accumulatorId }).in("id", absorb));
+    // some legs may have been skipped (already in another acca) — keep leg_count truthful so the card
+    // and the "N/M legs" readouts match what actually attached
+    if (!error && accumulatorId && attached !== chosen.length) {
+      await supabase.from("accumulators").update({ leg_count: attached }).eq("id", accumulatorId);
+    }
     setBusy(null);
     if (error) {
       setMsg(error.message);
       return;
     }
     // show a clear success, then take them to what they just created
-    setOk(`✓ Tracked ${chosen.length} game${chosen.length === 1 ? "" : "s"}${accumulatorId ? " as an accumulator" : ""}.`);
+    const trackedN = accumulatorId ? attached : chosen.length;
+    setOk(`✓ Tracked ${trackedN} game${trackedN === 1 ? "" : "s"}${accumulatorId ? " as an accumulator" : ""}.`);
     setTimeout(() => {
       setOpen(false);
       reset();
