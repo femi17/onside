@@ -646,11 +646,10 @@ export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | nu
       const band = parseGoalBand(t.bet_value); if (!band) return "yellow";
       const [lo, hi] = band;
       const n = mk === "excluded_home_goals" ? hg : mk === "excluded_away_goals" ? ag : tot;
-      // the bet LOSES only if the final count lands in the band; goals only rise
-      if (hi === Infinity) return n >= lo ? "red" : n === lo - 1 ? "yellow" : "green"; // "N+" excluded
-      if (n > hi) return "green";                                  // escaped above the band — safe for good
-      if (n >= lo) return "yellow";                                // sitting in the band — one more escapes it
-      return n === lo - 1 ? "yellow" : "green";                    // below the band — safe, amber if one goal enters
+      // current standing: the bet LOSES only if the count lands in the excluded band, so it's red
+      // while the count sits IN the band and green otherwise. Goals only rise, so once the count
+      // climbs past a finite band it can never return — it stays green (effectively landed).
+      return n >= lo && n <= hi ? "red" : "green";
     }
     default: return "yellow";
   }
