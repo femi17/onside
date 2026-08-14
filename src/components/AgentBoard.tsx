@@ -279,7 +279,7 @@ function Item({
   const canScore = SCORE_GRADABLE.has(p.market_key ?? "");
   const h = Number(homeStr), a = Number(awayStr);
   const scoreValid = homeStr !== "" && awayStr !== "" && Number.isFinite(h) && Number.isFinite(a) && h >= 0 && a >= 0;
-  const scored = scoreValid ? scoreGrade(p.market_key ?? null, p.side ?? null, p.line ?? null, h, a) : null;
+  const scored = scoreValid ? scoreGrade(p.market_key ?? null, p.side ?? null, p.line ?? null, h, a, p.bet_value ?? null) : null;
 
   // result/status chip — on mobile it stays short (scoreline; the left Marker carries the
   // won/lost/live icon), on desktop it spells the result out ("Landed 2–1"). Frees room for teams.

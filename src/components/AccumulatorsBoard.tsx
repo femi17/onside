@@ -191,7 +191,7 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
                 onClick={() => {
                   const h = Number(hStr), a = Number(aStr);
                   if (!Number.isFinite(h) || !Number.isFinite(a) || h < 0 || a < 0) return;
-                  const r = (scoreGrade(leg.market_key ?? null, leg.side ?? null, leg.line ?? null, h, a) ?? "void") as "won" | "lost" | "void";
+                  const r = (scoreGrade(leg.market_key ?? null, leg.side ?? null, leg.line ?? null, h, a, leg.bet_value ?? null) ?? "void") as "won" | "lost" | "void";
                   onSettle!(leg.id, r, `${h}-${a}`);
                 }}
                 className="rounded-md bg-ink px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase text-chalk-2 disabled:opacity-40"

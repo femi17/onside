@@ -461,6 +461,16 @@ export function leadStats(t: TrackedTicket, team?: "home" | "away"): { maxLead: 
 // green = currently winning (frozen now → win), red = currently losing, yellow = in the
 // balance (level, or one goal from flipping, or too early to call).
 export type Signal = "green" | "yellow" | "red";
+// parse a goal-count target into an inclusive [lo, hi] band: "2" → [2,2], "2-3" → [2,3], "4+" → [4,∞).
+// Shared by the live traffic-light and the manual-settle grader for exact/range/excluded goal markets.
+export function parseGoalBand(v: string | null | undefined): [number, number] | null {
+  const s = (v ?? "").trim();
+  let m = s.match(/^(\d+)\s*\+$/); if (m) return [Number(m[1]), Infinity];
+  m = s.match(/^(\d+)\s*-\s*(\d+)$/); if (m) return [Number(m[1]), Number(m[2])];
+  m = s.match(/^(\d+)$/); if (m) return [Number(m[1]), Number(m[1])];
+  return null;
+}
+
 export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | null {
   if (t.status === "won") return "green";
   if (t.status === "lost") return "red";
@@ -619,6 +629,29 @@ export function betSignal(t: TrackedTicket, hg: number, ag: number): Signal | nu
       if (t.side === "none") return first ? "red" : "green";
       return first ? (first === t.side ? "green" : "red") : "yellow";
     }
+    // ---- exact / range / excluded goal counts — graded on the right team's goals (goals only rise) ----
+    case "exact_goals": {
+      const line = t.line ?? 0;
+      return tot > line ? "red" : "yellow"; // busted once overshot; fragile-but-alive until then
+    }
+    case "goal_range": case "home_goal_range": case "away_goal_range": {
+      const band = parseGoalBand(t.bet_value); if (!band) return "yellow";
+      const [lo, hi] = band;
+      const n = mk === "home_goal_range" || t.side === "home" ? hg : mk === "away_goal_range" || t.side === "away" ? ag : tot;
+      if (n > hi) return "red";                                    // climbed past the range — can't come back
+      if (n >= lo) return hi === Infinity ? "green" : n === hi ? "yellow" : "green"; // inside; top edge is fragile
+      return lo - n === 1 ? "yellow" : "red";                      // below the range, still climbing toward it
+    }
+    case "excluded_goals": case "excluded_home_goals": case "excluded_away_goals": {
+      const band = parseGoalBand(t.bet_value); if (!band) return "yellow";
+      const [lo, hi] = band;
+      const n = mk === "excluded_home_goals" ? hg : mk === "excluded_away_goals" ? ag : tot;
+      // the bet LOSES only if the final count lands in the band; goals only rise
+      if (hi === Infinity) return n >= lo ? "red" : n === lo - 1 ? "yellow" : "green"; // "N+" excluded
+      if (n > hi) return "green";                                  // escaped above the band — safe for good
+      if (n >= lo) return "yellow";                                // sitting in the band — one more escapes it
+      return n === lo - 1 ? "yellow" : "green";                    // below the band — safe, amber if one goal enters
+    }
     default: return "yellow";
   }
 }
@@ -642,8 +675,10 @@ export const SCORE_GRADABLE = new Set([
   "btts", "home_to_score", "away_to_score",
   "over_0_5", "over_1_5", "over_2_5", "over_3_5", "under_2_5", "under_3_5", "total_goals_ou",
   "handicap",
+  "exact_goals", "goal_range", "home_goal_range", "away_goal_range",
+  "excluded_goals", "excluded_home_goals", "excluded_away_goals",
 ]);
-export function scoreGrade(mk: string | null, side: string | null, line: number | null, h: number, a: number): "won" | "lost" | null {
+export function scoreGrade(mk: string | null, side: string | null, line: number | null, h: number, a: number, betValue: string | null = null): "won" | "lost" | null {
   const W = (b: boolean): "won" | "lost" => (b ? "won" : "lost");
   switch (mk) {
     case "home_win": return W(h > a);
@@ -668,6 +703,17 @@ export function scoreGrade(mk: string | null, side: string | null, line: number 
       const adj = side === "home" ? (h + line) - a : (a + line) - h;
       if (Number.isInteger(line) && adj === 0) return null; // push / void
       return W(adj > 0);
+    }
+    case "exact_goals": return line == null ? null : W(h + a === line);
+    case "goal_range": case "home_goal_range": case "away_goal_range": {
+      const band = parseGoalBand(betValue); if (!band) return null;
+      const n = mk === "home_goal_range" || side === "home" ? h : mk === "away_goal_range" || side === "away" ? a : h + a;
+      return W(n >= band[0] && n <= band[1]);
+    }
+    case "excluded_goals": case "excluded_home_goals": case "excluded_away_goals": {
+      const band = parseGoalBand(betValue); if (!band) return null;
+      const n = mk === "excluded_home_goals" ? h : mk === "excluded_away_goals" ? a : h + a;
+      return W(!(n >= band[0] && n <= band[1])); // wins when the count is NOT in the excluded band
     }
     default: return null;
   }

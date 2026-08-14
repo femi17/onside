@@ -6,7 +6,7 @@ import { SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
 // its OWN market. Score-gradable markets grade to won/lost (a push → void). Markets a goal score
 // can't grade (corners/cards/players/custom) are left as-is for a manual Landed/Missed. RLS scopes
 // tickets to the caller; deliveries go through the settle_delivery RPC (also caller-scoped).
-type Bet = { id: string; market_key: string | null; side: string | null; line: number | null };
+type Bet = { id: string; market_key: string | null; side: string | null; line: number | null; bet_value: string | null };
 
 export async function settleFixtureByScore(supabase: SupabaseClient, fixtureId: number, home: number, away: number) {
   const score = `${home}-${away}`;
@@ -14,23 +14,23 @@ export async function settleFixtureByScore(supabase: SupabaseClient, fixtureId: 
 
   const { data: tks } = await supabase
     .from("tickets")
-    .select("id, market_key, side, line")
+    .select("id, market_key, side, line, bet_value")
     .eq("fixture_id", fixtureId)
     .in("status", ["pending", "live", "void"]);
   for (const t of (tks ?? []) as Bet[]) {
     if (!SCORE_GRADABLE.has(t.market_key ?? "")) continue;
-    const r = scoreGrade(t.market_key ?? null, t.side ?? null, t.line ?? null, home, away) ?? "void";
+    const r = scoreGrade(t.market_key ?? null, t.side ?? null, t.line ?? null, home, away, t.bet_value ?? null) ?? "void";
     await supabase.from("tickets").update({ status: r, settled_at: now }).eq("id", t.id);
   }
 
   const { data: dls } = await supabase
     .from("deliveries")
-    .select("id, market_key, side, line")
+    .select("id, market_key, side, line, bet_value")
     .eq("fixture_id", fixtureId)
     .in("result", ["pending", "void"]);
   for (const d of (dls ?? []) as Bet[]) {
     if (!SCORE_GRADABLE.has(d.market_key ?? "")) continue;
-    const r = scoreGrade(d.market_key ?? null, d.side ?? null, d.line ?? null, home, away) ?? "void";
+    const r = scoreGrade(d.market_key ?? null, d.side ?? null, d.line ?? null, home, away, d.bet_value ?? null) ?? "void";
     await supabase.rpc("settle_delivery", { p_id: d.id, p_result: r, p_score: score });
   }
 }

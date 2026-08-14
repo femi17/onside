@@ -258,7 +258,7 @@ function ManualSettle({
   if (fromScore) {
     const h = Number(homeStr), a = Number(awayStr);
     const valid = homeStr !== "" && awayStr !== "" && Number.isFinite(h) && Number.isFinite(a) && h >= 0 && a >= 0;
-    const result = valid ? scoreGrade(t.market_key ?? null, t.side ?? null, t.line ?? null, h, a) : null;
+    const result = valid ? scoreGrade(t.market_key ?? null, t.side ?? null, t.line ?? null, h, a, t.bet_value ?? null) : null;
     return (
       <div className="mt-3 border-t border-dashed border-ink/15 pt-3">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wide text-ink-mute">Enter the final score to settle</div>
@@ -469,6 +469,24 @@ function Card({
         ? { top: `${leadName} +${lead.curLead}`, bottom: leadNeed - lead.curLead === 1 ? `1 more to +${leadNeed}` : `${leadNeed - lead.curLead} more` }
         : { top: `lead by ${leadNeed}?`, bottom: leadTeam ? leadName ?? "" : "either team" }
     : null;
+  // exact / range / excluded goal-count markets have no side to "back", so the scoreline branch
+  // showed an empty right side. Name the team the count is about + the target band, e.g.
+  // "Bunyodkor / not 1" for an "excluded away 1 goal" bet, or "Total goals / 2-3 goals".
+  const goalCountKind =
+    mk === "excluded_goals" || mk === "excluded_home_goals" || mk === "excluded_away_goals" ? "excluded" as const :
+    mk === "goal_range" || mk === "home_goal_range" || mk === "away_goal_range" ? "range" as const :
+    mk === "exact_goals" ? "exact" as const : null;
+  const goalCountTeam =
+    mk === "excluded_home_goals" || mk === "home_goal_range" || (goalCountKind && t.side === "home") ? f?.home_team :
+    mk === "excluded_away_goals" || mk === "away_goal_range" || (goalCountKind && t.side === "away") ? f?.away_team : "Total goals";
+  const goalCountVal = goalCountKind === "exact" ? String(t.line ?? "") : (t.bet_value ?? "");
+  const goalCountReadout = goalCountKind && goalCountVal
+    ? {
+        top: goalCountTeam ?? "Total goals",
+        bottom: goalCountKind === "excluded" ? `not ${goalCountVal}` : goalCountKind === "range" ? `${goalCountVal} goals` : `exactly ${goalCountVal}`,
+      }
+    : null;
+
   // the goal/card breakdown stays folded so the card is short; the user draws it out on tap
   const [showEvents, setShowEvents] = useState(false);
   // custom (free-text) bets the engine can't grade get manual controls until resolved
@@ -642,6 +660,12 @@ function Card({
               <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
                 {seesaw.top}
                 {seesaw.bottom && <><br />{seesaw.bottom}</>}
+              </div>
+            ) : goalCountReadout ? (
+              <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
+                {goalCountReadout.top}
+                <br />
+                {goalCountReadout.bottom}
               </div>
             ) : standing ? (
               <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
