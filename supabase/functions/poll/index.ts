@@ -1,4 +1,4 @@
-﻿// Onside live poller + settlement engine.
+// Onside live poller + settlement engine.
 //  - ONE fixtures?live=all call updates every tracked game's score/status (free fan-out).
 //  - Monotonic goal/result bets early-settle live from that shared call (0 extra API).
 //  - fixtures/events fetched when a goal lands (ticker) and once at settlement for
@@ -249,7 +249,7 @@ async function ensureOrientation(fx: any): Promise<void> {
 }
 
 function liveValue(mk: string, hg: number, ag: number, corners: number): number {
-  if (mk === "over_8_5_corners") return corners;
+  if (mk === "over_8_5_corners" || mk === "corners_ou") return corners;
   if (mk === "home_to_score" || mk === "home_goals_ou") return hg;
   if (mk === "away_to_score" || mk === "away_goals_ou") return ag;
   if (mk === "btts") return Math.min(hg, 1) + Math.min(ag, 1);
@@ -298,7 +298,10 @@ async function updateRowsLive(table: string, rows: any[], liveFx: any, statusCol
   const elapsed = liveFx.fixture?.status?.elapsed ?? null;
   let settled = 0;
   for (const t of rows) {
-    if (t.market_key === "over_8_5_corners") continue;
+    // corner markets are owned by the corner-stats loop (updateCornerTickets) — writing them here
+    // with liveValue(...,0) made corners_ou tickets FLAP between the goal total and the corner count
+    // every cycle, firing the build-up push trigger each flip (notification spam). Skip them ALL.
+    if (CORNER_MARKETS.has(t.market_key)) continue;
     const value = liveValue(t.market_key, hg, ag, 0);
     // Early settlement pays a DECIDED over / to-score / btts the instant it clears. A full-match bet can
     // settle any time in regulation; a 1st-HALF bet can settle early ONLY during the 1st half, where the
