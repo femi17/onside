@@ -1,0 +1,7 @@
+-- Tracking an agent pick creates a ticket (source='agent') - that moved the game from the opt-in
+-- agent_games audience into the tracked audience, so kickoff/FT fired under the default-on
+-- kickoff/full_time categories even with agent alerts off. Agent-origin tickets now stay in the
+-- agent audience: "agent picks" toggles govern agent-picked games even after the user tracks them.
+-- Tracked audience = games the user added THEMSELVES (slip screenshots / manual adds).
+-- (Full function body applied live via MCP apply_migration fixture_events_agent_source_tickets;
+--  see that migration in the remote schema_migrations for the definitive text.)
