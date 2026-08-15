@@ -395,17 +395,22 @@ export function resultStanding(
 
 // Consecutive-goal runs from the event timeline: the longest streak one team scored without
 // the opponent replying (maxRun), plus the team currently on a run and its length. OWN GOALS
-// ARE IGNORED — an og is credited on the scoreboard but is NOT that team actively scoring, so
-// it neither extends nor breaks a streak (mirrors poll's maxGoalsInRow + goals_in_row_maxes).
+// (side = the team the goal is CREDITED to): an og BREAKS the opponent's streak — it's a reply
+// on the scoreboard — but never EXTENDS the credited team's own streak, because nobody actively
+// scored it (mirrors poll's maxGoalsInRow + goals_in_row_maxes).
 export function goalRuns(t: TrackedTicket): { maxRun: number; curTeam: "home" | "away" | null; curRun: number } {
   const goals = ((t.fixtures?.events ?? []) as GoalEvent[])
-    .filter((e) => e.kind === "goal" || e.kind === "pen")
+    .filter((e) => e.kind === "goal" || e.kind === "pen" || e.kind === "og")
     .slice()
     .sort((x, y) => (x.min ?? 0) - (y.min ?? 0) || (x.extra ?? 0) - (y.extra ?? 0));
   let maxRun = 0;
   let curTeam: "home" | "away" | null = null;
   let curRun = 0;
   for (const g of goals) {
+    if (g.kind === "og") {
+      if (curTeam != null && g.side !== curTeam) { curTeam = null; curRun = 0; }
+      continue;
+    }
     if (g.side === curTeam) curRun++;
     else { curTeam = g.side; curRun = 1; }
     if (curRun > maxRun) maxRun = curRun;
@@ -414,16 +419,21 @@ export function goalRuns(t: TrackedTicket): { maxRun: number; curTeam: "home" | 
 }
 
 // Consecutive-goal runs for ONE named team: their longest streak with no reply between
-// (maxRun) and their live run (curRun, reset to 0 the moment the opponent scores). Own goals
-// ignored, same as goalRuns. Drives the "home/away team to score N goals in a row" markets.
+// (maxRun) and their live run (curRun, reset to 0 the moment the opponent scores). Own goals:
+// an og against this team (credited to the opponent) RESETS the run; an og credited to this
+// team extends nothing — same rule as goalRuns. Drives the "home/away N in a row" markets.
 export function goalRunsFor(t: TrackedTicket, team: "home" | "away"): { maxRun: number; curRun: number } {
   const goals = ((t.fixtures?.events ?? []) as GoalEvent[])
-    .filter((e) => e.kind === "goal" || e.kind === "pen")
+    .filter((e) => e.kind === "goal" || e.kind === "pen" || e.kind === "og")
     .slice()
     .sort((x, y) => (x.min ?? 0) - (y.min ?? 0) || (x.extra ?? 0) - (y.extra ?? 0));
   let maxRun = 0;
   let curRun = 0;
   for (const g of goals) {
+    if (g.kind === "og") {
+      if (g.side !== team) curRun = 0;
+      continue;
+    }
     if (g.side === team) {
       curRun++;
       if (curRun > maxRun) maxRun = curRun;

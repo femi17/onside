@@ -129,6 +129,21 @@ function extractGoals(evs: any[], fx: any): any[] { return parseEvents(evs, fx).
 // count (most-recent first -- at the moment of a disallow the bogus goal is the latest), then
 // rebuild the running scoreline so stored events never show more goals than actually count.
 function reconcileGoals(goals: any[], hg: number, ag: number): any[] {
+  // OG SIDE FROM THE SCORELINE: the provider's own-goal team attribution is inconsistent
+  // (audited 2026-08-15: of 18 finished og fixtures, events matched the FT score 3 as-stored,
+  // 3 flipped, rest incomplete), so the scoreboard totals are the authority for which team an
+  // og WENT TO. While one side has one event-goal too many and the other one too few, re-side
+  // an og from the heavy side — the goal belongs to the team the scoreboard gave it to.
+  let hc = goals.filter((g) => g.side === "home").length;
+  let ac = goals.filter((g) => g.side === "away").length;
+  const resideOg = (from: string, to: string): boolean => {
+    for (let i = goals.length - 1; i >= 0; i--) {
+      if (goals[i].kind === "og" && goals[i].side === from) { goals[i].side = to; return true; }
+    }
+    return false;
+  };
+  while (hc > hg && ac < ag && resideOg("home", "away")) { hc--; ac++; }
+  while (ac > ag && hc < hg && resideOg("away", "home")) { ac--; hc++; }
   const trimSide = (side: string, target: number) => {
     let count = goals.filter((g) => g.side === side).length;
     while (count > target) {
@@ -609,14 +624,19 @@ function goalsBy(goals: any[], minute: number): number {
   for (const g of goals) if ((g.min ?? 999) <= minute) n++;
   return n;
 }
-// longest streak of consecutive goals with no opponent goal between. OWN GOALS ARE IGNORED —
-// an og is credited to the opponent's tally but is NOT that team actively scoring, so it neither
-// extends nor breaks a streak (ruled 2026-08-15, Seoul v Daejeon). No `team` = any team's longest
-// run ("N in a row"); with `team` = that team's longest run (reset when the opponent scores).
+// longest streak of consecutive goals with no opponent goal between. OWN GOALS (side = the team
+// the goal is CREDITED to on the scoreboard): an og BREAKS the opponent's streak — it's a reply
+// on the scoreboard — but never EXTENDS the credited team's own streak, because nobody actively
+// scored it (ruled 2026-08-15, Seoul v Daejeon). No `team` = any team's longest run ("N in a
+// row"); with `team` = that team's longest run (reset when the opponent scores).
 function maxGoalsInRow(goals: any[], team?: string): number {
   let max = 0, curTeam: string | null = null, run = 0;
   for (const g of goals) {
-    if (g.kind === "og") continue;
+    if (g.kind === "og") {
+      if (team) { if (g.side !== team) run = 0; }
+      else if (curTeam != null && g.side !== curTeam) { curTeam = null; run = 0; }
+      continue;
+    }
     if (team) {
       if (g.side === team) { run++; if (run > max) max = run; } else run = 0;
     } else {
