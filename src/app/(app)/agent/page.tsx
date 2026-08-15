@@ -97,26 +97,29 @@ export default async function AgentPage() {
 
   // in-app "no games" note: running agents that ran today (WAT) but delivered nothing today —
   // mirrors the Telegram note so an empty run reads as "ran, nothing cleared", not silence.
+  // IMPORTANT: "delivered today" is answered by the DATABASE, not by the rows the feed happened to
+  // load — deriving it from the feed's own (limited) query falsely flagged agents whose batch had
+  // been pushed out of the load window as "no games cleared" while their picks sat in the DB.
   const watDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   const todayWat = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
-  const deliveredTodayNames = new Set(
-    (data ?? [])
-      .filter((r: Record<string, unknown>) => r.delivered_at && watDay(r.delivered_at as string) === todayWat)
-      .map((r: Record<string, unknown>) => ((r.strategies as { name?: string } | null)?.name) ?? "Agent")
-  );
+  const { data: todayDelivered } = await supabase
+    .from("deliveries")
+    .select("strategy_id")
+    .gte("delivered_at", lagosTodayStartISO());
+  const deliveredTodayIds = new Set((todayDelivered ?? []).map((r) => r.strategy_id as string));
   const { data: runningStrategies } = await supabase
     .from("strategies")
     .select("id, name, last_run_at")
     .eq("status", "running");
   const emptyRuns = (runningStrategies ?? [])
-    .filter((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat && !deliveredTodayNames.has(s.name as string))
+    .filter((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat && !deliveredTodayIds.has(s.id as string))
     .map((s) => ({ id: s.id as string, agent_name: (s.name as string) ?? "Agent", ran_at: s.last_run_at as string }));
 
   // no banker double is built on a day with no fixtures — surface that in the tracker instead of
   // leaving an older day's card at the top. "No games today" = agents ran today (WAT) yet delivered
   // nothing today, so no game could feed the double.
   const anyRanToday = (runningStrategies ?? []).some((s) => s.last_run_at && watDay(s.last_run_at as string) === todayWat);
-  const noGamesToday = anyRanToday && deliveredTodayNames.size === 0;
+  const noGamesToday = anyRanToday && deliveredTodayIds.size === 0;
 
   // 🎯 Onside Double — the daily 2-leg banker, tracked day by day in the feed's sidebar
   const { data: dblRows } = await supabase
