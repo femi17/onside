@@ -508,9 +508,12 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
               </p>
             )}
 
-            {/* Phase 2: the agent's real self-tuning log (Pro Max learning) */}
+            {/* Phase 2: the agent's real self-tuning log (Pro Max learning) — scoped to the
+                selected tab: an agent's tab talks ONLY about that agent, never its siblings */}
             <div className="mt-8 mb-2 flex items-center gap-3">
-              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">How your agents tuned themselves</span>
+              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">
+                {agent ? `How ${agent} tuned itself` : "How your agents tuned themselves"}
+              </span>
               <div className="h-px flex-1 bg-white/10" />
             </div>
             {tunes.length ? (
@@ -542,11 +545,12 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                   );
                 })}
               </div>
-            ) : learningAgents.length ? (
+            ) : (agent ? learningAgents.filter((n) => n === agent) : learningAgents).length ? (
               // learning IS on — show honest progress toward the first adjustment instead of
-              // wrongly telling the user to go turn it on
+              // wrongly telling the user to go turn it on. On an agent tab, ONLY that agent's
+              // progress card shows — never the siblings'.
               <div className="flex flex-col gap-2.5">
-                {learningAgents.map((name) => {
+                {(agent ? learningAgents.filter((n) => n === agent) : learningAgents).map((name) => {
                   const NEED = 20; // learnAdjust's minimum CLV sample size before the first tune
                   const n = Math.min(NEED, picks.filter((p) => agentOf(p) === name && p.clv != null).length);
                   return (
@@ -567,7 +571,9 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
               </div>
             ) : (
               <p className="rounded-2xl border border-white/10 bg-pitch-2 p-5 text-[13.5px] text-onpitch-mute">
-                No self-tuning yet — a learning agent (Pro Max) adjusts its bar after 20+ settled picks. Turn on Learning when building an agent.
+                {agent
+                  ? <>{agent} doesn&apos;t have Learning on — no self-tuning to show for it. Turn on Learning in the builder (Pro Max) and its adjustments will appear here.</>
+                  : <>No self-tuning yet — a learning agent (Pro Max) adjusts its bar after 20+ settled picks. Turn on Learning when building an agent.</>}
               </p>
             )}
           </>
