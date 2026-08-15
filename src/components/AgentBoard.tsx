@@ -24,6 +24,7 @@ export type PickReasons = {
 
 export type AgentPick = TrackedTicket & {
   agent_name: string;
+  strategy_id?: string | null;
   edge: number | null;
   delivered_at: string | null;
   period?: string | null;
@@ -490,7 +491,9 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
       user_id: userId, accumulator_id: null, fixture_id: fx,
       market_key: c.marketKey, market_label: p.market_label, custom_market: p.custom_market,
       line: c.line, side: c.side, period: p.period ?? "ft", bet_value: p.bet_value ?? null,
-      source: "agent", status: "pending",
+      // strategy_id links the ticket to its agent so deleting the agent sweeps its standalone
+      // tracker games too (acca legs survive via ON DELETE SET NULL — owner-ruled 2026-08-15)
+      source: "agent", status: "pending", strategy_id: p.strategy_id ?? null,
     };
   };
 

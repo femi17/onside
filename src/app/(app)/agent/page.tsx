@@ -111,6 +111,7 @@ export default async function AgentPage() {
     current_value: (r.current_value as number) ?? null,
     fixtures: (r.fixtures as AgentPick["fixtures"]) ?? null,
     agent_name: ((r.strategies as { name?: string } | null)?.name) ?? "Agent",
+    strategy_id: (r.strategy_id as string) ?? null,
     // edge is stored as a fraction (0.05) — show it as a percentage (+5.0)
     edge: r.edge != null ? Math.round(Number(r.edge) * 1000) / 10 : null,
     model_prob: r.model_prob != null ? Number(r.model_prob) : null,
