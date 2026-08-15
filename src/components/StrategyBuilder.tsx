@@ -797,11 +797,24 @@ export default function StrategyBuilder({
     // the read-back must match BOTH the wording and the market being saved — a parse made
     // against a different base market is stale (null → the engine re-parses on first run)
     const savedBaseKey = `${r.row.market_key}|${(r.row.side as string | null) ?? ""}`;
-    const confirmedParse =
+    let confirmedParse =
       ruleText && ruleParse?.text === ruleText && ruleParse.baseKey === savedBaseKey &&
       ruleParse.parsed && (ruleParse.parsed.filters.length || ruleParse.parsed.select.length)
         ? ruleParse.parsed
         : null;
+    // The debounced preview parse may not have caught up with a quick edit-and-save (or the
+    // invoke may have hiccuped). Saving NULL then leaves the rule UNPARSED until the agent's
+    // next scheduled run — a whole day where neither the engine dedup-view nor the Onside Guide
+    // can enforce it. So parse synchronously at save time rather than persist an unguarded rule.
+    if (ruleText && !confirmedParse) {
+      try {
+        const { data: pd, error: pe } = await supabase.functions.invoke("run-strategies", {
+          body: { parse_rule: { text: ruleText, market_key: r.row.market_key, side: (r.row.side as string | null) ?? null, market_label: (r.row.market_label as string | null) ?? "custom" } },
+        });
+        const parsed = pe ? null : ((pd?.parsed as ParsedRule | null) ?? null);
+        if (parsed && (parsed.filters.length || parsed.select.length)) confirmedParse = parsed;
+      } catch { /* fall through — engine re-parses on first run */ }
+    }
 
     // EDIT: update in place, keep the current status, and DO NOT run now. New config applies on the
     // next scheduled run — so editing can never be used to churn out extra forecasts on demand.
