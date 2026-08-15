@@ -426,7 +426,7 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false, guided = {} }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean; guided?: Record<string, number> }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
@@ -608,6 +608,21 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               {agents.map((a) => (
                 <Chip key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Chip>
               ))}
+            </div>
+          )}
+          {/* 🛡️ Onside Guide note — picks the agents delivered but which don't meet the user's
+              own rule when checked against the displayed last-5 form are screened out server-side;
+              this line keeps that honest instead of silent */}
+          {Object.keys(guided).length > 0 && (agent === null || guided[agent]) && (
+            <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-flood/40 bg-flood/[0.07] px-4 py-3 text-ink shadow-lg">
+              <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[9px] bg-flood/15 font-mono text-[15px]">🛡️</span>
+              <div className="min-w-0 flex-1 text-[12.5px] leading-snug text-ink-mute">
+                <b className="text-ink">Onside Guide</b> screened{" "}
+                {agent
+                  ? <>{guided[agent]} pick{guided[agent] === 1 ? "" : "s"} from {agent}</>
+                  : <>{Object.values(guided).reduce((s, n) => s + n, 0)} pick{Object.values(guided).reduce((s, n) => s + n, 0) === 1 ? "" : "s"} ({Object.entries(guided).map(([a, n]) => `${a} ${n}`).join(" · ")})</>}{" "}
+                that didn&apos;t meet your rule on today&apos;s form.
+              </div>
             </div>
           )}
           {/* in-app "no games" note — mirrors the Telegram note so a run that found nothing reads
