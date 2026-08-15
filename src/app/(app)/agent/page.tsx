@@ -4,6 +4,7 @@ import RealtimeRefresh from "@/components/RealtimeRefresh";
 import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
 import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
 import { canonicalMarket } from "@/lib/betCatalog";
+import { lagosTodayStartISO } from "@/lib/ticket";
 
 export default async function AgentPage() {
   const supabase = await createClient();
@@ -12,13 +13,19 @@ export default async function AgentPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // Load by TIME WINDOW (start of yesterday, Lagos), not a blind row limit: at the Pro Max cap
+  // (50 picks × up to 14 agents) a single midday batch used to push the overnight batches past a
+  // fixed limit(200) — picks looked "wiped" from the feed although nothing was deleted. The high
+  // limit stays only as a safety ceiling for the payload.
+  const sinceIso = new Date(Date.parse(lagosTodayStartISO()) - 24 * 3600 * 1000).toISOString();
   const { data } = await supabase
     .from("deliveries")
     .select(
       "id, strategy_id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
     )
+    .gte("delivered_at", sinceIso)
     .order("delivered_at", { ascending: false })
-    .limit(200);
+    .limit(1000);
 
   // Onside score — the SAME ranking build_onside_double uses, computed per pick at read time:
   // bookies' de-vigged % (+2 scoring market / −5 result market) + the agent's track-record nudge.
