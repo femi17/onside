@@ -44,6 +44,10 @@ Settlement and money paths are live — users see every flip. Follow this before
 - Agent pick confidence dots are green/amber/orange, never red.
 - The same bet MAY be a leg in multiple different accumulators.
 - Naira (₦) is the default currency; slip-parse currency guesses can be wrong.
+- Notifications: tracking a pick = opting into its game alerts; agent toggles govern ONLY
+  un-tracked agent games. Landed/missed push: tracked pick → results, untracked → agent_games.
+- Deleting an agent sweeps its deliveries AND its standalone tracker tickets
+  (tickets.strategy_id); acca legs survive with the agent link nulled.
 
 ## Infra pointers
 
