@@ -80,9 +80,10 @@ export default async function AgentPage() {
     op === "gte" ? x >= v : op === "lte" ? x <= v : op === "gt" ? x > v : op === "lt" ? x < v :
     op === "eq" ? x === v : op === "between" ? x >= v && x <= (v2 ?? v) : true;
   // a pick fails the Guide only when a verifiable condition is MEASURABLY broken; missing form
-  // data never hides a pick (unverifiable ≠ failed)
+  // data never hides a pick (unverifiable ≠ failed). Applies to EVERY pick — settled included:
+  // owner-ruled 2026-08-15 (Oldham v Port Vale, blend 2.9 vs a <2.4 rule, settled at HT): a pick
+  // that breaks the rule shouldn't show at all, regardless of how it graded.
   const guideFails = (r: Record<string, unknown>): boolean => {
-    if ((r.result as string) !== "pending") return false; // never rewrite history
     const filters = guideFilters.get(r.strategy_id as string);
     if (!filters) return false;
     const reasons = (r.criteria as { reasons?: { home_form?: Form5 | null; away_form?: Form5 | null } } | null)?.reasons;
