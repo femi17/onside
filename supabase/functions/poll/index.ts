@@ -609,12 +609,14 @@ function goalsBy(goals: any[], minute: number): number {
   for (const g of goals) if ((g.min ?? 999) <= minute) n++;
   return n;
 }
-// longest streak of consecutive goals with no opponent goal between (own goals count for the
-// team credited, matching the score). No `team` = any team's longest run ("N in a row"); with
-// `team` = that team's longest run ("home/away N in a row", reset when the opponent scores).
+// longest streak of consecutive goals with no opponent goal between. OWN GOALS ARE IGNORED —
+// an og is credited to the opponent's tally but is NOT that team actively scoring, so it neither
+// extends nor breaks a streak (ruled 2026-08-15, Seoul v Daejeon). No `team` = any team's longest
+// run ("N in a row"); with `team` = that team's longest run (reset when the opponent scores).
 function maxGoalsInRow(goals: any[], team?: string): number {
   let max = 0, curTeam: string | null = null, run = 0;
   for (const g of goals) {
+    if (g.kind === "og") continue;
     if (team) {
       if (g.side === team) { run++; if (run > max) max = run; } else run = 0;
     } else {
