@@ -3,8 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import AgentBoard, { type AgentPick } from "@/components/AgentBoard";
 import { type OnsideDouble, type LegDelivery } from "@/components/OnsideDoubleTracker";
-import { canonicalMarket } from "@/lib/betCatalog";
-import { lagosTodayStartISO } from "@/lib/ticket";
+import { canonicalMarket, recognizeBet } from "@/lib/betCatalog";
+import { lagosTodayStartISO, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
 
 export default async function AgentPage() {
   const supabase = await createClient();
@@ -214,6 +214,51 @@ export default async function AgentPage() {
         current_value: (r.current_value as number) ?? null,
         fixtures: (r.fixtures as LegDelivery["fixtures"]) ?? null,
       };
+    }
+  }
+
+  // Deleting an agent cascades its deliveries away — the double's legs then dangle and every card
+  // (past wins included) degrades to "Upcoming" because the leg can't resolve a fixture or result.
+  // Rebuild orphaned legs from the fixture + the leg's own stored market label: finished FT-market
+  // legs re-grade from the final score; ungradeable ones (halves/exotics with the delivery gone)
+  // become void so the double resolves on its remaining legs instead of guessing.
+  const orphanLegs = doubles.flatMap((d) => (d.legs ?? []).filter((l) => l.delivery_id && !doubleDeliveries[l.delivery_id] && l.fixture_id));
+  if (orphanLegs.length) {
+    const orphanFxIds = Array.from(new Set(orphanLegs.map((l) => l.fixture_id)));
+    const { data: fxRows } = await supabase
+      .from("fixtures")
+      .select("id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, ft_home, ft_away, extra, updated_at, leagues(name, flag_url, tier)")
+      .in("id", orphanFxIds);
+    const fxById = new Map((fxRows ?? []).map((f: Record<string, unknown>) => [f.id as number, f]));
+    for (const l of orphanLegs) {
+      const fx = fxById.get(l.fixture_id);
+      if (!fx) continue;
+      const rec = recognizeBet(l.market || "");
+      const key = rec?.gradeable ? rec.marketKey : null;
+      const period = rec?.period ?? "ft";
+      const finished = ["FT", "AET", "PEN"].includes((fx.status as string) ?? "");
+      const h = Number(fx.ft_home ?? fx.home_goals ?? 0), a = Number(fx.ft_away ?? fx.away_goals ?? 0);
+      let status = "pending";
+      if (finished) {
+        const g = key && period === "ft" && SCORE_GRADABLE.has(key)
+          ? scoreGrade(key, rec?.side ?? null, rec?.line ?? null, h, a, rec?.value ?? null)
+          : null;
+        status = g ?? "void";
+      }
+      doubleDeliveries[l.delivery_id] = {
+        id: l.delivery_id,
+        market_key: key ?? "custom",
+        market_label: l.market ?? null,
+        custom_market: null,
+        line: rec?.line ?? null,
+        side: rec?.side ?? null,
+        period,
+        bet_value: rec?.value ?? null,
+        status,
+        settle_score: finished ? `${h}-${a}` : null,
+        current_value: null,
+        fixtures: fx as unknown as LegDelivery["fixtures"],
+      } as LegDelivery;
     }
   }
 
