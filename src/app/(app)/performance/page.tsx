@@ -34,7 +34,7 @@ export default async function PerformancePage() {
 
 async function PerfData() {
   const supabase = await createClient();
-  const [{ data }, { data: events }, { data: learners }] = await Promise.all([
+  const [{ data }, { data: events }, { data: learners }, { data: strategies }] = await Promise.all([
     supabase
       .from("deliveries")
       .select(
@@ -51,12 +51,15 @@ async function PerfData() {
     // which agents have Learning ON — so an empty tuning log reads as "collecting samples",
     // never as "you haven't turned learning on"
     supabase.from("strategies").select("name").eq("learning", true).eq("status", "running"),
+    // the user's agents (id + shield) so the per-agent tab can show + toggle the Onside Shield
+    supabase.from("strategies").select("id, name, shield, status"),
   ]);
   return (
     <PerformanceBoard
       picks={(data ?? []) as never}
       events={(events ?? []) as never}
       learningAgents={(learners ?? []).map((s) => s.name as string).filter(Boolean)}
+      strategies={(strategies ?? []) as never}
       hideHeader
     />
   );

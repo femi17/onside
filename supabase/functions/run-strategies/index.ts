@@ -1564,9 +1564,32 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // optional kickoff pin ("games starting 15:00"): only fixtures whose LOCAL kickoff (strategy tz)
   // matches the chosen HH:MM survive — empty = any time, the old behaviour
   const kickAt = strategy.kickoff_at ? String(strategy.kickoff_at).slice(0, 5) : null;
-  const candidates = (fixtures ?? []).filter((f: Fixture) =>
+  let candidates = (fixtures ?? []).filter((f: Fixture) =>
     !takenAll.has(f.id) &&
     (!kickAt || new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { timeZone: tz, hour12: false }).slice(0, 5) === kickAt));
+
+  // 🛡️ Onside Shield (opt-in per agent, strategies.shield): drop fixtures in leagues where THIS
+  // agent is measurably failing — ≥5 settled picks in the league and under 45% won. Recomputed
+  // fresh each run so a league can earn its way back; the Performance page badge shows the same
+  // rule. Unknown/missing league never blocks (unverifiable ≠ failing).
+  if (strategy.shield === true && candidates.length) {
+    const { data: hist } = await sb
+      .from("deliveries")
+      .select("result, fixtures(league_id)")
+      .eq("strategy_id", strategy.id)
+      .in("result", ["won", "lost"])
+      .limit(1000);
+    const byLg = new Map<number, { n: number; w: number }>();
+    for (const r of (hist ?? []) as any[]) {
+      const lg = (Array.isArray(r.fixtures) ? r.fixtures[0]?.league_id : r.fixtures?.league_id) as number | null;
+      if (lg == null) continue;
+      const b = byLg.get(lg) ?? { n: 0, w: 0 };
+      b.n++; if (r.result === "won") b.w++;
+      byLg.set(lg, b);
+    }
+    const blocked = new Set(Array.from(byLg.entries()).filter(([, b]) => b.n >= 5 && b.w / b.n < 0.45).map(([lg]) => lg));
+    if (blocked.size) candidates = candidates.filter((f: Fixture) => f.league_id == null || !blocked.has(f.league_id));
+  }
 
   const rule: RuleParsed | null = strategy.rule_parsed ?? null;
   // Only compute recent-form signals when a rule is actually in play (keeps the common path fast).

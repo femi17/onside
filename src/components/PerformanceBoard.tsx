@@ -6,6 +6,7 @@
 // Everything is computed client-side from the delivered picks (no schema changes).
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
@@ -51,6 +52,15 @@ export type LearningEvent = {
   strategies: { name: string | null } | { name: string | null }[] | null;
 };
 const evAgent = (e: LearningEvent) => (Array.isArray(e.strategies) ? e.strategies[0]?.name : e.strategies?.name) ?? "Agent";
+
+// the user's agents (for the per-tab 🛡️ Onside Shield toggle)
+export type PerfStrategy = { id: string; name: string | null; shield: boolean | null; status: string | null };
+
+// 🛡️ Shield rule — MUST mirror the engine (run-strategies): a league is "failing" for an agent
+// when it has ≥5 settled picks there and under 45% won. Shown next to the badge so the user sees
+// exactly what the shield is blocking right now.
+const SHIELD_MIN_SETTLED = 5;
+const SHIELD_FAIL_RATE = 0.45;
 
 // plain-language explanations for the top KPI cards (opened via the ? button on each card)
 type HelpKey = "landed" | "vsmarket" | "clv" | "pnl" | "green";
@@ -103,12 +113,49 @@ const HELP: Record<HelpKey, { title: string; body: string[] }> = {
   },
 };
 
-export default function PerformanceBoard({ picks, events, learningAgents = [], hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; learningAgents?: string[]; hideHeader?: boolean }) {
+export default function PerformanceBoard({ picks, events, learningAgents = [], strategies = [], hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; learningAgents?: string[]; strategies?: PerfStrategy[]; hideHeader?: boolean }) {
   const [agent, setAgent] = useState<string | null>(null);
   const [days, setDays] = useState<14 | null>(null); // null = this season (all)
   const [help, setHelp] = useState<HelpKey | null>(null); // which KPI explainer modal is open
 
   const agents = useMemo(() => Array.from(new Set(picks.map(agentOf))).sort(), [picks]);
+
+  // 🛡️ Onside Shield — per-agent, opt-in. Local state seeds from the DB and updates optimistically.
+  const [shieldOn, setShieldOn] = useState<Record<string, boolean>>(() => {
+    const m: Record<string, boolean> = {};
+    for (const s of strategies) if (s.name) m[s.name] = m[s.name] || s.shield === true;
+    return m;
+  });
+  const [shieldBusy, setShieldBusy] = useState(false);
+  // ALL-TIME per-league record for the selected agent (not timeframe-filtered — the engine judges
+  // on full history too), evaluated with the exact engine rule.
+  const shieldLeagues = useMemo(() => {
+    if (!agent) return [];
+    const m = new Map<string, { n: number; w: number }>();
+    for (const p of picks) {
+      if (agentOf(p) !== agent || (p.result !== "won" && p.result !== "lost")) continue;
+      const k = leagueOf(p);
+      const b = m.get(k) ?? { n: 0, w: 0 };
+      b.n++; if (p.result === "won") b.w++;
+      m.set(k, b);
+    }
+    return Array.from(m.entries())
+      .filter(([, b]) => b.n >= SHIELD_MIN_SETTLED && b.w / b.n < SHIELD_FAIL_RATE)
+      .map(([name, b]) => ({ name, n: b.n, rate: b.w / b.n }))
+      .sort((a, b) => a.rate - b.rate);
+  }, [picks, agent]);
+  async function toggleShield() {
+    if (!agent || shieldBusy) return;
+    const ids = strategies.filter((s) => s.name === agent).map((s) => s.id);
+    if (!ids.length) return;
+    const next = !shieldOn[agent];
+    setShieldBusy(true);
+    setShieldOn((m) => ({ ...m, [agent]: next })); // optimistic — badge lights up immediately
+    const supabase = createClient();
+    const { error } = await supabase.from("strategies").update({ shield: next }).in("id", ids);
+    if (error) setShieldOn((m) => ({ ...m, [agent]: !next })); // revert on failure
+    setShieldBusy(false);
+  }
 
   const d = useMemo(() => {
     const floor = days ? Date.now() - days * 86400000 : 0;
@@ -268,6 +315,47 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], h
           <Chip on={days === 14} onClick={() => setDays(14)}>14 days</Chip>
           <Chip on={days === null} onClick={() => setDays(null)}>This season</Chip>
         </div>
+
+        {/* 🛡️ Onside Shield — per-agent only (never on the All tab). When ON, this agent stops
+            picking games from leagues it's measurably failing in (≥5 settled, under 45% won —
+            re-checked every run, so a league can earn its way back). The badge is the switch. */}
+        {agent && strategies.some((s) => s.name === agent) && (
+          <div className={`mt-4 flex items-center gap-4 rounded-2xl border p-4 shadow-xl transition-colors ${
+            shieldOn[agent] ? "border-flood/50 bg-flood/[0.08]" : "border-white/10 bg-white/[0.03]"
+          }`}>
+            <button
+              onClick={toggleShield}
+              disabled={shieldBusy}
+              aria-pressed={!!shieldOn[agent]}
+              aria-label={`Onside Shield ${shieldOn[agent] ? "on" : "off"} — tap to ${shieldOn[agent] ? "turn off" : "turn on"}`}
+              title={shieldOn[agent] ? "Shield is ON — tap to turn off" : "Shield is OFF — tap to turn on"}
+              className={`grid h-14 w-14 flex-none place-items-center rounded-full border-2 text-2xl transition-all duration-300 disabled:opacity-60 ${
+                shieldOn[agent]
+                  ? "border-flood bg-flood/20 shadow-[0_0_18px_rgba(255,183,3,0.45)]"
+                  : "border-white/20 bg-white/[0.04] opacity-50 grayscale"
+              }`}
+            >
+              🛡️
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-disp text-[15px] font-extrabold text-chalk">Onside Shield</span>
+                <span className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-wide ${
+                  shieldOn[agent] ? "bg-flood/20 text-flood" : "bg-white/10 text-onpitch-mute"
+                }`}>
+                  {shieldOn[agent] ? "Active" : "Off"}
+                </span>
+              </div>
+              <p className="mt-1 text-[12.5px] leading-snug text-onpitch-mute">
+                {shieldOn[agent]
+                  ? shieldLeagues.length
+                    ? <>Blocking <b className="text-chalk">{shieldLeagues.map((l) => l.name).join(", ")}</b> — {agent} is under {Math.round(SHIELD_FAIL_RATE * 100)}% there ({shieldLeagues.map((l) => `${Math.round(l.rate * 100)}% of ${l.n}`).join(" · ")}). Re-checked every run; a league earns its way back by the record improving.</>
+                    : <>No failing leagues right now — the shield is standing guard and will block any league where {agent} drops under {Math.round(SHIELD_FAIL_RATE * 100)}% over {SHIELD_MIN_SETTLED}+ settled picks.</>
+                  : <>Off — {agent} can pick from any of its leagues. Turn on to auto-block leagues it&apos;s failing in (under {Math.round(SHIELD_FAIL_RATE * 100)}% won over {SHIELD_MIN_SETTLED}+ settled picks).</>}
+              </p>
+            </div>
+          </div>
+        )}
 
         {!hasData ? (
           <div className="mt-10 rounded-2xl border border-dashed border-white/15 bg-chalk p-12 text-center text-ink shadow-xl">
