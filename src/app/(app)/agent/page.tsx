@@ -93,14 +93,7 @@ export default async function AgentPage() {
     }
     return false;
   };
-  const guided: Record<string, number> = {};
-  const kept: Record<string, unknown>[] = [];
-  for (const r of data ?? []) {
-    if (guideFails(r)) {
-      const name = ((r.strategies as { name?: string } | null)?.name) ?? "Agent";
-      guided[name] = (guided[name] ?? 0) + 1;
-    } else kept.push(r);
-  }
+  const kept: Record<string, unknown>[] = (data ?? []).filter((r: Record<string, unknown>) => !guideFails(r));
 
   const picks: AgentPick[] = kept.map((r: Record<string, unknown>) => ({
     id: r.id as string,
@@ -236,7 +229,7 @@ export default async function AgentPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={liveFixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} guided={guided} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} />
     </>
   );
 }
