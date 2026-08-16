@@ -235,7 +235,11 @@ export default async function AgentPage() {
       const fx = fxById.get(l.fixture_id);
       if (!fx) continue;
       const rec = recognizeBet(l.market || "");
-      const key = rec?.gradeable ? rec.marketKey : null;
+      // fold the recognizer's combined to-score key into the sided keys the graders speak
+      // ("Home team to score" recognizes as teams_to_score/home, but scoreGrade + the early-win
+      // check know home_to_score/away_to_score/btts)
+      let key = rec?.gradeable ? rec.marketKey : null;
+      if (key === "teams_to_score") key = rec?.side === "away" ? "away_to_score" : rec?.side === "home" ? "home_to_score" : "btts";
       const period = rec?.period ?? "ft";
       const finished = ["FT", "AET", "PEN"].includes((fx.status as string) ?? "");
       const liveNow = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "SUSP", "INT"].includes((fx.status as string) ?? "");
