@@ -1017,6 +1017,34 @@ async function buildCornerFormMap(teamIds: number[]): Promise<Map<number, CornFo
   }
   return map;
 }
+// 🧭 H2H sense check — implicit, always on (owner-ruled 2026-08-16): even when the user's rule
+// says nothing about head-to-head, a pick that this matchup's OWN history clearly contradicts is
+// dropped. Conservative on purpose: needs ≥5 recorded meetings (6+ for win markets) and a STRONG
+// contradiction — mild disagreement is left to the model + the market bar. Full-time goal/result
+// markets only; corners/cards/halves/exotics exempt (no H2H basis). Thin history never vetoes.
+function h2hVeto(mk: string | null, side: string | null, line: number | null, period: string | null | undefined, f: Fixture, h2h?: H2H): boolean {
+  if (!h2h || h2h.n < 5) return false;
+  if (period && period !== "ft") return false;
+  let key = mk ?? "";
+  if (key === "total_goals_ou" && line != null && side) key = `${side}_${String(line).replace(".", "_")}`;
+  const rate = (x: number) => x / h2h.n;
+  const hs = f.home_team_id != null ? (h2h.team[f.home_team_id] ?? { w: 0, s: 0 }) : { w: 0, s: 0 };
+  const as_ = f.away_team_id != null ? (h2h.team[f.away_team_id] ?? { w: 0, s: 0 }) : { w: 0, s: 0 };
+  switch (key) {
+    case "home_to_score": return rate(hs.s) < 0.5;      // picked to score, but usually doesn't vs THIS opponent
+    case "away_to_score": return rate(as_.s) < 0.5;
+    case "btts": return side === "no" ? rate(h2h.btts) > 0.7 : rate(h2h.btts) < 0.3;
+    case "over_1_5": return h2h.avg < 1.2;
+    case "over_2_5": return rate(h2h.over25) < 0.3;
+    case "over_3_5": return rate(h2h.over35) < 0.2;
+    case "under_2_5": return rate(h2h.over25) > 0.7;
+    case "under_3_5": return rate(h2h.over35) > 0.6;
+    case "home_win": return h2h.n >= 6 && hs.w === 0;   // has never beaten this opponent on record
+    case "away_win": return h2h.n >= 6 && as_.w === 0;
+    default: return false;
+  }
+}
+
 // does the parsed rule test any field matching pred? (filters + branch whens + legacy when_field)
 function ruleTests(rule: RuleParsed | null, pred: (f: string) => boolean): boolean {
   if (!rule) return false;
@@ -1381,6 +1409,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     let eff: Eff = { mk: baseMk, side: baseSide, line: baseLine };
     let useSet = baseSet;
     const deferred: Cond[] = []; // base-market filters a set can only test after choosing
+    // this matchup's own history — powers explicit h2h_* rule fields AND the implicit sense check
+    const h2hPair = f.home_team_id != null && f.away_team_id != null ? h2hMap.get(pairKey(f.home_team_id, f.away_team_id)) : undefined;
 
     // Rules apply to EVERY strategy, including sets (families/mixes): filters gate the game,
     // select branches choose the market. Form + opponent-strength signals are available here.
@@ -1392,7 +1422,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const bkp = !baseSet ? marketProb(baseMk, baseSide, baseLine, bms) : null;
       // fixture-history signals: last ≤10 H2H meetings + each team's recent corner counts
       // (maps are empty unless the rule actually tests these fields — zero cost otherwise)
-      const h2h = f.home_team_id != null && f.away_team_id != null ? h2hMap.get(pairKey(f.home_team_id, f.away_team_id)) : undefined;
+      const h2h = h2hPair;
       const hCorn = f.home_team_id != null ? cornMap.get(f.home_team_id) : undefined;
       const aCorn = f.away_team_id != null ? cornMap.get(f.away_team_id) : undefined;
       const hCornAvg = hCorn && hCorn.n >= 3 ? round2(hCorn.sum / hCorn.n) : null;
@@ -1447,9 +1477,14 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const chosen = await pickBest(mixCands ?? FAMILIES[baseMk] ?? [], cell, f, key, strategy.min_edge ?? 0);
       if (!chosen) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
+      // implicit H2H sense check on the market the set actually chose
+      if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
       continue;
     }
+
+    // implicit H2H sense check — the pick's market vs this matchup's own history (see h2hVeto)
+    if (h2hVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", f, h2hPair)) continue;
 
     // single-market path prices through the same router as sets, so periods (1st/2nd half),
     // corners, cards and every canonicalised catalog key work here too
@@ -1714,8 +1749,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
     : [];
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
-  // history maps only when the rule actually tests those fields (common path stays untouched)
-  const h2hMap = ruleTests(rule, (fld) => fld.startsWith("h2h_")) ? await buildH2HMap(candidates) : new Map<string, H2H>();
+  // H2H is built EVERY run — it powers explicit h2h_* rule fields AND the always-on implicit
+  // sense check (h2hVeto). Corner history stays gated to rules that actually test corner fields
+  // (owner-ruled: corner logic must never run on non-corner rules).
+  const h2hMap = candidates.length ? await buildH2HMap(candidates) : new Map<string, H2H>();
   const cornMap = ruleTests(rule, (fld) => fld.endsWith("corners_avg"))
     ? await buildCornerFormMap(Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null))))
     : new Map<number, CornForm>();
