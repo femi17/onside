@@ -1045,31 +1045,57 @@ function h2hVeto(mk: string | null, side: string | null, line: number | null, pe
   }
 }
 
-// 🧭 Recent-form sense check — implicit, always on (owner-approved 2026-08-16, replayed first):
-// even with no rule, a pick that both teams' own displayed last-5 form EXTREMELY contradicts is
-// dropped — same philosophy as h2hVeto and the Onside Guide (the card SHOWS the form; a pick that
-// visibly contradicts its own evidence never ships). Conservative on purpose: a team must have a
-// FULL 5 recent games on record (thin data never vetoes), only extreme contradictions fire, and
-// only full-time goal/result markets are screened — corners/cards/half bets exempt. Replayed over
-// every settled delivery with a stored form snapshot before shipping: ZERO would have been vetoed
-// — a pure backstop, it costs nothing on the picks the engine already makes.
+// 🧭 Recent-form sense check — implicit, always on (owner-approved 2026-08-16, replayed first;
+// extended same day to ALL user-choosable outcomes on owner ruling): even with no rule, a pick
+// that both teams' own displayed last-5 form EXTREMELY contradicts is dropped — same philosophy as
+// h2hVeto and the Onside Guide (the card SHOWS the form; a pick that visibly contradicts its own
+// evidence never ships). Conservative on purpose: a team must have a FULL 5 recent games on record
+// (thin data never vetoes) and only extreme contradictions fire. Covers every goal-total line at
+// any period (share-scaled), to-score/btts/team totals, win variants, clean sheets. Corners/cards
+// (goal form says nothing) and draw/DC/DNB/odd-even/exotics (form can't contradict them) stay with
+// the model bar. Replays before each shipping: v1 vetoed ZERO settled picks; the extension vetoed
+// 4 (2W/2L, a 50% set vs 70% kept) — drops below-average picks at no net cost.
 function formVeto(mk: string | null, side: string | null, line: number | null, period: string | null | undefined, hf?: Form, af?: Form): boolean {
-  if (period && period !== "ft") return false;
-  let key = mk ?? "";
-  if (key === "total_goals_ou" && line != null && side) key = `${side}_${String(line).replace(".", "_")}`;
+  const per = period ?? "ft";
+  // period share mirrors the pricing model's half split, so a 1st-half line is judged against
+  // 1st-half-sized goal expectations, not full-game ones
+  const share = per === "1h" ? H1_GOALS : per === "2h" ? 1 - H1_GOALS : 1;
+  const key = mk ?? "";
   const full = (x?: Form): x is Form => !!x && x.n === 5;
   // both sides' last-5 games, averaged: how many total goals does a game involving these teams see
   const comb = full(hf) && full(af) ? ((hf.gf5 + hf.ga5) / 5 + (af.gf5 + af.ga5) / 5) / 2 : null;
-  switch (key) {
-    case "over_2_5": return comb != null && comb < 2.0;    // picked over, but their games barely produce goals
-    case "under_2_5": return comb != null && comb > 3.5;   // picked under in a pair of goal-fests
-    case "home_to_score": return full(hf) && hf.gf5 <= 1;  // one goal (or none) in their last 5 — visibly dry
-    case "away_to_score": return full(af) && af.gf5 <= 1;
-    case "btts": return side !== "no" && ((full(hf) && hf.gf5 <= 1) || (full(af) && af.gf5 <= 1));
-    case "home_win": return full(hf) && hf.losses5 === 5;  // lost all five, picked to win anyway
-    case "away_win": return full(af) && af.losses5 === 5;
-    default: return false;
+  // canonicalise every goal-total to {side, line}: fixed over_x_5/under_x_5 keys + any-line total_goals_ou
+  let gl: number | null = null, gs: string | null = null;
+  const fixed = key.match(/^(over|under)_(\d)_5$/);
+  if (fixed) { gs = fixed[1]; gl = Number(fixed[2]) + 0.5; }
+  else if (key === "total_goals_ou" && line != null && side) { gs = side; gl = line; }
+
+  // dry-team: backed to score (or team-total over / btts-yes) with ≤1 goal in its last 5
+  if (key === "home_to_score" && full(hf) && hf.gf5 <= 1) return true;
+  if (key === "away_to_score" && full(af) && af.gf5 <= 1) return true;
+  if (key === "btts" && side !== "no" && ((full(hf) && hf.gf5 <= 1) || (full(af) && af.gf5 <= 1))) return true;
+  if (key === "home_goals_ou" && side === "over" && full(hf) && hf.gf5 <= 1) return true;
+  if (key === "away_goals_ou" && side === "over" && full(af) && af.gf5 <= 1) return true;
+  // team-total under vs a team scoring a full goal past the line
+  if (key === "home_goals_ou" && side === "under" && full(hf) && line != null && (hf.gf5 / 5) * share > line + (per === "ft" ? 1.0 : 0.5)) return true;
+  if (key === "away_goals_ou" && side === "under" && full(af) && line != null && (af.gf5 / 5) * share > line + (per === "ft" ? 1.0 : 0.5)) return true;
+  // win picks (incl. 1UP/never-down variants) for a team that lost all five
+  if (/^home_win/.test(key) && full(hf) && hf.losses5 === 5) return true;
+  if (/^away_win/.test(key) && full(af) && af.losses5 === 5) return true;
+  // clean sheet / win-to-nil against a side scoring 12+ in its last 5 (2.4 a game)
+  if ((key === "home_clean_sheet" || key === "home_win_to_nil") && full(af) && af.gf5 >= 12) return true;
+  if ((key === "away_clean_sheet" || key === "away_win_to_nil") && full(hf) && hf.gf5 >= 12) return true;
+  // goal totals, ANY line and period: expected pair goals (share-scaled) vs the line. Over needs
+  // the expectation a clear margin BELOW the line to veto; under a full goal ABOVE it (halves get
+  // proportionally tighter margins because the raw numbers are smaller).
+  if (gl != null && comb != null) {
+    const exp = comb * share;
+    if (gs === "over" && exp < gl - (per === "ft" ? 0.5 : 0.25)) return true;
+    if (gs === "under" && exp > gl + (per === "ft" ? 1.0 : 0.5)) return true;
   }
+  // draw / double chance / DNB / odd-even / exact & range / qualify / corners / cards: last-5 goal
+  // form cannot strongly contradict these — the model + market bar governs them
+  return false;
 }
 
 // does the parsed rule test any field matching pred? (filters + branch whens + legacy when_field)
