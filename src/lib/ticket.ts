@@ -682,6 +682,7 @@ export const SCORE_GRADABLE = new Set([
   "double_chance_1x", "double_chance_x2", "double_chance_12",
   "btts", "home_to_score", "away_to_score",
   "over_0_5", "over_1_5", "over_2_5", "over_3_5", "under_2_5", "under_3_5", "total_goals_ou",
+  "home_goals_ou", "away_goals_ou",
   "handicap",
   "exact_goals", "goal_range", "home_goal_range", "away_goal_range",
   "excluded_goals", "excluded_home_goals", "excluded_away_goals",
@@ -706,6 +707,11 @@ export function scoreGrade(mk: string | null, side: string | null, line: number 
     case "under_2_5": return W(h + a < 2.5);
     case "under_3_5": return W(h + a < 3.5);
     case "total_goals_ou": return line == null ? null : W(side === "under" ? h + a < line : h + a > line);
+    case "home_goals_ou": case "away_goals_ou": {
+      if (line == null || !side) return null;
+      const g = mk === "home_goals_ou" ? h : a;
+      return W(side === "under" ? g < line : g > line);
+    }
     case "handicap": {
       if (line == null || !side) return null;
       const adj = side === "home" ? (h + line) - a : (a + line) - h;
