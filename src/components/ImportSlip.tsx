@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { recognizeBet, recognizedFromClassification, canonicalMarket } from "@/lib/betCatalog";
+import { settleFixtureByScore } from "@/lib/settle";
 
 // same normalisation parse-slip uses, so the alias we teach here matches next time
 const norm = (s: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
@@ -575,6 +576,25 @@ export default function ImportSlip({
     // and the "N/M legs" readouts match what actually attached
     if (!error && accumulatorId && attached !== chosen.length) {
       await supabase.from("accumulators").update({ leg_count: attached }).eq("id", accumulatorId);
+    }
+    // A slip can contain games that already FINISHED (uploaded after the fact). Grade those legs
+    // right now from the final score instead of leaving them pending with a manual settle button —
+    // poll settles on status transitions, and a fixture that finished BEFORE the ticket existed
+    // never transitions again. settleFixtureByScore grades every score-gradable market and fans
+    // the result to the acca; non-score markets (halves/corners) correctly stay for manual/poll.
+    if (!error) {
+      const fxIds2 = Array.from(new Set(chosen.map((s) => s.fixture_id!)));
+      const { data: finishedFx } = await supabase
+        .from("fixtures")
+        .select("id, ft_home, ft_away, home_goals, away_goals")
+        .in("id", fxIds2)
+        .in("status", ["FT", "AET", "PEN"]);
+      for (const f of finishedFx ?? []) {
+        const h = (f.ft_home ?? f.home_goals) as number | null, a = (f.ft_away ?? f.away_goals) as number | null;
+        if (h != null && a != null) {
+          try { await settleFixtureByScore(supabase, f.id as number, h, a); } catch { /* poll's sweep can pick it up */ }
+        }
+      }
     }
     setBusy(null);
     if (error) {
