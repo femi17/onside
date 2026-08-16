@@ -1631,6 +1631,20 @@ async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string, m
 async function runStrategy(strategy: any, model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>): Promise<number> {
   const nowIso = new Date().toISOString();
   const tz = strategy.timezone || "Africa/Lagos";
+
+  // ATOMIC RUN CLAIM — the creation invoke and the every-minute cron can both find the same
+  // agent runnable in the same window (last_run_at was only stamped at the END of a run, so a
+  // cron tick that fired mid-run started a SECOND run and the per-run cap was breached across
+  // the pair: 50 + 7 = 57 delivered against a cap of 50). Claim the run FIRST with a
+  // compare-and-set on last_run_at: exactly one runner flips it, the loser sees 0 rows and
+  // walks away. The end-of-run stamp remains as the "finished at" refresh.
+  {
+    let claimQ = sb.from("strategies").update({ last_run_at: nowIso }).eq("id", strategy.id);
+    claimQ = strategy.last_run_at == null ? claimQ.is("last_run_at", null) : claimQ.eq("last_run_at", strategy.last_run_at);
+    const { data: claimed } = await claimQ.select("id");
+    if (!claimed?.length) return 0; // another runner already claimed this run
+  }
+
   const learned = await learnAdjust(strategy, memM);
   if (learned && learned.next !== strategy.min_edge) {
     const prev = strategy.min_edge ?? 0;
