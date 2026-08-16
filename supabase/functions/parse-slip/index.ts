@@ -133,6 +133,14 @@ const subsetEither = (x: string, y: string) => subsetOf(x, y) || subsetOf(y, x);
 // two built rows are the same bet on the same game: same market/line/side (custom keyed on its
 // value/label), then same fixture when both matched, else subset-compatible names with a real overlap.
 function sameBet(a: any, b: any): boolean {
+  // SAME FIXTURE + SAME PRINTED PICK TEXT = the same slip leg, even when two vision passes worded
+  // the label differently and the recognizer classified different keys ("Handicap 0:2 — Away (0:2)"
+  // → custom vs "Handicap 0:2" → away_win: the 39-leg slip that returned 63). Two genuinely
+  // different bets on one game keep different value strings, so they stay apart.
+  if (a.fixture_id && b.fixture_id && a.fixture_id === b.fixture_id) {
+    const av = norm(String(a.value ?? a.market_label ?? "")), bv = norm(String(b.value ?? b.market_label ?? ""));
+    if (av && bv && (av === bv || av.includes(bv) || bv.includes(av))) return true;
+  }
   if (a.market_key !== b.market_key) return false;
   if ((a.line ?? "") !== (b.line ?? "")) return false;
   if ((a.side ?? "") !== (b.side ?? "")) return false;
@@ -140,8 +148,8 @@ function sameBet(a: any, b: any): boolean {
   if (a.fixture_id && b.fixture_id) return a.fixture_id === b.fixture_id;
   return subsetEither(a.home, b.home) && subsetEither(a.away, b.away) && (tokOverlap(a.home, b.home) || tokOverlap(a.away, b.away));
 }
-// prefer a leg matched to a fixture, then a high-confidence read
-const legRank = (s: any) => (s.fixture_id ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+// prefer a matched leg, then a properly classified (gradeable, non-custom) read, then high confidence
+const legRank = (s: any) => (s.fixture_id ? 4 : 0) + (s.market_key && s.market_key !== "custom" ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
 
 // total Over/Under key -> {side, line}; null for anything else (incl. corners). Used to remap a
 // total O/U to a TEAM total when the printed market text names one of the two teams.

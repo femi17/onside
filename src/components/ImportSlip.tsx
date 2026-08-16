@@ -46,6 +46,13 @@ function nameSources(s: MergeLeg): { homes: string[]; aways: string[] } {
 // lets a fuller later read UPGRADE an earlier partial one in place instead of duplicating or being
 // skipped as "already read".
 function sameBet(a: MergeLeg, b: MergeLeg): boolean {
+  // SAME FIXTURE + SAME PRINTED PICK TEXT = the same slip leg, even when two overlapping reads
+  // worded the label differently and classified different market keys (custom vs away_win) —
+  // mirrors the server-side fold in parse-slip. Different bets keep different value strings.
+  if (a.fixture_id && b.fixture_id && a.fixture_id === b.fixture_id) {
+    const av = norm(String(a.value ?? a.market_label ?? "")), bv = norm(String(b.value ?? b.market_label ?? ""));
+    if (av && bv && (av === bv || av.includes(bv) || bv.includes(av))) return true;
+  }
   if (a.market_key !== b.market_key) return false;
   if ((a.line ?? "") !== (b.line ?? "")) return false;
   if ((a.side ?? "") !== (b.side ?? "")) return false;
@@ -74,8 +81,8 @@ function collapseDupes<T extends MergeLeg & { on?: boolean }>(list: T[]): T[] {
   }
   return out;
 }
-// prefer a leg matched to a fixture, then a high-confidence read
-const legRank = (s: MergeLeg) => (s.fixture_id ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+// prefer a matched leg, then a properly classified (gradeable, non-custom) read, then high confidence
+const legRank = (s: MergeLeg) => (s.fixture_id ? 4 : 0) + (s.market_key && s.market_key !== "custom" ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
 
 // The vision API downscales any single image to ~1.15MP, so a tall stacked accumulator
 // loses per-leg resolution and the lower legs go unread. Slice a tall screenshot into
@@ -178,6 +185,8 @@ export default function ImportSlip({
   const [busy, setBusy] = useState<null | "reading" | "tracking">(null);
   const [sels, setSels] = useState<Sel[] | null>(null);
   const [slipMeta, setSlipMeta] = useState<SlipMeta | null>(null);
+  // the leg count printed on the slip (from the read) — warns when the review list over-reads
+  const [expectedLegs, setExpectedLegs] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   // reads consumed in this session — quota is checked server-side, but we mirror it
   // here so the UI can stop them before a call goes out (and before they get charged)
@@ -249,6 +258,7 @@ export default function ImportSlip({
   function reset() {
     setSels(null);
     setSlipMeta(null);
+    setExpectedLegs(null);
     setMsg(null);
     setOk(null);
     setBusy(null);
@@ -295,6 +305,10 @@ export default function ImportSlip({
         throw new Error(detail);
       }
       const parsed = (data?.selections ?? []) as Omit<Sel, "on">[];
+      // the leg/fold count PRINTED on the slip ("20 selections") — kept so the review list can
+      // warn when the read disagrees (an over-read means a duplicate or phantom leg to untick)
+      const exp = Number(data?.expected ?? 0);
+      if (exp > 0) setExpectedLegs((p) => Math.max(p ?? 0, exp));
       // keep the first non-null money values seen — a later screenshot of the same slip
       // (more legs, no totals in frame) must not wipe what an earlier read captured
       const meta = data?.slip as SlipMeta | undefined;
@@ -641,8 +655,15 @@ export default function ImportSlip({
               <>
                 <div className="mt-4 flex items-center justify-between">
                   <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">Select the games you played</span>
-                  <span className="font-mono text-[11px] text-flood-deep">{sels.length} read</span>
+                  <span className={`font-mono text-[11px] ${expectedLegs != null && sels.length !== expectedLegs ? "font-bold text-brick" : "text-flood-deep"}`}>
+                    {sels.length} read{expectedLegs != null && sels.length !== expectedLegs ? ` · slip says ${expectedLegs}` : ""}
+                  </span>
                 </div>
+                {expectedLegs != null && sels.length > expectedLegs && (
+                  <p className="mt-1.5 rounded-lg border border-brick/30 bg-brick/[0.06] px-2.5 py-1.5 text-[11.5px] leading-snug text-brick">
+                    The slip prints {expectedLegs} legs but {sels.length} were read — one may be a duplicate or a stray row from the screenshot edge. Untick anything you didn&apos;t play.
+                  </p>
+                )}
                 <div className="no-scrollbar mt-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
                   {sels.map((s, i) => {
                     const trackable = !!s.fixture_id;
