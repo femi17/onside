@@ -1756,7 +1756,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const cornMap = ruleTests(rule, (fld) => fld.endsWith("corners_avg"))
     ? await buildCornerFormMap(Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null))))
     : new Map<number, CornForm>();
-  const ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap)).slice(0, room);
+  let ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap)).slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
   // head-to-head pulled live from API-Football (all competitions, not just what we've synced),
@@ -1784,6 +1784,48 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         ...(cellR?.card?.ok ? { cards_exp: Math.round((cellR.card.lh + cellR.card.la) * 10) / 10 } : {}),
       });
     }
+  }
+
+  // 🛡️ Onside Guide at the SOURCE (owner-ruled 2026-08-16): before anything is stored or sent,
+  // re-verify the rule's form-checkable conditions against the SAME last-5 numbers the pick will
+  // DISPLAY (the reasons block, API-enriched) and drop failures — so the feed, the strategy page's
+  // delivered count, Telegram, the live icon and the daily budget all agree on what was delivered.
+  // Selection-time evaluation uses DB-window form which can disagree with the displayed last-5;
+  // this closes that gap at the only place every consumer shares. Unverifiable fields never drop
+  // a pick; odds/model/h2h fields were already evaluated at selection. The read-time page Guide
+  // remains as a safety net for older rows.
+  if (rule && Array.isArray(rule.filters) && rule.filters.length && ranked.length) {
+    const per = (ff: any) => (ff && ff.n ? (ff.gf + ff.ga) / ff.n : null);
+    const gfAvg = (ff: any) => (ff && ff.n ? ff.gf / ff.n : null);
+    const ppgOf = (ff: any) => (ff && ff.n ? (3 * ff.w + ff.d) / ff.n : null);
+    const displayVal = (field: string, hf: any, af: any): number | null => {
+      switch (field) {
+        case "home_goals_avg": return gfAvg(hf);
+        case "away_goals_avg": return gfAvg(af);
+        case "home_goals_blend": return per(hf);
+        case "away_goals_blend": return per(af);
+        case "goals_blend": { const h = per(hf), a = per(af); return h != null && a != null ? (h + a) / 2 : null; }
+        case "min_goals_blend": { const h = per(hf), a = per(af); return h != null && a != null ? Math.min(h, a) : null; }
+        case "home_wins_last5": return hf?.w ?? null;
+        case "away_wins_last5": return af?.w ?? null;
+        case "home_form_ppg": return ppgOf(hf);
+        case "away_form_ppg": return ppgOf(af);
+        default: return null;
+      }
+    };
+    ranked = ranked.filter((r) => {
+      const rs: any = reasonsByFx.get(r.f.id);
+      const hf = rs?.home_form ?? null, af = rs?.away_form ?? null;
+      for (const c of rule.filters) {
+        const x = displayVal(c.field, hf, af);
+        if (x == null) continue;
+        const ok = c.op === "gte" ? x >= c.value : c.op === "lte" ? x <= c.value : c.op === "gt" ? x > c.value
+          : c.op === "lt" ? x < c.value : c.op === "eq" ? Math.abs(x - c.value) < 1e-9
+          : c.op === "between" ? x >= c.value && x <= (c.value2 ?? c.value) : true;
+        if (!ok) return false;
+      }
+      return true;
+    });
   }
 
   const rows = ranked.map((r) => {
