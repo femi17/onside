@@ -1045,6 +1045,33 @@ function h2hVeto(mk: string | null, side: string | null, line: number | null, pe
   }
 }
 
+// 🧭 Recent-form sense check — implicit, always on (owner-approved 2026-08-16, replayed first):
+// even with no rule, a pick that both teams' own displayed last-5 form EXTREMELY contradicts is
+// dropped — same philosophy as h2hVeto and the Onside Guide (the card SHOWS the form; a pick that
+// visibly contradicts its own evidence never ships). Conservative on purpose: a team must have a
+// FULL 5 recent games on record (thin data never vetoes), only extreme contradictions fire, and
+// only full-time goal/result markets are screened — corners/cards/half bets exempt. Replayed over
+// every settled delivery with a stored form snapshot before shipping: ZERO would have been vetoed
+// — a pure backstop, it costs nothing on the picks the engine already makes.
+function formVeto(mk: string | null, side: string | null, line: number | null, period: string | null | undefined, hf?: Form, af?: Form): boolean {
+  if (period && period !== "ft") return false;
+  let key = mk ?? "";
+  if (key === "total_goals_ou" && line != null && side) key = `${side}_${String(line).replace(".", "_")}`;
+  const full = (x?: Form): x is Form => !!x && x.n === 5;
+  // both sides' last-5 games, averaged: how many total goals does a game involving these teams see
+  const comb = full(hf) && full(af) ? ((hf.gf5 + hf.ga5) / 5 + (af.gf5 + af.ga5) / 5) / 2 : null;
+  switch (key) {
+    case "over_2_5": return comb != null && comb < 2.0;    // picked over, but their games barely produce goals
+    case "under_2_5": return comb != null && comb > 3.5;   // picked under in a pair of goal-fests
+    case "home_to_score": return full(hf) && hf.gf5 <= 1;  // one goal (or none) in their last 5 — visibly dry
+    case "away_to_score": return full(af) && af.gf5 <= 1;
+    case "btts": return side !== "no" && ((full(hf) && hf.gf5 <= 1) || (full(af) && af.gf5 <= 1));
+    case "home_win": return full(hf) && hf.losses5 === 5;  // lost all five, picked to win anyway
+    case "away_win": return full(af) && af.losses5 === 5;
+    default: return false;
+  }
+}
+
 // does the parsed rule test any field matching pred? (filters + branch whens + legacy when_field)
 function ruleTests(rule: RuleParsed | null, pred: (f: string) => boolean): boolean {
   if (!rule) return false;
@@ -1411,6 +1438,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const deferred: Cond[] = []; // base-market filters a set can only test after choosing
     // this matchup's own history — powers explicit h2h_* rule fields AND the implicit sense check
     const h2hPair = f.home_team_id != null && f.away_team_id != null ? h2hMap.get(pairKey(f.home_team_id, f.away_team_id)) : undefined;
+    // each team's last-5 form — powers the implicit recent-form sense check (formVeto)
+    const hForm = f.home_team_id != null ? formMap.get(f.home_team_id) : undefined;
+    const aForm = f.away_team_id != null ? formMap.get(f.away_team_id) : undefined;
 
     // Rules apply to EVERY strategy, including sets (families/mixes): filters gate the game,
     // select branches choose the market. Form + opponent-strength signals are available here.
@@ -1477,14 +1507,17 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const chosen = await pickBest(mixCands ?? FAMILIES[baseMk] ?? [], cell, f, key, strategy.min_edge ?? 0);
       if (!chosen) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
-      // implicit H2H sense check on the market the set actually chose
+      // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
+      if (formVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, hForm, aForm)) continue;
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
       continue;
     }
 
-    // implicit H2H sense check — the pick's market vs this matchup's own history (see h2hVeto)
+    // implicit H2H + recent-form sense checks — the pick's market vs this matchup's own history
+    // (h2hVeto) and vs each team's own last-5 form (formVeto)
     if (h2hVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", f, h2hPair)) continue;
+    if (formVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", hForm, aForm)) continue;
 
     // single-market path prices through the same router as sets, so periods (1st/2nd half),
     // corners, cards and every canonicalised catalog key work here too
@@ -1758,10 +1791,9 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   }
 
   const rule: RuleParsed | null = strategy.rule_parsed ?? null;
-  // Only compute recent-form signals when a rule is actually in play (keeps the common path fast).
-  const teamIds = rule
-    ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
-    : [];
+  // Recent form is built EVERY run (like H2H below) — it powers explicit rule fields AND the
+  // always-on implicit sense check (formVeto), so no-rule agents get the same screen.
+  const teamIds = Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)));
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
   // H2H is built EVERY run — it powers explicit h2h_* rule fields AND the always-on implicit
   // sense check (h2hVeto). Corner history stays gated to rules that actually test corner fields
