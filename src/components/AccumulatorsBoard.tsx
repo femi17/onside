@@ -374,12 +374,21 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
           <div className="text-right font-mono">
             {hasStake ? (
               <>
-                {/* one line on mobile: shorter label + smaller amount so ₦13M-scale numbers don't wrap */}
-                <div className="whitespace-nowrap text-[13px] text-ink-mute">
-                  stake <b className="font-bold text-ink">{money(acca.currency, acca.stake)}</b> → <span className="sm:hidden">pot</span><span className="hidden sm:inline">potential</span>
+                {/* mobile: stake AND the potential on ONE line (smaller figure so ₦13M-scale
+                    numbers still fit); desktop keeps the two-line layout with the big figure */}
+                <div className="whitespace-nowrap text-[12.5px] text-ink-mute sm:hidden">
+                  stake <b className="font-bold text-ink">{money(acca.currency, acca.stake)}</b> →{" "}
+                  <span className={`font-disp text-[15px] font-extrabold tracking-tight ${dead ? "text-brick line-through decoration-2" : won ? "text-grass-deep" : "text-ink"}`}>
+                    {money(acca.currency, acca.potential_return)}
+                  </span>
                 </div>
-                <div className={`mt-0.5 whitespace-nowrap font-disp text-xl font-extrabold tracking-tight sm:text-2xl ${dead ? "text-brick line-through decoration-2" : won ? "text-grass-deep" : "text-ink"}`}>
-                  {money(acca.currency, acca.potential_return)}
+                <div className="hidden sm:block">
+                  <div className="whitespace-nowrap text-[13px] text-ink-mute">
+                    stake <b className="font-bold text-ink">{money(acca.currency, acca.stake)}</b> → potential
+                  </div>
+                  <div className={`mt-0.5 whitespace-nowrap font-disp text-2xl font-extrabold tracking-tight ${dead ? "text-brick line-through decoration-2" : won ? "text-grass-deep" : "text-ink"}`}>
+                    {money(acca.currency, acca.potential_return)}
+                  </div>
                 </div>
               </>
             ) : (
