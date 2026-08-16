@@ -706,10 +706,17 @@ export function scoreGrade(mk: string | null, side: string | null, line: number 
     case "over_3_5": return W(h + a > 3.5);
     case "under_2_5": return W(h + a < 2.5);
     case "under_3_5": return W(h + a < 3.5);
-    case "total_goals_ou": return line == null ? null : W(side === "under" ? h + a < line : h + a > line);
+    // WHOLE-NUMBER lines (Over 2, Under 3...) PUSH on an exact hit — stake back, not lost/won
+    // (mirrors the poll engine's grader; null maps to "void" at every call site)
+    case "total_goals_ou": {
+      if (line == null) return null;
+      if (Number.isInteger(line) && h + a === line) return null; // push → void
+      return W(side === "under" ? h + a < line : h + a > line);
+    }
     case "home_goals_ou": case "away_goals_ou": {
       if (line == null || !side) return null;
       const g = mk === "home_goals_ou" ? h : a;
+      if (Number.isInteger(line) && g === line) return null; // push → void
       return W(side === "under" ? g < line : g > line);
     }
     case "handicap": {
