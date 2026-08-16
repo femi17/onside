@@ -426,6 +426,14 @@ export default function ImportSlip({
     }
     setBusy("tracking");
     setMsg(null);
+    // Currency comes from the slip ONLY when a symbol/code was actually printed on it (the reader
+    // no longer guesses from the bookmaker). With none printed, use the USER'S OWN currency from
+    // their profile — a Nigerian's symbol-less slip is naira, not whatever the bookmaker suggests.
+    let slipCurrency = slipMeta?.currency || null;
+    if (!slipCurrency) {
+      const { data: prof } = await supabase.from("profiles").select("currency").eq("id", userId).maybeSingle();
+      slipCurrency = prof?.currency ?? "NGN";
+    }
     let accumulatorId: string | null = null;
     if (chosen.length >= 2) {
       const { data: acca, error } = await supabase
@@ -439,9 +447,7 @@ export default function ImportSlip({
           bookmaker: slipMeta?.bookmaker ?? null,
           stake: slipMeta?.stake ?? null,
           potential_return: slipMeta?.potential_return ?? null,
-          // currency is NOT NULL (default NGN); an explicit null bypasses the default and errors,
-          // so fall back to NGN when the slip didn't show a currency
-          currency: slipMeta?.currency ?? "NGN",
+          currency: slipCurrency,
         })
         .select("id")
         .single();

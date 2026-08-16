@@ -84,7 +84,7 @@ When there is no extra value, set value to "". line: the numeric goal/corner lin
 Also fill the top-level "slip" object from the slip's money summary (usually at the top or bottom):
 - stake: the TOTAL amount wagered ("Stake", "Total Stake", "Amount"). Strip currency symbols and thousands separators: "₦5,000.00" -> 5000.
 - potential_return: the potential winnings ("Potential Win", "Possible Win", "To Return", "Est. Payout", "Potential Return"). If the slip shows both a base win and a final amount with bonus, use the FINAL payout amount.
-- currency: a 3-letter code inferred from the symbol or text: ₦/NGN -> "NGN", GH₵/GHS -> "GHS", KSh/KES -> "KES", TSh -> "TZS", USh -> "UGX", R -> "ZAR", $ -> "USD", € -> "EUR", £ -> "GBP"; otherwise the symbol exactly as printed.
+- currency: a 3-letter code ONLY when a currency symbol or code is actually PRINTED next to the amounts: ₦/NGN -> "NGN", GH₵/GHS -> "GHS", KSh/KES -> "KES", TSh -> "TZS", USh -> "UGX", R -> "ZAR", $ -> "USD", € -> "EUR", £ -> "GBP". If the amounts carry NO symbol or code, return "" — NEVER infer the currency from the bookmaker, the language, or the leagues on the slip (the app fills it from the user's own account).
 - bookmaker: the bookmaker's name if identifiable from the slip's branding/layout (e.g. "SportyBet", "Bet365", "1xBet", "Betway", "BetKing", "MSport", "Paripesa").
 - leg_count: the selection/fold count PRINTED on the slip (e.g. "32 Games", "15-fold", "8 selections"); 0 if none is shown. This is used to verify you returned every leg.
 Use 0 for any amount that is not visible and "" for unknown currency/bookmaker. Never invent amounts.
