@@ -59,8 +59,11 @@ function legCat(leg: TrackedTicket, ms: MatchState | null): Cat {
   return "soon";
 }
 
+// show the currency AS THE SLIP SHOWS IT: proper symbols for the common ones, the ISO code
+// as a fallback for anything exotic. ₦ stays the default when the slip carried no currency.
+const CUR_SYM: Record<string, string> = { NGN: "₦", USD: "$", EUR: "€", GBP: "£", GHS: "GH₵", KES: "KSh ", ZAR: "R" };
 const money = (cur: string | null, n: number | null) => {
-  const sym = cur === "NGN" || cur == null ? "₦" : `${cur} `;
+  const sym = cur == null ? "₦" : (CUR_SYM[cur] ?? `${cur} `);
   return `${sym}${Number(n ?? 0).toLocaleString()}`;
 };
 
