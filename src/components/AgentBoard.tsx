@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { type TrackedTicket, stateOf, liveTrack, groupOf, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
+import { type TrackedTicket, stateOf, liveTrack, groupOf, SCORE_GRADABLE, scoreGrade, periodTeamCorners } from "@/lib/ticket";
 import { settleFixtureByScore, voidFixture } from "@/lib/settle";
 import { canonicalMarket } from "@/lib/betCatalog";
 import { useMinuteTick } from "@/lib/useMinuteTick";
@@ -292,7 +292,15 @@ function Item({
 
   // result/status chip — on mobile it stays short (scoreline; the left Marker carries the
   // won/lost/live icon), on desktop it spells the result out ("Landed 2–1"). Frees room for teams.
-  const score = ms?.score ?? p.settle_score ?? null;
+  // Corner bets show the CORNER count (e.g. 9–3), not the goal scoreline — the goals are noise for
+  // what this bet is about. periodTeamCorners is period-aware (1h/2h via the HT snapshot) and the
+  // fixture-stats snapshot survives FT, so settled corner picks read their final counts too.
+  const cornerBet = /corner/.test(p.market_key ?? "");
+  const cornH = cornerBet ? periodTeamCorners(p, "home") : null;
+  const cornA = cornerBet ? periodTeamCorners(p, "away") : null;
+  const score = cornerBet
+    ? cornH != null && cornA != null ? `${cornH}–${cornA}` : p.settle_score ?? null
+    : ms?.score ?? p.settle_score ?? null;
   const liveMin = ms?.label?.split("·").pop()?.trim() ?? "";
   let chipMobile = "";
   let chipDesktop = "";
