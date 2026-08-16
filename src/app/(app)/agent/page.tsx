@@ -238,6 +238,7 @@ export default async function AgentPage() {
       const key = rec?.gradeable ? rec.marketKey : null;
       const period = rec?.period ?? "ft";
       const finished = ["FT", "AET", "PEN"].includes((fx.status as string) ?? "");
+      const liveNow = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "SUSP", "INT"].includes((fx.status as string) ?? "");
       const h = Number(fx.ft_home ?? fx.home_goals ?? 0), a = Number(fx.ft_away ?? fx.away_goals ?? 0);
       let status = "pending";
       if (finished) {
@@ -245,6 +246,20 @@ export default async function AgentPage() {
           ? scoreGrade(key, rec?.side ?? null, rec?.line ?? null, h, a, rec?.value ?? null)
           : null;
         status = g ?? "void";
+      } else if (liveNow && key && period === "ft") {
+        // monotonic markets lock WON the moment they clear mid-game (mirrors poll's early settle) —
+        // a to-score/over/btts leg whose goal already happened shows its tick even without a delivery
+        const earlyWon =
+          key === "home_to_score" ? h > 0 :
+          key === "away_to_score" ? a > 0 :
+          key === "btts" ? h > 0 && a > 0 :
+          key === "over_0_5" ? h + a > 0.5 :
+          key === "over_1_5" ? h + a > 1.5 :
+          key === "over_2_5" ? h + a > 2.5 :
+          key === "over_3_5" ? h + a > 3.5 :
+          key === "total_goals_ou" && rec?.side === "over" && rec?.line != null ? h + a > rec.line :
+          false;
+        if (earlyWon) status = "won";
       }
       doubleDeliveries[l.delivery_id] = {
         id: l.delivery_id,
