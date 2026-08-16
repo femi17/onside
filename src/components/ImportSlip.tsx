@@ -347,6 +347,43 @@ export default function ImportSlip({
         // that only became matchable to an earlier one via its RESOLVED name is caught by this final
         // full-list collapse. Recompute added so the success message reflects what's actually shown.
         const deduped = collapseDupes(next);
+        // RECONCILE TO THE SLIP'S PRINTED COUNT: when more legs are ticked than the slip says it
+        // has, auto-untick the most-suspicious extras (never delete — the user can re-tick):
+        // 1) doubled fixtures (a real slip ~never repeats a game; when over-count, the double is a
+        //    missed dupe) keep only their best-ranked read ticked; 2) unmatched low-confidence
+        //    (phantom strip-edge rows); 3) unmatched; 4) low-confidence. Ticked count == slip count
+        //    with zero manual unchecking in the common case.
+        const expNow = Math.max(exp, expectedLegs ?? 0);
+        if (expNow > 0) {
+          const onCount = () => deduped.filter((s) => s.on).length;
+          if (onCount() > expNow) {
+            const seenFx = new Map<number, number>(); // fixture -> index of best ticked read
+            for (let i = 0; i < deduped.length; i++) {
+              const s = deduped[i];
+              if (!s.on || !s.fixture_id) continue;
+              const prevIdx = seenFx.get(s.fixture_id);
+              if (prevIdx == null) { seenFx.set(s.fixture_id, i); continue; }
+              // doubled fixture — untick the lower-ranked read
+              if (legRank(deduped[i]) > legRank(deduped[prevIdx])) {
+                deduped[prevIdx] = { ...deduped[prevIdx], on: false };
+                seenFx.set(s.fixture_id, i);
+              } else {
+                deduped[i] = { ...deduped[i], on: false };
+              }
+            }
+            const tiers: ((s: Sel) => boolean)[] = [
+              (s) => !s.fixture_id && s.confidence !== "high",
+              (s) => !s.fixture_id,
+              (s) => s.confidence !== "high",
+            ];
+            for (const suspect of tiers) {
+              if (onCount() <= expNow) break;
+              for (let i = deduped.length - 1; i >= 0 && onCount() > expNow; i--) {
+                if (deduped[i].on && suspect(deduped[i])) deduped[i] = { ...deduped[i], on: false };
+              }
+            }
+          }
+        }
         added = Math.max(0, deduped.length - (prev?.length ?? 0));
         total = deduped.length;
         return deduped;
@@ -653,17 +690,31 @@ export default function ImportSlip({
 
             {sels && sels.length > 0 && (
               <>
-                <div className="mt-4 flex items-center justify-between">
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">Select the games you played</span>
-                  <span className={`font-mono text-[11px] ${expectedLegs != null && sels.length !== expectedLegs ? "font-bold text-brick" : "text-flood-deep"}`}>
-                    {sels.length} read{expectedLegs != null && sels.length !== expectedLegs ? ` · slip says ${expectedLegs}` : ""}
-                  </span>
-                </div>
-                {expectedLegs != null && sels.length > expectedLegs && (
-                  <p className="mt-1.5 rounded-lg border border-brick/30 bg-brick/[0.06] px-2.5 py-1.5 text-[11.5px] leading-snug text-brick">
-                    The slip prints {expectedLegs} legs but {sels.length} were read — one may be a duplicate or a stray row from the screenshot edge. Untick anything you didn&apos;t play.
-                  </p>
-                )}
+                {(() => {
+                  const ticked = sels.filter((s) => s.on).length;
+                  const extras = sels.length - ticked;
+                  const short = expectedLegs != null && ticked < expectedLegs;
+                  return (
+                    <>
+                      <div className="mt-4 flex items-center justify-between">
+                        <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">Select the games you played</span>
+                        <span className={`font-mono text-[11px] ${short ? "font-bold text-brick" : "text-flood-deep"}`}>
+                          {ticked} ticked{expectedLegs != null ? ` · slip says ${expectedLegs}` : ""}
+                        </span>
+                      </div>
+                      {expectedLegs != null && ticked === expectedLegs && extras > 0 && (
+                        <p className="mt-1.5 rounded-lg border border-ink/15 bg-ink/[0.04] px-2.5 py-1.5 text-[11.5px] leading-snug text-ink-mute">
+                          {extras} extra read{extras === 1 ? "" : "s"} left unticked below — likely duplicates from overlapping screenshots. Tick any you actually played.
+                        </p>
+                      )}
+                      {short && (
+                        <p className="mt-1.5 rounded-lg border border-brick/30 bg-brick/[0.06] px-2.5 py-1.5 text-[11.5px] leading-snug text-brick">
+                          Only {ticked} of the slip&apos;s {expectedLegs} legs are matched and ticked — use &ldquo;Find game&rdquo; on the unmatched rows (or upload a clearer screenshot) to complete it.
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 <div className="no-scrollbar mt-2 flex max-h-[46vh] flex-col gap-2 overflow-y-auto">
                   {sels.map((s, i) => {
                     const trackable = !!s.fixture_id;
