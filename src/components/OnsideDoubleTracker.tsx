@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { type TrackedTicket, stateOf } from "@/lib/ticket";
+import { type TrackedTicket, stateOf, periodTeamCorners, cardTally } from "@/lib/ticket";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import type { MatchState } from "@/lib/matchState";
 
@@ -80,12 +80,28 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
+// corner/card legs read their own event count (home–away), never the goal scoreline (owner-ruled)
+function eventScore(del: LegDelivery): string | null {
+  const mk = del.market_key ?? "";
+  if (/corner/.test(mk)) {
+    const ch = periodTeamCorners(del, "home"), ca = periodTeamCorners(del, "away");
+    if (ch != null && ca != null) return `${ch}–${ca}`;
+    return del.current_value != null ? `${del.current_value} corners` : "—";
+  }
+  if (/card|booking/.test(mk)) {
+    if ((del.fixtures?.events ?? []).length) return `${cardTally(del, "home")}–${cardTally(del, "away")}`;
+    return del.current_value != null ? `${del.current_value}` : "—";
+  }
+  return null;
+}
+
 function LegRow({ leg, del, nowMs }: { leg: DoubleLeg; del: LegDelivery | null; nowMs: number }) {
   const ms = del ? stateOf(del, nowMs) : null;
   const cat = legCat(del, ms);
   const f = del?.fixtures ?? null;
 
   const voided = del?.status === "void";
+  const ev = del ? eventScore(del) : null;
   let sc = "";
   let mn = "";
   if (voided) {
@@ -93,13 +109,13 @@ function LegRow({ leg, del, nowMs }: { leg: DoubleLeg; del: LegDelivery | null; 
     sc = "—";
     mn = "void";
   } else if (cat === "safe") {
-    sc = ms?.score ?? "✓";
+    sc = ev ?? ms?.score ?? "✓";
     mn = del?.status === "won" ? "landed" : "FT";
   } else if (cat === "cut") {
-    sc = ms?.score ?? "✕";
+    sc = ev ?? ms?.score ?? "✕";
     mn = "cut";
   } else if (cat === "live") {
-    sc = ms?.score ?? "live";
+    sc = ev ?? ms?.score ?? "live";
     mn = ms?.label ?? "live";
   } else {
     sc = `${leg.prob}%`;

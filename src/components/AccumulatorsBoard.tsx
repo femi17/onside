@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
-import { type TrackedTicket, stateOf, liveTrack, SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
+import { type TrackedTicket, stateOf, liveTrack, SCORE_GRADABLE, scoreGrade, periodTeamCorners, cardTally } from "@/lib/ticket";
 import { settleFixtureByScore, voidFixture } from "@/lib/settle";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import { usePulse } from "@/lib/usePulse";
@@ -84,6 +84,25 @@ function LeagueTag({ lg }: { lg: { name: string; flag_url: string | null; tier: 
   );
 }
 
+// Corner/card bets read their OWN event counts (home–away), never the goal scoreline — the goals
+// are noise for what the bet is about (owner-ruled). Corners come from the fixture-stats snapshot
+// (period-aware, survives FT); cards from the timed events, counted as settlement counts them.
+// Falls back to the stored running total, then a dash — never to the goal score.
+function eventScore(leg: AccaLeg): string | null {
+  const mk = leg.market_key ?? "";
+  if (/corner/.test(mk)) {
+    const ch = periodTeamCorners(leg, "home"), ca = periodTeamCorners(leg, "away");
+    if (ch != null && ca != null) return `${ch}–${ca}`;
+    return leg.current_value != null ? `${leg.current_value} corners` : "—";
+  }
+  if (/card|booking/.test(mk)) {
+    const w = mk === "booking_points_ou" ? { yellow: 10, red: 25 } : undefined;
+    if ((leg.fixtures?.events ?? []).length) return `${cardTally(leg, "home", w)}–${cardTally(leg, "away", w)}`;
+    return leg.current_value != null ? `${leg.current_value}` : "—";
+  }
+  return null;
+}
+
 function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling }: { leg: AccaLeg; nowMs: number; onDetach?: () => void; onTrack?: () => void; onSettle?: (id: string, result: "won" | "lost" | "void", score?: string) => void; busy?: boolean; dead?: boolean; settling?: boolean }) {
   const ms = stateOf(leg, nowMs);
   const cat = legCat(leg, ms);
@@ -96,10 +115,12 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
   const [aStr, setAStr] = useState("");
   const canScore = SCORE_GRADABLE.has(leg.market_key ?? "");
 
+  // corner/card legs show their event count everywhere the goal scoreline would have appeared
+  const ev = eventScore(leg);
   let sc = "";
   let mn = "";
   if (voided) {
-    sc = ms?.score ?? "—";
+    sc = ev ?? ms?.score ?? "—";
     mn = "not counted";
   } else if (cat === "soon") {
     sc = ms?.label ?? "—";
@@ -110,13 +131,13 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
       ? track.under && track.count != null
         ? `${track.count} / ${track.big}`
         : `${track.big}${track.of}`
-      : ms?.score ?? "live";
+      : ev ?? ms?.score ?? "live";
     mn = track?.under ? (track.busted ? "line broken" : `${ms?.label ?? ""} · under`) : ms?.label ?? "";
   } else if (cat === "safe") {
-    sc = ms?.score ?? "✓";
+    sc = ev ?? ms?.score ?? "✓";
     mn = leg.status === "won" ? "landed" : "FT";
   } else {
-    sc = ms?.score ?? "✕";
+    sc = ev ?? ms?.score ?? "✕";
     mn = "cut";
   }
   const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : pulse ? "text-flood-deep" : "text-ink";
