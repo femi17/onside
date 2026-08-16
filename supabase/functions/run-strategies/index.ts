@@ -756,7 +756,7 @@ function handicapLabel(side: string | null, line: number | null): string {
   return `Handicap ${side ?? ""} ${line != null && line > 0 ? "+" : ""}${line ?? ""}`.trim();
 }
 
-const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob","home_score_prob","away_score_prob","home_goals_blend","away_goals_blend","goals_blend","min_goals_blend","home_goals_avg","away_goals_avg"];
+const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob","home_score_prob","away_score_prob","home_goals_blend","away_goals_blend","goals_blend","min_goals_blend","home_goals_avg","away_goals_avg","h2h_n","h2h_over25","h2h_over35","h2h_avg_goals","h2h_btts","home_corners_avg","away_corners_avg","corners_avg"];
 const RULE_MARKETS = ["home_win","away_win","draw","double_chance_1x","double_chance_x2","double_chance_12","over_1_5","over_2_5","over_3_5","under_2_5","under_3_5","btts","home_to_score","away_to_score"];
 const MK_LABEL: Record<string, string> = {
   home_win: "Home win", away_win: "Away win", draw: "Draw",
@@ -789,7 +789,7 @@ type RuleParsed = { filters: Cond[]; select: Branch[] };
 const COND_SCHEMA = { type: "object", additionalProperties: false, properties: { field: { type: "string", enum: RULE_FIELDS }, op: { type: "string", enum: ["lt", "lte", "gt", "gte", "eq", "between"] }, value: { type: "number" }, value2: { type: "number" } }, required: ["field", "op", "value", "value2"] };
 const BRANCH_SCHEMA = { type: "object", additionalProperties: false, properties: { when: { type: "array", items: COND_SCHEMA }, market_key: { type: "string", enum: RULE_MARKETS }, side: { type: "string" }, line: { type: "number" } }, required: ["when", "market_key", "side", "line"] };
 const RULE_SCHEMA = { type: "object", additionalProperties: false, properties: { filters: { type: "array", items: COND_SCHEMA }, select: { type: "array", items: BRANCH_SCHEMA } }, required: ["filters", "select"] };
-const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is. home_score_prob/away_score_prob = the model's probability that the home/away team scores at least one goal, 0-1 — compare the two to pick the team more likely to score. home_goals_blend/away_goals_blend = that team's total goals per game (scored + conceded) over its last 5 — the app's pick text calls this the team's "blend"; goals_blend = the average of the two teams' blends, i.e. the "≈X goals" blend the app shows for the fixture — a bettor saying "blend of 3.0" or "blend is 3.0" means goals_blend gte 3.0 unless they clearly mean less-than; min_goals_blend = the LOWER of the two teams' blends — use it for "both teams' blends are at least X". home_goals_avg/away_goals_avg = goals that team SCORED per game over its last 5 (conceded not counted) — "the team averages 2 goals" means home_goals_avg gte 2.0.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when: a LIST of conditions that must ALL hold (AND), plus the market to use if they do. A branch with an EMPTY when list is the DEFAULT (always fires). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nIMPORTANT: select is ONLY for rules that EXPLICITLY name a different market to bet (\"if X, bet under 2.5 instead\"). If the rule is guidance about what to consider (defence, form, strength...), express it as filters and return EMPTY select — never replace the user's chosen market with a lookalike, and never emit a default branch unless the rule explicitly asks to always bet that market.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
+const RULE_PROMPT = `You translate a bettor's plain-English rule for a football strategy into structured logic Onside runs on every game.\nThe strategy's BASE market is given. Odds are decimal (e.g. home_odds 1.55). Fields you may test:\n${RULE_FIELDS.join(", ")}. (fav_odds/dog_odds = the shorter/longer of home & away; market_odds = fair odds of the base market; model_prob/market_prob/edge are the base market's, edge is a fraction e.g. 0.04. home_wins_last5/away_wins_last5 = that team's wins in its last 5 matches, 0-5; home_form_ppg/away_form_ppg = points per game over the last 5, 0-3; home_win_prob/away_win_prob = the model's win probability for each side, which already reflects opponent strength — use these to judge how strong the opponent is. home_score_prob/away_score_prob = the model's probability that the home/away team scores at least one goal, 0-1 — compare the two to pick the team more likely to score. home_goals_blend/away_goals_blend = that team's total goals per game (scored + conceded) over its last 5 — the app's pick text calls this the team's "blend"; goals_blend = the average of the two teams' blends, i.e. the "≈X goals" blend the app shows for the fixture — a bettor saying "blend of 3.0" or "blend is 3.0" means goals_blend gte 3.0 unless they clearly mean less-than; min_goals_blend = the LOWER of the two teams' blends — use it for "both teams' blends are at least X". home_goals_avg/away_goals_avg = goals that team SCORED per game over its last 5 (conceded not counted) — "the team averages 2 goals" means home_goals_avg gte 2.0. h2h_* = the last up-to-10 FINISHED head-to-head meetings between the two clubs from Onside's own results history: h2h_n = meetings on record (0-10); h2h_over35/h2h_over25 = how many of those went over 3.5/2.5 total goals (counts, 0-10); h2h_avg_goals = average total goals across them; h2h_btts = meetings where both sides scored. "the last 10 h2h have fewer than 4 over 3.5" means h2h_over35 lt 4. h2h fields (except h2h_n) need at least 5 recorded meetings — with fewer the game is skipped, so do NOT add an h2h_n condition unless the bettor asks for one. home_corners_avg/away_corners_avg = that team's OWN corners won per game over its recent games with corner stats; corners_avg = the two added together ≈ the expected match corner total — "teams average 10 corners between them" means corners_avg gte 10.)\nMarkets you may switch to: ${RULE_MARKETS.join(", ")}.\nOutput two lists:\n- filters: conditions that must ALL hold for the game to be considered (else skip). Empty if the rule doesn't filter.\n- select: ordered branches choosing WHICH market to bet. Each branch has when: a LIST of conditions that must ALL hold (AND), plus the market to use if they do. A branch with an EMPTY when list is the DEFAULT (always fires). First matching branch wins. Empty select = use base market. If no branch matches and there is no default, skip the game.\nIMPORTANT: select is ONLY for rules that EXPLICITLY name a different market to bet (\"if X, bet under 2.5 instead\"). If the rule is guidance about what to consider (defence, form, strength...), express it as filters and return EMPTY select — never replace the user's chosen market with a lookalike, and never emit a default branch unless the rule explicitly asks to always bet that market.\nRules: use only listed fields/markets and ops (lt,lte,gt,gte,eq,between). Fill unused numbers with 0 and unused strings with \"\". If the rule only filters, return filters + empty select. If it only overrides the market, return empty filters + select. If you cannot understand it, return empty filters and empty select. Return ONLY JSON.`;
 
 async function parseRule(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<RuleParsed | null> {
   try {
@@ -847,7 +847,7 @@ function medianOdd(bms: any[], betId: number, value: string): number | null {
 }
 type Form = { wins5: number; draws5: number; losses5: number; pts5: number; ppg5: number; gf5: number; ga5: number; n: number };
 const round2 = (x: number) => Math.round(x * 100) / 100;
-function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null, homeScoreP?: number | null, awayScoreP?: number | null): Record<string, number | null> {
+function signalsFor(bms: any[], modelP: number | null, marketP: number | null, edge: number | null, homeForm?: Form, awayForm?: Form, homeWinP?: number | null, awayWinP?: number | null, homeScoreP?: number | null, awayScoreP?: number | null, extra?: Record<string, number | null>): Record<string, number | null> {
   const home = medianOdd(bms, 1, "Home"), away = medianOdd(bms, 1, "Away");
   // "blend" = a team's total goals per game (gf+ga) over its last 5 — the same number the
   // pick explanations show ("Blend the two … ≈X goals"), so rules can speak that language
@@ -869,6 +869,8 @@ function signalsFor(bms: any[], modelP: number | null, marketP: number | null, e
     min_goals_blend: hBlend != null && aBlend != null ? Math.min(hBlend, aBlend) : null,
     home_goals_avg: homeForm && homeForm.n ? round2(homeForm.gf5 / homeForm.n) : null,
     away_goals_avg: awayForm && awayForm.n ? round2(awayForm.gf5 / awayForm.n) : null,
+    // per-fixture history signals (h2h_* / corners_*) — supplied only when a rule tests them
+    ...(extra ?? {}),
   };
 }
 function evalCond(c: { field: string; op: string; value: number; value2: number }, sig: Record<string, number | null>): boolean {
@@ -930,6 +932,93 @@ async function buildFormMap(teamIds: number[]): Promise<Map<number, Form>> {
   }
   for (const v of map.values()) v.ppg5 = v.n ? v.pts5 / v.n : 0;
   return map;
+}
+
+// ---------- rule-time H2H + corner history (built ONLY when a rule tests these fields) ----------
+type H2H = { n: number; over25: number; over35: number; avg: number; btts: number };
+const pairKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+// Last ≤10 finished meetings per candidate pair from OUR fixtures history, one paged batch query
+// (both team ids must be in the candidate set — exact pairs are matched client-side). h2h fields
+// go null below 5 meetings and evalCond treats null as "condition fails" → the game is skipped:
+// thin H2H is not evidence, matching the weekend scans the owner approved (which required 6+).
+async function buildH2HMap(fx: Fixture[]): Promise<Map<string, H2H>> {
+  const map = new Map<string, H2H>();
+  const ids = Array.from(new Set(fx.flatMap((f) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)));
+  if (!ids.length) return map;
+  const want = new Set(fx.filter((f) => f.home_team_id != null && f.away_team_id != null).map((f) => pairKey(f.home_team_id!, f.away_team_id!)));
+  const rows: any[] = [];
+  for (let off = 0; off < 5000; off += 1000) { // PostgREST caps every response at 1000 — page it
+    const { data } = await sb.from("fixtures")
+      .select("home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+      .in("status", FINISHED)
+      .in("home_team_id", ids).in("away_team_id", ids)
+      .order("kickoff_utc", { ascending: false })
+      .range(off, off + 999);
+    rows.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const taken = new Map<string, number>();
+  for (const f of rows) {
+    if (f.home_team_id == null || f.away_team_id == null) continue;
+    const k = pairKey(f.home_team_id, f.away_team_id);
+    if (!want.has(k) || (taken.get(k) ?? 0) >= 10) continue;
+    const hg = f.ft_home ?? f.home_goals, ag = f.ft_away ?? f.away_goals;
+    if (hg == null || ag == null) continue;
+    const cur = map.get(k) ?? { n: 0, over25: 0, over35: 0, avg: 0, btts: 0 };
+    const tot = hg + ag;
+    cur.n++; cur.avg += tot;
+    if (tot >= 3) cur.over25++;
+    if (tot >= 4) cur.over35++;
+    if (hg > 0 && ag > 0) cur.btts++;
+    map.set(k, cur); taken.set(k, (taken.get(k) ?? 0) + 1);
+  }
+  for (const v of map.values()) v.avg = v.n ? round2(v.avg / v.n) : 0;
+  return map;
+}
+type CornForm = { sum: number; n: number };
+// A team's OWN corners per game over its last ≤5 games WITH collected stats. fixture_stats is
+// sparse (collect-stats covers corner-bet games + a rolling backfill), so fields need ≥3 samples
+// (STAT_MIN_N precedent) — below that they're null and a corners condition skips the game.
+async function buildCornerFormMap(teamIds: number[]): Promise<Map<number, CornForm>> {
+  const map = new Map<number, CornForm>();
+  if (!teamIds.length) return map;
+  const list = teamIds.join(",");
+  const rows: any[] = [];
+  for (let off = 0; off < 3000; off += 1000) {
+    const { data } = await sb.from("fixtures")
+      .select("home_team_id,away_team_id,kickoff_utc,fixture_stats!inner(corners_home,corners_away)")
+      .in("status", FINISHED)
+      .or(`home_team_id.in.(${list}),away_team_id.in.(${list})`)
+      .order("kickoff_utc", { ascending: false })
+      .range(off, off + 999);
+    rows.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  const want = new Set(teamIds);
+  const taken = new Map<number, number>();
+  for (const f of rows) {
+    const st = Array.isArray(f.fixture_stats) ? f.fixture_stats[0] : f.fixture_stats;
+    if (!st || st.corners_home == null || st.corners_away == null) continue;
+    for (const home of [true, false]) {
+      const tid = home ? f.home_team_id : f.away_team_id;
+      if (tid == null || !want.has(tid) || (taken.get(tid) ?? 0) >= 5) continue;
+      const cur = map.get(tid) ?? { sum: 0, n: 0 };
+      cur.sum += home ? st.corners_home : st.corners_away;
+      cur.n++;
+      map.set(tid, cur); taken.set(tid, (taken.get(tid) ?? 0) + 1);
+    }
+  }
+  return map;
+}
+// does the parsed rule test any field matching pred? (filters + branch whens + legacy when_field)
+function ruleTests(rule: RuleParsed | null, pred: (f: string) => boolean): boolean {
+  if (!rule) return false;
+  for (const c of rule.filters ?? []) if (c?.field && pred(c.field)) return true;
+  for (const b of rule.select ?? []) {
+    for (const c of b.when ?? []) if (c?.field && pred(c.field)) return true;
+    if (b.when_field && pred(b.when_field)) return true;
+  }
+  return false;
 }
 // ---------- API-enriched reasons: real recent form + head-to-head from API-Football ----------
 // Our fixtures table only holds ~a season of synced leagues, so DB-derived form/H2H can be thin
@@ -1263,7 +1352,7 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   }
   return null;
 }
-async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>): Promise<Scored[]> {
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map()): Promise<Scored[]> {
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
   // a mixed-outcome strategy carries its own candidate set — treated exactly like a family
   const mixCands: Cand[] | null = Array.isArray(strategy.markets) && strategy.markets.length
@@ -1294,9 +1383,26 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const awayForm = f.away_team_id != null ? formMap.get(f.away_team_id) : undefined;
       const bmp = (!baseSet && cell.confident) ? modelProb(baseMk, baseSide, baseLine, cell.agg) : null;
       const bkp = !baseSet ? marketProb(baseMk, baseSide, baseLine, bms) : null;
+      // fixture-history signals: last ≤10 H2H meetings + each team's recent corner counts
+      // (maps are empty unless the rule actually tests these fields — zero cost otherwise)
+      const h2h = f.home_team_id != null && f.away_team_id != null ? h2hMap.get(pairKey(f.home_team_id, f.away_team_id)) : undefined;
+      const hCorn = f.home_team_id != null ? cornMap.get(f.home_team_id) : undefined;
+      const aCorn = f.away_team_id != null ? cornMap.get(f.away_team_id) : undefined;
+      const hCornAvg = hCorn && hCorn.n >= 3 ? round2(hCorn.sum / hCorn.n) : null;
+      const aCornAvg = aCorn && aCorn.n >= 3 ? round2(aCorn.sum / aCorn.n) : null;
+      const extra = {
+        h2h_n: h2h?.n ?? 0,
+        h2h_over25: h2h && h2h.n >= 5 ? h2h.over25 : null,
+        h2h_over35: h2h && h2h.n >= 5 ? h2h.over35 : null,
+        h2h_avg_goals: h2h && h2h.n >= 5 ? h2h.avg : null,
+        h2h_btts: h2h && h2h.n >= 5 ? h2h.btts : null,
+        home_corners_avg: hCornAvg,
+        away_corners_avg: aCornAvg,
+        corners_avg: hCornAvg != null && aCornAvg != null ? round2(hCornAvg + aCornAvg) : null,
+      };
       const sig = signalsFor(bms, bmp, bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
         homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null,
-        cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null);
+        cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null, extra);
       let blocked = false;
       for (const c of rule.filters) {
         // set bases have no base market yet — its odds/edge fields are tested post-pick
@@ -1597,7 +1703,12 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     ? Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null)))
     : [];
   const formMap = teamIds.length ? await buildFormMap(teamIds) : new Map<number, Form>();
-  const ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM)).slice(0, room);
+  // history maps only when the rule actually tests those fields (common path stays untouched)
+  const h2hMap = ruleTests(rule, (fld) => fld.startsWith("h2h_")) ? await buildH2HMap(candidates) : new Map<string, H2H>();
+  const cornMap = ruleTests(rule, (fld) => fld.endsWith("corners_avg"))
+    ? await buildCornerFormMap(Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null))))
+    : new Map<number, CornForm>();
+  const ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap)).slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
   // head-to-head pulled live from API-Football (all competitions, not just what we've synced),

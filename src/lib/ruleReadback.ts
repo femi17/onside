@@ -47,6 +47,14 @@ const FIELD: Record<string, string> = {
   min_goals_blend: "the lower of the two teams' blends",
   home_goals_avg: "goals the home team scores per game (last 5)",
   away_goals_avg: "goals the away team scores per game (last 5)",
+  h2h_n: "how many head-to-head meetings are on record",
+  h2h_over25: "head-to-head meetings (last up to 10) that went over 2.5 goals",
+  h2h_over35: "head-to-head meetings (last up to 10) that went over 3.5 goals",
+  h2h_avg_goals: "the average total goals across the last head-to-head meetings",
+  h2h_btts: "head-to-head meetings (last up to 10) where both teams scored",
+  home_corners_avg: "the home team's corners per game (recent games with corner stats)",
+  away_corners_avg: "the away team's corners per game (recent games with corner stats)",
+  corners_avg: "the two teams' combined corners per game",
 };
 // probability-like fields read better as percentages
 const PCT = new Set(["model_prob", "market_prob", "edge", "home_win_prob", "away_win_prob", "home_score_prob", "away_score_prob"]);
