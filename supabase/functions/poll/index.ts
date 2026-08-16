@@ -354,7 +354,13 @@ type Facts = {
   corners: number | null; corners_home: number | null; corners_away: number | null;
   corners_home_ht: number | null; corners_away_ht: number | null;
   teamStats: Record<string, [number | null, number | null]>; hasEvents: boolean;
+  cornerHold: boolean;
 };
+// Corner/stat totals can lag the provider's own FT flag by a few minutes (Randers v Copenhagen
+// 2026-08-16: graded off 9 corners at the FT transition; the statistics endpoint said 10 shortly
+// after). Corner/stat markets wait this long after full-time before grading; the
+// recently-finished sweep in poll() then settles them off the landed totals.
+const CORNER_GRACE_MS = 5 * 60 * 1000;
 const CORNER_MARKETS = new Set(["over_8_5_corners", "corners_ou", "corner_handicap", "corners_1x2", "home_corners_ou", "away_corners_ou", "corner_range", "home_corner_range", "away_corner_range", "corners_odd_even", "first_corner", "last_corner"]);
 // Statistics team markets (shots / shots on target / offsides / fouls), FT only, graded from
 // per-team totals in fixtures/statistics. Handled generically in grade() via a regex on the key.
@@ -648,7 +654,7 @@ function maxGoalsInRow(goals: any[], team?: string): number {
 }
 
 async function buildFacts(fixtureId: number, rows: any[]): Promise<Facts> {
-  const { data: fx } = await sb.from("fixtures").select("home_goals,away_goals,ft_home,ft_away,winner,events").eq("id", fixtureId).single();
+  const { data: fx } = await sb.from("fixtures").select("home_goals,away_goals,ft_home,ft_away,winner,events,status,updated_at").eq("id", fixtureId).single();
   const { data: st } = await sb.from("fixture_stats").select("corners_home,corners_away,corners_home_ht,corners_away_ht").eq("fixture_id", fixtureId).maybeSingle();
   const hg = fx?.ft_home ?? fx?.home_goals ?? 0, ag = fx?.ft_away ?? fx?.away_goals ?? 0;
   let cornersHome: number | null = st?.corners_home ?? null;
@@ -684,7 +690,10 @@ async function buildFacts(fixtureId: number, rows: any[]): Promise<Facts> {
   }
   const h1h = goals.filter((g) => g.side === "home" && (g.min ?? 0) <= 45).length;
   const h1a = goals.filter((g) => g.side === "away" && (g.min ?? 0) <= 45).length;
-  return { hg, ag, h1h, h1a, h2h: Math.max(0, hg - h1h), h2a: Math.max(0, ag - h1a), goals, cards, penalty, winner: fx?.winner ?? null, corners, corners_home: cornersHome, corners_away: cornersAway, corners_home_ht: st?.corners_home_ht ?? null, corners_away_ht: st?.corners_away_ht ?? null, teamStats, hasEvents };
+  // freshly finished: hold corner/stat grading until the provider's final totals have landed
+  const cornerHold = FINISHED.includes(fx?.status ?? "") && fx?.updated_at != null &&
+    Date.now() - new Date(fx.updated_at).getTime() < CORNER_GRACE_MS;
+  return { hg, ag, h1h, h1a, h2h: Math.max(0, hg - h1h), h2a: Math.max(0, ag - h1a), goals, cards, penalty, winner: fx?.winner ?? null, corners, corners_home: cornersHome, corners_away: cornersAway, corners_home_ht: st?.corners_home_ht ?? null, corners_away_ht: st?.corners_away_ht ?? null, teamStats, hasEvents, cornerHold };
 }
 
 async function settleRows(table: string, rows: any[], facts: Facts, statusCol = "status") {
@@ -692,6 +701,8 @@ async function settleRows(table: string, rows: any[], facts: Facts, statusCol = 
   const corners = facts.corners ?? 0;
   for (const t of rows) {
     if (t.market_key === "custom") continue;
+    // corner/stat totals still settling with the provider — the sweep re-settles these shortly
+    if (facts.cornerHold && (CORNER_MARKETS.has(t.market_key) || STAT_MARKETS.has(t.market_key))) continue;
     const r = grade(t, facts);
     if (r === null) continue;
     await sb.from(table).update({ [statusCol]: r, current_value: liveValue(t.market_key, facts.hg, facts.ag, corners), settled_at: now }).eq("id", t.id);
@@ -880,6 +891,22 @@ async function poll() {
         await sb.from("deliveries").update({ result: "void", settled_at: nowIso }).eq("fixture_id", fx.fixture.id).eq("result", "pending");
       }
       reconciled++;
+    }
+  }
+
+  // Corner/stat rows held at the FT transition (buildFacts cornerHold) settle here a few minutes
+  // later, once the provider's final totals have landed. Window capped at 45 min so a game whose
+  // stats never arrive doesn't re-buy API calls forever (those stay pending → manual settle).
+  {
+    const sweepFrom = new Date(now - 45 * 60 * 1000).toISOString();
+    const sweepTo = new Date(now - CORNER_GRACE_MS).toISOString();
+    const { data: fin } = await sb.from("fixtures").select("id").in("status", FINISHED).gte("updated_at", sweepFrom).lte("updated_at", sweepTo);
+    for (const f of fin ?? []) {
+      const rows = [...(byFixture.get(f.id) ?? []), ...(apByFixture.get(f.id) ?? []), ...(dlByFixture.get(f.id) ?? [])];
+      if (!rows.some((t) => CORNER_MARKETS.has(t.market_key) || STAT_MARKETS.has(t.market_key))) continue;
+      if (settleBudget <= 0) break;
+      settleBudget--;
+      await settle(f.id);
     }
   }
 
