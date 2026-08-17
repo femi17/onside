@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Roomy — the calm Windows cleaner that won't touch your stuff</title>
+<meta name="description" content="Roomy clears the junk clogging your Windows PC and frees up space — without ever touching your documents, photos or files. Plain English, made for Nigeria, priced in naira." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#EEF3EE; --card:#FBFCFA; --ink:#14261E; --mute:#5E7168; --line:#D8E2D9;
+    --primary:#116A4E; --primary-deep:#0C513C; --gold:#E9B44C; --gold-deep:#B7822A;
+    --ochre:#E08A2B; --safe-bg:#E4F0E8; --brick:#B44A3A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:"Hanken Grotesk",system-ui,-apple-system,sans-serif;
+    background:radial-gradient(1200px 640px at 50% -8%,#E7F0E9,var(--paper) 58%);
+    color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.5;
+  }
+  .disp{font-family:"Bricolage Grotesque",sans-serif;letter-spacing:-.02em;font-weight:800}
+  .mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  a{color:inherit}
+
+  /* nav */
+  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);background:rgba(238,243,238,.72);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;gap:14px;height:64px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:"Bricolage Grotesque";font-weight:800;font-size:18px}
+  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(150deg,var(--primary),var(--primary-deep));display:grid;place-items:center;color:#EAF3EC;font-size:16px;box-shadow:0 8px 16px -8px rgba(17,106,78,.55)}
+  nav .links{margin-left:auto;display:flex;align-items:center;gap:26px;font-size:15px;font-weight:600}
+  nav .links a{color:var(--mute);text-decoration:none}
+  nav .links a:hover{color:var(--ink)}
+  .btn{font-family:inherit;font-weight:700;font-size:16px;cursor:pointer;border:none;border-radius:13px;padding:14px 26px;color:#EAF3EC;background:linear-gradient(160deg,var(--primary),var(--primary-deep));box-shadow:0 12px 26px -12px rgba(17,106,78,.75);text-decoration:none;display:inline-flex;align-items:center;gap:9px;transition:transform .12s ease,box-shadow .12s ease}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 16px 30px -12px rgba(17,106,78,.8)}
+  .btn.sm{padding:10px 18px;font-size:14px}
+  .btn.gold{color:#3A2A06;background:linear-gradient(160deg,var(--gold),var(--gold-deep));box-shadow:0 12px 26px -12px rgba(183,130,42,.7)}
+  @media(max-width:640px){nav .links a.nav-hide{display:none}}
+
+  /* hero */
+  .hero{padding:72px 0 40px;display:grid;grid-template-columns:1.05fr .95fr;gap:52px;align-items:center}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--primary-deep);background:var(--safe-bg);padding:7px 14px;border-radius:999px;border:1px solid #CFE4D6}
+  h1.hero-h{font-size:clamp(38px,5.4vw,60px);line-height:1.03;margin:20px 0 0;font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-.03em}
+  h1.hero-h .accent{color:var(--primary)}
+  .lead{font-size:20px;color:var(--mute);margin-top:20px;max-width:520px}
+  .lead b{color:var(--ink);font-weight:600}
+  .cta-row{display:flex;align-items:center;gap:16px;margin-top:30px;flex-wrap:wrap}
+  .under{margin-top:16px;font-size:14px;color:var(--mute);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .dot{width:4px;height:4px;border-radius:50%;background:var(--line)}
+
+  /* hero visual — a little app card */
+  .shot{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 40px 80px -40px rgba(20,38,30,.45)}
+  .shot .top{display:flex;align-items:center;gap:9px;margin-bottom:18px}
+  .shot .top .logo{width:24px;height:24px;font-size:12px}
+  .shot .top b{font-family:"Bricolage Grotesque";font-size:15px}
+  .gauge{text-align:center;padding:8px 0 18px}
+  .gauge .num{font-family:"Bricolage Grotesque";font-weight:800;font-size:52px;letter-spacing:-.03em;color:var(--primary)}
+  .gauge .cap{color:var(--mute);font-size:14px;margin-top:2px}
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .r{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:#fff}
+  .r .ic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:15px;background:var(--safe-bg)}
+  .r .nm{font-weight:600;font-size:14.5px}
+  .r .sub{color:var(--mute);font-size:12.5px}
+  .r .sz{margin-left:auto;font-family:"IBM Plex Mono";font-size:13px;color:var(--primary-deep)}
+  .pill{margin-left:auto;font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px}
+  .pill.safe{color:var(--primary-deep);background:var(--safe-bg)}
+  .pill.review{color:#8a5a12;background:#FBEFD7}
+
+  /* section shells */
+  section.band{padding:64px 0}
+  .kicker{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}
+  h2.sec{font-family:"Bricolage Grotesque";font-weight:800;font-size:clamp(28px,3.6vw,40px);letter-spacing:-.02em;margin:10px 0 0}
+  .sec-sub{color:var(--mute);font-size:18px;margin-top:14px;max-width:640px}
+
+  /* benefit cards */
+  .cards{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:38px}
+  .bcard{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px}
+  .bcard .bi{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:var(--safe-bg);margin-bottom:16px}
+  .bcard h3{font-family:"Bricolage Grotesque";font-weight:800;font-size:20px;letter-spacing:-.01em}
+  .bcard p{color:var(--mute);margin-top:8px;font-size:15.5px}
+
+  /* comparison table */
+  .cmp{margin-top:38px;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:16px 20px;text-align:left;font-size:15px;vertical-align:top}
+  thead th{background:#fff;font-family:"Bricolage Grotesque";font-weight:800;font-size:15px;border-bottom:1px solid var(--line)}
+  thead th.roomy{color:var(--primary-deep)}
+  tbody tr+tr td{border-top:1px solid var(--line)}
+  td.feat{font-weight:600;color:var(--ink);width:30%}
+  td.roomy{color:var(--ink)}
+  td.roomy::before{content:"✓ ";color:var(--primary);font-weight:800}
+  td.other{color:var(--mute)}
+  td.other::before{content:"✕ ";color:var(--brick);font-weight:800}
+  thead th.other{color:var(--mute)}
+
+  /* steps */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:38px}
+  .step{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px}
+  .step .no{font-family:"Bricolage Grotesque";font-weight:800;font-size:15px;color:#EAF3EC;background:linear-gradient(150deg,var(--primary),var(--primary-deep));width:34px;height:34px;border-radius:10px;display:grid;place-items:center}
+  .step h3{font-family:"Bricolage Grotesque";font-weight:800;font-size:19px;margin-top:16px}
+  .step p{color:var(--mute);margin-top:8px;font-size:15px}
+
+  /* trust strip */
+  .trust{background:linear-gradient(160deg,var(--primary),var(--primary-deep));color:#EAF3EC;border-radius:22px;padding:40px;display:grid;grid-template-columns:repeat(4,1fr);gap:26px;text-align:center}
+  .trust .t{display:flex;flex-direction:column;gap:6px;align-items:center}
+  .trust .t .big{font-family:"Bricolage Grotesque";font-weight:800;font-size:26px}
+  .trust .t .sm{font-size:13.5px;opacity:.85}
+
+  /* pricing */
+  .prices{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:38px}
+  .price{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:28px;display:flex;flex-direction:column}
+  .price.feature{border:2px solid var(--gold);box-shadow:0 24px 50px -30px rgba(183,130,42,.5)}
+  .price .tag{font-weight:700;font-size:15px;color:var(--mute)}
+  .price .amt{font-family:"Bricolage Grotesque";font-weight:800;font-size:38px;letter-spacing:-.02em;margin:10px 0 2px}
+  .price .amt small{font-size:16px;color:var(--mute);font-weight:600}
+  .price .desc{color:var(--mute);font-size:14.5px;margin:10px 0 18px;flex:1}
+  .price ul{list-style:none;display:flex;flex-direction:column;gap:9px;font-size:14.5px}
+  .price li::before{content:"✓";color:var(--primary);font-weight:800;margin-right:8px}
+  .ribbon{align-self:flex-start;font-size:11px;font-weight:700;color:#3A2A06;background:linear-gradient(160deg,var(--gold),var(--gold-deep));padding:4px 12px;border-radius:999px;margin-bottom:10px}
+
+  /* final cta */
+  .final{text-align:center;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:56px 24px}
+  .final h2{font-family:"Bricolage Grotesque";font-weight:800;font-size:clamp(28px,4vw,42px);letter-spacing:-.02em}
+  .final p{color:var(--mute);font-size:18px;margin-top:12px}
+  .smartscreen{margin-top:22px;font-size:13px;color:var(--mute);max-width:520px;margin-left:auto;margin-right:auto}
+  .smartscreen b{color:var(--ink)}
+
+  footer{padding:44px 0 40px;color:var(--mute);font-size:14px}
+  footer .wrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  footer .brand{font-size:15px}
+  footer .sp{margin-left:auto}
+  footer a{color:var(--mute);text-decoration:none;font-weight:600}
+  footer a:hover{color:var(--ink)}
+  footer .legal{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);font-size:13px}
+  footer .legal .co{font-weight:600;color:var(--ink)}
+
+  @media(max-width:860px){
+    .hero{grid-template-columns:1fr;gap:36px;padding:52px 0 20px}
+    .cards,.steps,.prices{grid-template-columns:1fr}
+    .trust{grid-template-columns:repeat(2,1fr);gap:22px}
+    thead th{font-size:13.5px}th,td{padding:13px 14px;font-size:14px}
+    td.feat{width:34%}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="logo">◗</span> Roomy</div>
+    <div class="links">
+      <a href="#why" class="nav-hide">Why Roomy</a>
+      <a href="#compare" class="nav-hide">Compare</a>
+      <a href="#pricing" class="nav-hide">Pricing</a>
+      <a href="https://github.com/femi17/roomy-releases/releases/latest/download/Roomy-Setup.exe" target="_blank" rel="noopener" class="btn sm">Download</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="wrap hero">
+  <div>
+    <span class="eyebrow">🌿 Calm, not alarm</span>
+    <h1 class="hero-h">Free up space<br />without the <span class="accent">fear</span>.</h1>
+    <p class="lead">Roomy clears the junk quietly clogging your Windows PC — caches, temp files, leftovers — and frees up gigabytes. It <b>never touches your documents, photos or personal files</b>.</p>
+    <div class="cta-row">
+      <a href="https://github.com/femi17/roomy-releases/releases/latest/download/Roomy-Setup.exe" target="_blank" rel="noopener" class="btn">⬇ Download for Windows</a>
+      <a href="#how" class="btn gold" style="background:transparent;color:var(--primary-deep);box-shadow:none;border:1.5px solid var(--line)">See how it works</a>
+    </div>
+    <div class="under">
+      <span>First clean is free</span><span class="dot"></span>
+      <span>No account</span><span class="dot"></span>
+      <span>Works offline</span><span class="dot"></span>
+      <span>Your files never leave your PC</span>
+    </div>
+  </div>
+
+  <!-- little product snapshot -->
+  <div class="shot">
+    <div class="top"><span class="logo">◗</span><b>Roomy</b><span style="margin-left:auto;font-size:12px;color:var(--mute)">Check-up complete</span></div>
+    <div class="gauge"><div class="num">8.4 GB</div><div class="cap">of space you can get back</div></div>
+    <div class="rows">
+      <div class="r"><span class="ic">🧹</span><div><div class="nm">App &amp; browser caches</div><div class="sub">Rebuilds on its own</div></div><span class="pill safe">Safe · auto</span></div>
+      <div class="r"><span class="ic">🗂️</span><div><div class="nm">Old files in Downloads</div><div class="sub">You approve each one</div></div><span class="pill review">Review</span></div>
+      <div class="r"><span class="ic">🛟</span><div><div class="nm">Your Documents &amp; Pictures</div><div class="sub">Off-limits, always</div></div><span class="sz">untouched</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- WHY -->
+<section class="band wrap" id="why">
+  <div class="kicker">Why Roomy is different</div>
+  <h2 class="sec">Other cleaners scare you. Roomy respects you.</h2>
+  <p class="sec-sub">Most PC cleaners flash red "2,481 problems found!", bury bloatware in the installer, and quietly delete things you'll miss. Roomy was built to be the calm, trustworthy opposite.</p>
+  <div class="cards">
+    <div class="bcard">
+      <div class="bi">🛟</div>
+      <h3>It won't touch your stuff</h3>
+      <p>Documents, Pictures, Desktop, Videos and OneDrive are permanently off-limits — Roomy never even scans them. It only clears junk that your PC rebuilds by itself.</p>
+    </div>
+    <div class="bcard">
+      <div class="bi">↩️</div>
+      <h3>A safety net, not a shredder</h3>
+      <p>Anything personal is only ever <b>moved</b> to a 14-day safety net after you approve it — never deleted outright. Changed your mind? Restore it in one click.</p>
+    </div>
+    <div class="bcard">
+      <div class="bi">🇳🇬</div>
+      <h3>Plain English, made for Nigeria</h3>
+      <p>No jargon, no registry snake-oil, no scary warnings. Pay locally in naira with Paystack — no foreign card, no subscription you'll fight to cancel.</p>
+    </div>
+    <div class="bcard">
+      <div class="bi">🔒</div>
+      <h3>No bloat, no ads, no spying</h3>
+      <p>One calm app that does one job. No bundled toolbars, no fake "antivirus" trials, no account. Nothing about your PC ever leaves your PC.</p>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARE -->
+<section class="band wrap" id="compare">
+  <div class="kicker">Head to head</div>
+  <h2 class="sec">Roomy vs. the typical PC cleaner</h2>
+  <div class="cmp">
+    <table>
+      <thead>
+        <tr><th>&nbsp;</th><th class="roomy">Roomy</th><th class="other">Typical PC cleaners</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="feat">What it deletes</td>
+          <td class="roomy">Only junk that rebuilds itself. Your files are off-limits.</td>
+          <td class="other">Aggressive "deep clean" + risky registry edits of little real value.</td>
+        </tr>
+        <tr>
+          <td class="feat">If it gets something wrong</td>
+          <td class="roomy">14-day safety net, one-click restore.</td>
+          <td class="other">Often gone for good.</td>
+        </tr>
+        <tr>
+          <td class="feat">How it talks to you</td>
+          <td class="roomy">Plain English. Calm greens, never scareware red.</td>
+          <td class="other">Red alarms and "hundreds of problems found!"</td>
+        </tr>
+        <tr>
+          <td class="feat">What's in the installer</td>
+          <td class="roomy">Just Roomy.</td>
+          <td class="other">Bundled toolbars, antivirus trials, ads.</td>
+        </tr>
+        <tr>
+          <td class="feat">Your data</td>
+          <td class="roomy">Stays on your PC. No account, no telemetry.</td>
+          <td class="other">Cloud accounts and background tracking.</td>
+        </tr>
+        <tr>
+          <td class="feat">Price &amp; payment</td>
+          <td class="roomy">Free first clean, then simple one-off or monthly pricing, paid locally in naira.</td>
+          <td class="other">Foreign-card subscriptions that are hard to cancel.</td>
+        </tr>
+        <tr>
+          <td class="feat">Who it's for</td>
+          <td class="roomy">Anyone who wants a fast, clutter-free PC — with support and payment that work in Nigeria.</td>
+          <td class="other">A one-size-fits-all global audience.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- HOW -->
+<section class="band wrap" id="how">
+  <div class="kicker">How it works</div>
+  <h2 class="sec">Three calm steps</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="no">1</div>
+      <h3>Check-up</h3>
+      <p>Roomy scans in seconds and shows exactly what it found — in words that make sense, with the space you'd get back.</p>
+    </div>
+    <div class="step">
+      <div class="no">2</div>
+      <h3>You decide</h3>
+      <p>Safe junk clears instantly. Anything personal is only ever moved to the restorable safety net after you say yes.</p>
+    </div>
+    <div class="step">
+      <div class="no">3</div>
+      <h3>Done</h3>
+      <p>See the space you got back. Subscribers get an automatic weekly tidy-up, so it never piles up again.</p>
+    </div>
+  </div>
+</section>
+
+<!-- TRUST -->
+<section class="band wrap">
+  <div class="trust">
+    <div class="t"><span class="big">0</span><span class="sm">files of yours ever deleted without approval</span></div>
+    <div class="t"><span class="big">14 days</span><span class="sm">to restore anything from the safety net</span></div>
+    <div class="t"><span class="big">100%</span><span class="sm">offline — nothing leaves your PC</span></div>
+    <div class="t"><span class="big">₦0</span><span class="sm">to try — your first clean is free</span></div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="band wrap" id="pricing">
+  <div class="kicker">Simple, honest pricing</div>
+  <h2 class="sec">Pay in naira, only when you need it</h2>
+  <div class="prices">
+    <div class="price">
+      <div class="tag">First clean</div>
+      <div class="amt">Free</div>
+      <div class="desc">Try Roomy on your PC with no card and no account.</div>
+      <ul><li>Full scan &amp; safe clean</li><li>Safety net included</li><li>No sign-up</li></ul>
+    </div>
+    <div class="price feature">
+      <div class="ribbon">Best value</div>
+      <div class="tag">Keep it clean</div>
+      <div class="amt">₦1,000<small>/month</small></div>
+      <div class="desc">Unlimited cleans plus a hands-off weekly tidy-up.</div>
+      <ul><li>Unlimited cleans</li><li>Automatic weekly tidy-up</li><li>Cancel anytime</li></ul>
+    </div>
+    <div class="price">
+      <div class="tag">One clean</div>
+      <div class="amt">₦1,500<small>/once</small></div>
+      <div class="desc">A single deep tidy when you just need space back today.</div>
+      <ul><li>One full clean</li><li>No subscription</li><li>Pay with Paystack</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section class="band wrap">
+  <div class="final">
+    <h2>Give your PC room to breathe.</h2>
+    <p>Download Roomy and get gigabytes back in the next two minutes.</p>
+    <div class="cta-row" style="justify-content:center">
+      <a href="https://github.com/femi17/roomy-releases/releases/latest/download/Roomy-Setup.exe" target="_blank" rel="noopener" class="btn">⬇ Download for Windows</a>
+    </div>
+    <p class="smartscreen">Roomy is a brand-new app still building its reputation, so Windows may show a blue <b>"unknown publisher"</b> notice. That's normal — tap <b>More info → Run anyway</b> to install.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="brand"><span class="logo" style="width:24px;height:24px;font-size:13px">◗</span> Roomy</div>
+    <span>A calm Windows cleaner, built in Nigeria.</span>
+    <span class="sp"></span>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </div>
+  <div class="wrap legal">
+    <span><span class="co">Thinka Platforms LTD</span> · RC 9336976</span>
+    <span class="sp">© 2026 Thinka Platforms LTD. Roomy is a product of Thinka Platforms LTD.</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,110 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy â€” Roomy</title>
+<meta name="description" content="How Roomy, a product of Thinka Platforms LTD, handles your data. Short version: your files never leave your PC." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#EEF3EE; --card:#FBFCFA; --ink:#14261E; --mute:#5E7168; --line:#D8E2D9;
+    --primary:#116A4E; --primary-deep:#0C513C; --safe-bg:#E4F0E8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:"Hanken Grotesk",system-ui,-apple-system,sans-serif;background:radial-gradient(1200px 640px at 50% -8%,#E7F0E9,var(--paper) 58%);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  a{color:var(--primary)}
+  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);background:rgba(238,243,238,.72);border-bottom:1px solid var(--line)}
+  nav .wrap{max-width:1080px;display:flex;align-items:center;gap:14px;height:64px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:"Bricolage Grotesque";font-weight:800;font-size:18px;text-decoration:none;color:var(--ink)}
+  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(150deg,var(--primary),var(--primary-deep));display:grid;place-items:center;color:#EAF3EC;font-size:16px;box-shadow:0 8px 16px -8px rgba(17,106,78,.55)}
+  nav .back{margin-left:auto;font-size:15px;font-weight:600;color:var(--mute);text-decoration:none}
+  nav .back:hover{color:var(--ink)}
+
+  main{padding:56px 0 40px}
+  h1{font-family:"Bricolage Grotesque";font-weight:800;font-size:clamp(32px,5vw,44px);letter-spacing:-.02em;margin:18px 0 8px}
+  .updated{color:var(--mute);font-size:14px;margin-bottom:8px}
+  h2{font-family:"Bricolage Grotesque";font-weight:800;font-size:22px;letter-spacing:-.01em;margin:34px 0 10px}
+  p{margin:10px 0;color:#23342B}
+  ul{margin:10px 0 10px 4px;padding-left:20px}
+  li{margin:7px 0;color:#23342B}
+  .muted{color:var(--mute)}
+  footer{border-top:1px solid var(--line);margin-top:48px;padding:28px 0 40px;color:var(--mute);font-size:13px}
+  footer .co{font-weight:600;color:var(--ink)}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="/"><span class="logo">â——</span> Roomy</a>
+    <a class="back" href="/">â† Back to home</a>
+  </div>
+</nav>
+
+<main class="wrap">
+  <h1>Privacy Policy</h1>
+  <div class="updated">Last updated: 14 August 2026</div>
+
+  <p>This policy explains how <b>Thinka Platforms LTD</b> (RC&nbsp;9336976) â€” "we", "us", the company behind <b>Roomy</b> â€” handles information when you use the Roomy app and this website.</p>
+
+  <h2>1. Roomy works on your device</h2>
+  <p>Scanning, cleaning, quarantining and restoring all happen locally on your PC. Roomy does not read, copy, or transmit the contents of your files. When it clears junk (caches, temporary files) those files are deleted on your machine; nothing about their contents is sent anywhere.</p>
+
+  <h2>2. Information we collect</h2>
+  <ul>
+    <li><b>Device ID.</b> On first run, Roomy creates a random identifier (a UUID) and stores it locally on your PC. We use it only to remember that your device has used its free clean and to check your entitlement (one-off credit or subscription). It is not linked to your name and cannot identify you personally.</li>
+    <li><b>Email address (optional).</b> If you choose to enter an email for a payment receipt, we store it so a receipt can be sent and to link a purchase to your device. You are never required to provide one to use the free clean.</li>
+    <li><b>Payment information.</b> Payments are processed entirely by <b>Paystack</b>. We never receive or store your card number, PIN or bank details. We store only the payment reference and its status (paid / active / cancelled).</li>
+  </ul>
+
+  <h2>3. What we do NOT collect</h2>
+  <ul>
+    <li>The contents, names, or list of your documents, photos, videos or any personal files.</li>
+    <li>Your browsing history or the contents of anything Roomy cleans.</li>
+    <li>Background telemetry, advertising identifiers, or location data.</li>
+  </ul>
+
+  <h2>4. Information stored only on your PC</h2>
+  <p>Some data never leaves your computer at all: your quarantine safety net, restore records, and the automatic-clean log (which only notes how much space was freed). You can delete this at any time from <span class="muted">%LOCALAPPDATA%\Roomy</span>.</p>
+
+  <h2>5. Who we share with</h2>
+  <p>We do not sell your data. We share the limited information above only with the service providers that make Roomy work:</p>
+  <ul>
+    <li><b>Paystack</b> â€” to process payments securely.</li>
+    <li><b>Supabase</b> â€” our backend, which stores your device ID and entitlement status.</li>
+  </ul>
+  <p>We may also disclose information if required by law.</p>
+
+  <h2>6. How long we keep it</h2>
+  <p>We keep your device ID and entitlement record for as long as your device uses Roomy or holds an active subscription. You can ask us to delete your records at any time (see contact below). Deleting the Roomy app and the <span class="muted">device.json</span> file on your PC starts you fresh as a new device.</p>
+
+  <h2>7. Your choices &amp; rights</h2>
+  <ul>
+    <li>Use Roomy's free clean without giving any email.</li>
+    <li>Ask us what device/entitlement data we hold, or to delete it.</li>
+    <li>Cancel a subscription at any time; billing stops at the end of the period.</li>
+  </ul>
+
+  <h2>8. Children</h2>
+  <p>Roomy is not directed at children under 13, and we do not knowingly collect information from them.</p>
+
+  <h2>9. Changes to this policy</h2>
+  <p>If we change this policy we will update the date at the top of this page. Significant changes will be highlighted in the app or on this site.</p>
+
+  <h2>10. Contact</h2>
+  <p>Questions, or want your data removed? Contact us at <a href="mailto:info@thinkaplatforms.ltd">info@thinkaplatforms.ltd</a>.</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="co">Thinka Platforms LTD</span> Â· RC 9336976 &nbsp;Â·&nbsp; Roomy is a product of Thinka Platforms LTD. &nbsp;Â·&nbsp; Â© 2026
+  </div>
+</footer>
+
+</body>
+</html>
