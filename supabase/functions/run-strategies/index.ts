@@ -1064,12 +1064,15 @@ function h2hVeto(mk: string | null, side: string | null, line: number | null, pe
     case "away_to_score": return rate(as_.s) < 0.5;
     case "btts": return side === "no" ? rate(h2h.btts) > 0.7 : rate(h2h.btts) < 0.3;
     // double chance / draw-no-bet fail only when the third outcome lands — veto when the OTHER
-    // side won every single recorded meeting (the backed team never even drew)
-    case "double_chance_1x": return h2h.n >= 6 && as_.w === h2h.n;
-    case "double_chance_x2": return h2h.n >= 6 && hs.w === h2h.n;
-    case "dnb": return h2h.n >= 6 && (side === "away" ? hs.w === h2h.n : as_.w === h2h.n);
-    case "home_no_bet": return h2h.n >= 6 && as_.w === h2h.n;
-    case "away_no_bet": return h2h.n >= 6 && hs.w === h2h.n;
+    // side won every meeting (6+), or >80% of an 8+ meeting record (backtested owner-approved
+    // 2026-08-17: 1X lands just 33% when the away side won >80% of 8+ meetings, vs 70% baseline)
+    case "double_chance_1x": return (h2h.n >= 6 && as_.w === h2h.n) || (h2h.n >= 8 && as_.w / h2h.n > 0.8);
+    case "double_chance_x2": return (h2h.n >= 6 && hs.w === h2h.n) || (h2h.n >= 8 && hs.w / h2h.n > 0.8);
+    case "dnb": return side === "away"
+      ? (h2h.n >= 6 && hs.w === h2h.n) || (h2h.n >= 8 && hs.w / h2h.n > 0.8)
+      : (h2h.n >= 6 && as_.w === h2h.n) || (h2h.n >= 8 && as_.w / h2h.n > 0.8);
+    case "home_no_bet": return (h2h.n >= 6 && as_.w === h2h.n) || (h2h.n >= 8 && as_.w / h2h.n > 0.8);
+    case "away_no_bet": return (h2h.n >= 6 && hs.w === h2h.n) || (h2h.n >= 8 && hs.w / h2h.n > 0.8);
     // clean sheets / win-to-nil: the side being kept out scores in nearly every meeting
     case "home_clean_sheet": case "home_win_to_nil": return rate(as_.s) > 0.7;
     case "away_clean_sheet": case "away_win_to_nil": return rate(hs.s) > 0.7;
