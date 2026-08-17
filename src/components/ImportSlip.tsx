@@ -522,6 +522,15 @@ export default function ImportSlip({
           key = "custom";
           label = s.market_label || label;
         }
+        // engine O/U keys imply their side + line. When the reader labels a leg with just the
+        // market HEADER ("Over/Under") instead of the selection ("Over 2.5"), the text re-read
+        // finds neither — backfill all three from the key so the card shows the real bet.
+        const fixedKey = /^(over|under)_(\d)_5$/.exec(key ?? "");
+        if (fixedKey) {
+          if (side == null) side = fixedKey[1];
+          if (line == null) line = Number(`${fixedKey[2]}.5`);
+          if (!/\d/.test(label ?? "")) label = `${fixedKey[1] === "under" ? "Under" : "Over"} ${fixedKey[2]}.5 goals`;
+        }
       }
 
       rows.push({
