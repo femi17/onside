@@ -1120,8 +1120,12 @@ function formVeto(mk: string | null, side: string | null, line: number | null, p
   // 1X lands 57% (vs 64-76% for 0-3 losses), a straight win just 30% (vs 40-51%).
   if (/^home_win/.test(key) && full(hf) && hf.losses5 >= 4) return true;
   if (/^away_win/.test(key) && full(af) && af.losses5 >= 4) return true;
-  if ((key === "double_chance_1x" || key === "home_no_bet" || (key === "dnb" && side !== "away")) && full(hf) && hf.losses5 >= 4) return true;
-  if ((key === "double_chance_x2" || key === "away_no_bet" || (key === "dnb" && side === "away")) && full(af) && af.losses5 >= 4) return true;
+  // ...and the mirror (backtested, owner-approved 2026-08-17): a DC/DNB pick against an
+  // OPPONENT that won 4+ of its last five — 1X lands 54%/50% vs 62-82% for cooler opponents
+  if ((key === "double_chance_1x" || key === "home_no_bet" || (key === "dnb" && side !== "away"))
+    && ((full(hf) && hf.losses5 >= 4) || (full(af) && af.wins5 >= 4))) return true;
+  if ((key === "double_chance_x2" || key === "away_no_bet" || (key === "dnb" && side === "away"))
+    && ((full(af) && af.losses5 >= 4) || (full(hf) && hf.wins5 >= 4))) return true;
   // clean sheet / win-to-nil against a side scoring 12+ in its last 5 (2.4 a game)
   if ((key === "home_clean_sheet" || key === "home_win_to_nil") && full(af) && af.gf5 >= 12) return true;
   if ((key === "away_clean_sheet" || key === "away_win_to_nil") && full(hf) && hf.gf5 >= 12) return true;
