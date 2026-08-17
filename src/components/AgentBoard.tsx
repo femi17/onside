@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -306,13 +306,23 @@ function Item({
       ? (p.fixtures?.events ?? []).length ? `${cardTally(p, "home")}–${cardTally(p, "away")}` : p.settle_score ?? null
       : ms?.score ?? p.settle_score ?? null;
   const liveMin = ms?.label?.split("·").pop()?.trim() ?? "";
-  let chipMobile = "";
-  let chipDesktop = "";
+  // O/U figure (owner-ruled): live over/under picks show the dominant number BIG with its
+  // companion small — Over = count big / line small ("2 /2.5"), Under = line big / count small
+  // ("4.5 /1"). liveTrack puts the dominant figure in `big`; corner/card picks keep their
+  // team-split event counts (separate owner ruling with the 9–3 example).
+  const ouTrack = !cornerBet && !cardBet && track && track.of.startsWith(" / ") ? track : null;
+  let chipMobile: ReactNode = "";
+  let chipDesktop: ReactNode = "";
   let chipCls = "text-ink-mute";
   if (won) { chipCls = "text-grass-deep"; chipMobile = score ?? "Landed"; chipDesktop = ["Landed", score].filter(Boolean).join(" "); }
   else if (lost) { chipCls = "text-brick"; chipMobile = score ?? "Missed"; chipDesktop = ["Missed", score].filter(Boolean).join(" "); }
   else if (voided) { chipMobile = "Void"; chipDesktop = "Void — game off"; }
-  else if (cat === "live") { chipCls = "text-flood-deep"; chipMobile = chipDesktop = [score, liveMin].filter(Boolean).join("  ") || "Live"; }
+  else if (cat === "live") {
+    chipCls = "text-flood-deep";
+    chipMobile = chipDesktop = ouTrack
+      ? <>{ouTrack.big}<span className="text-[10px] text-ink-mute">{ouTrack.of}</span>{liveMin ? `  ${liveMin}` : ""}</>
+      : [score, liveMin].filter(Boolean).join("  ") || "Live";
+  }
   else if (awaitingFeed) { chipCls = "text-flood-deep"; chipMobile = chipDesktop = "Awaiting"; }
   else if (staleFeed) { chipMobile = chipDesktop = "No data"; }
   else { chipMobile = chipDesktop = ms?.label ?? "Upcoming"; }

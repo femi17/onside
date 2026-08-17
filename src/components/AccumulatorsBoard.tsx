@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -117,7 +117,7 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
 
   // corner/card legs show their event count everywhere the goal scoreline would have appeared
   const ev = eventScore(leg);
-  let sc = "";
+  let sc: ReactNode = "";
   let mn = "";
   if (voided) {
     sc = ev ?? ms?.score ?? "—";
@@ -125,12 +125,11 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
   } else if (cat === "soon") {
     sc = ms?.label ?? "—";
   } else if (cat === "live") {
-    // under lines show the running count AGAINST the line ("2 / 3.5") so you can see how
-    // near/far the game is from breaking it — "3.5 under" alone said nothing about the goals
+    // O/U figure (owner-ruled): the dominant number reads BIG, its companion small — Over shows
+    // the running count big with the line to beat small ("2 /2.5"); Under shows the line big
+    // with the count small ("4.5 /1"). liveTrack already puts the dominant figure in `big`.
     sc = track
-      ? track.under && track.count != null
-        ? `${track.count} / ${track.big}`
-        : `${track.big}${track.of}`
+      ? <>{track.big}<span className="text-[10.5px] font-semibold text-ink-mute">{track.of}</span></>
       : ev ?? ms?.score ?? "live";
     mn = track?.under ? (track.busted ? "line broken" : `${ms?.label ?? ""} · under`) : ms?.label ?? "";
   } else if (cat === "safe") {

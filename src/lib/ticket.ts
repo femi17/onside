@@ -227,15 +227,16 @@ export function liveTrack(t: TrackedTicket): Track | null {
       needT: hit ? "cleared the line" : "to clear the line",
     };
   };
-  // Under mirrors Over, but the LINE is the dominant figure and the goals scored is the small
-  // number that must stay below it. It breaks (busts) once scored passes the line.
+  // Under mirrors Over, but the LINE is the dominant figure and the running count is the small
+  // number that must stay below it (owner-ruled figure: "4.5 / 1" — line big, scored small).
+  // It breaks (busts) once scored passes the line.
   const underLine = (line: number, unit: string, count = v): Track => {
     const bust = Math.floor(line) + 1; // total that breaks it (3 for 2.5)
     const busted = count >= bust;
     const left = Math.max(0, bust - count); // goals/corners/cards until it breaks
     const one = unit.replace(/s$/, ""); // "goal" / "corner" / "card" / "point"
     return {
-      big: `${line}`, of: " under", unit,
+      big: `${line}`, of: ` / ${count}`, unit,
       fillPct: Math.min(100, (count / bust) * 100),
       flagPct: null,
       hit: won,
