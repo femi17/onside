@@ -1572,6 +1572,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (useSet) {
       const chosen = await pickBest(mixCands ?? FAMILIES[baseMk] ?? [], cell, f, key, strategy.min_edge ?? 0);
       if (!chosen) continue;
+      // delivery floor (owner-ruled 2026-08-17): a pick must be MORE LIKELY TO LAND THAN NOT.
+      // Edge alone shipped a 46% 1X "value" pick — right for volume betting, wrong for a pick
+      // service. No settled delivery had ever been under 50% before that, so this costs nothing.
+      if (chosen.model_prob != null && chosen.model_prob < 0.5) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -1589,6 +1593,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // corners, cards and every canonicalised catalog key work here too
     const baseCand: Cand = { mk: eff.mk, side: eff.side, line: eff.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value ?? null };
     const mp = modelFor(cell, baseCand);
+    // delivery floor (owner-ruled 2026-08-17): never ship a pick the model itself calls
+    // more-likely-to-miss — edge over the odds is not enough (see set path note)
+    if (mp != null && mp < 0.5) continue;
     if (mp == null) {
       if (!passesDeferred(null, null, null)) continue;
       unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null });
