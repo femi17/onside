@@ -1112,14 +1112,13 @@ function formVeto(mk: string | null, side: string | null, line: number | null, p
   // team-total under vs a team scoring a full goal past the line
   if (key === "home_goals_ou" && side === "under" && full(hf) && line != null && (hf.gf5 / 5) * share > line + (per === "ft" ? 1.0 : 0.5)) return true;
   if (key === "away_goals_ou" && side === "under" && full(af) && line != null && (af.gf5 / 5) * share > line + (per === "ft" ? 1.0 : 0.5)) return true;
-  // win picks (incl. 1UP/never-down variants) for a team that lost all five
-  if (/^home_win/.test(key) && full(hf) && hf.losses5 === 5) return true;
-  if (/^away_win/.test(key) && full(af) && af.losses5 === 5) return true;
-  // double chance / draw-no-bet: still backing a team that lost all five — "win or draw"
-  // needs at least the occasional point, and five straight losses is the strongest form
-  // contradiction the pick can have
-  if ((key === "double_chance_1x" || key === "home_no_bet" || (key === "dnb" && side !== "away")) && full(hf) && hf.losses5 === 5) return true;
-  if ((key === "double_chance_x2" || key === "away_no_bet" || (key === "dnb" && side === "away")) && full(af) && af.losses5 === 5) return true;
+  // win / double-chance / draw-no-bet picks on a team that lost 4+ of its last five.
+  // Backtested (1,456 games, owner-confirmed 2026-08-17): 4 losses is the same cliff as 5 —
+  // 1X lands 57% (vs 64-76% for 0-3 losses), a straight win just 30% (vs 40-51%).
+  if (/^home_win/.test(key) && full(hf) && hf.losses5 >= 4) return true;
+  if (/^away_win/.test(key) && full(af) && af.losses5 >= 4) return true;
+  if ((key === "double_chance_1x" || key === "home_no_bet" || (key === "dnb" && side !== "away")) && full(hf) && hf.losses5 >= 4) return true;
+  if ((key === "double_chance_x2" || key === "away_no_bet" || (key === "dnb" && side === "away")) && full(af) && af.losses5 >= 4) return true;
   // clean sheet / win-to-nil against a side scoring 12+ in its last 5 (2.4 a game)
   if ((key === "home_clean_sheet" || key === "home_win_to_nil") && full(af) && af.gf5 >= 12) return true;
   if ((key === "away_clean_sheet" || key === "away_win_to_nil") && full(hf) && hf.gf5 >= 12) return true;
