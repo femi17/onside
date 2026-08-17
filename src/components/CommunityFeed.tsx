@@ -11,7 +11,14 @@ import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
 
 export type PickLine = { match: string; market: string | null; edge: number | null; ko: string | null };
-export type Attachment = { match?: string; league?: string | null; market?: string; result?: string; agent?: string; picks?: PickLine[] } | null;
+// admin-shared attachments: a landed acca (anonymised — no member identity) and the day's Double
+export type AccaShare = { id: string; stake: number | null; potential: number | null; currency: string | null; legs: { game: string; market: string }[] };
+export type DoubleShare = { date: string; summary: string | null; legs: { game: string; market: string; prob: number | null; agent: string | null }[] };
+export type Attachment = {
+  match?: string; league?: string | null; market?: string; result?: string; agent?: string; picks?: PickLine[];
+  acca?: { legs: { game: string; market: string }[]; stake?: number | null; potential?: number | null; currency?: string | null };
+  double?: DoubleShare;
+} | null;
 export type CommunityPost = {
   id: string;
   author_handle: string;
@@ -65,6 +72,56 @@ function PicksCard({ picks }: { picks: PickLine[] }) {
   );
 }
 
+const CUR_SYM: Record<string, string> = { NGN: "₦", USD: "$", EUR: "€", GBP: "£", GHS: "GH₵", KES: "KSh", ZAR: "R" };
+const fmtAmt = (n: number | null | undefined, cur: string | null | undefined) =>
+  n == null ? null : `${CUR_SYM[cur ?? "NGN"] ?? "₦"}${Number(n).toLocaleString()}`;
+
+// a landed accumulator, anonymised — the legs + the stake→returns punchline
+function AccaCard({ acca }: { acca: NonNullable<NonNullable<Attachment>["acca"]> }) {
+  const stake = fmtAmt(acca.stake, acca.currency);
+  const pot = fmtAmt(acca.potential, acca.currency);
+  return (
+    <div className="mt-2.5 overflow-hidden rounded-lg border border-grass/30 bg-grass/[0.06] font-mono text-[12px] text-ink">
+      <div className="flex items-center gap-2 border-b border-grass/20 bg-grass/10 px-3 py-2 font-bold text-grass-deep">
+        🏆 Accumulator landed · {acca.legs.length} leg{acca.legs.length === 1 ? "" : "s"}
+        {stake && pot && <span className="ml-auto">{stake} → {pot}</span>}
+      </div>
+      {acca.legs.map((l, i) => (
+        <div key={i} className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
+          <span className="min-w-0 flex-1 truncate">{l.game} · <b>{l.market}</b></span>
+          <span className="flex-none font-bold text-grass-deep">✓</span>
+        </div>
+      ))}
+      <div className="border-t border-ink/10 bg-white/60 px-3 py-2 text-[11px] text-ink-mute">
+        📸 Got a slip of your own?{" "}
+        <Link href="/add" className="font-bold text-flood-deep hover:underline">Upload it</Link>{" "}
+        — Onside tracks &amp; settles it live.
+      </div>
+    </div>
+  );
+}
+
+// the day's Onside Double — two banker picks with their model confidence
+function DoubleCard({ double }: { double: DoubleShare }) {
+  return (
+    <div className="mt-2.5 overflow-hidden rounded-lg border border-flood/40 bg-flood/[0.08] font-mono text-[12px] text-ink">
+      <div className="border-b border-flood/25 bg-flood/15 px-3 py-2 font-bold text-ink">
+        ⚡ Onside Double · {double.date}
+      </div>
+      {double.legs.map((l, i) => (
+        <div key={i} className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
+          <span className="min-w-0 flex-1 truncate">{l.game} · <b>{l.market}</b></span>
+          {l.prob != null && <span className="flex-none font-bold text-grass-deep">{l.prob}%</span>}
+        </div>
+      ))}
+      <div className="border-t border-ink/10 bg-white/60 px-3 py-2 text-[11px] text-ink-mute">
+        The two safest picks of the day, chosen by the engine —{" "}
+        <Link href="/agent" className="font-bold text-flood-deep hover:underline">follow it live</Link>.
+      </div>
+    </div>
+  );
+}
+
 function Avatar({ handle, color }: { handle: string; color: string | null }) {
   return (
     <span
@@ -83,6 +140,7 @@ export default function CommunityFeed({
   myLikes,
   blockedHandles,
   shareable,
+  adminShare,
 }: {
   userId: string;
   me: Me;
@@ -90,6 +148,8 @@ export default function CommunityFeed({
   myLikes: string[];
   blockedHandles: string[];
   shareable: ShareItem[];
+  // present only for admins: recent landed accas (anonymised) + today's Onside Double
+  adminShare?: { accas: AccaShare[]; double: DoubleShare | null } | null;
 }) {
   const supabase = createClient();
   const router = useRouter();
@@ -114,6 +174,9 @@ export default function CommunityFeed({
   const [body, setBody] = useState("");
   const [attach, setAttach] = useState<ShareItem | null>(null);
   const [showAttach, setShowAttach] = useState(false);
+  // admin attachments — a landed acca or the day's Double (mutually exclusive with `attach`)
+  const [adminAttach, setAdminAttach] = useState<{ kind: "acca"; acca: AccaShare } | { kind: "double"; double: DoubleShare } | null>(null);
+  const [showAccaPick, setShowAccaPick] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -181,13 +244,25 @@ export default function CommunityFeed({
   }
 
   async function submit() {
-    if (!body.trim() && !attach) return;
+    if (!body.trim() && !attach && !adminAttach) return;
     setBusy(true); setMsg(null);
-    const attachment = attach ? { match: attach.match, league: attach.league, market: attach.market, result: attach.result } : null;
-    const { error } = await supabase.rpc("community_post", { p_body: body, p_kind: attach ? "result" : "note", p_attachment: attachment });
+    let kind = "note";
+    let attachment: Record<string, unknown> | null = null;
+    if (adminAttach?.kind === "acca") {
+      kind = "acca";
+      const a = adminAttach.acca;
+      attachment = { acca: { legs: a.legs, stake: a.stake, potential: a.potential, currency: a.currency } };
+    } else if (adminAttach?.kind === "double") {
+      kind = "double";
+      attachment = { double: adminAttach.double };
+    } else if (attach) {
+      kind = "result";
+      attachment = { match: attach.match, league: attach.league, market: attach.market, result: attach.result };
+    }
+    const { error } = await supabase.rpc("community_post", { p_body: body, p_kind: kind, p_attachment: attachment });
     setBusy(false);
     if (error) { setMsg(error.message); return; }
-    setBody(""); setAttach(null); setShowAttach(false);
+    setBody(""); setAttach(null); setShowAttach(false); setAdminAttach(null); setShowAccaPick(false);
     router.refresh();
   }
 
@@ -284,13 +359,46 @@ export default function CommunityFeed({
               )) : <div className="px-3 py-3 font-mono text-[11px] text-ink-mute">No settled results to attach yet.</div>}
             </div>
           )}
-          <div className="mt-3 flex items-center gap-2">
-            {!attach && (
-              <button onClick={() => setShowAttach((v) => !v)} className="rounded-lg border border-ink/20 px-3 py-2 font-mono text-[12px] font-bold text-ink hover:border-ink/40">
+          {/* admin attachment preview — the exact card the post will carry, with a remove × */}
+          {adminAttach && (
+            <div className="relative">
+              {adminAttach.kind === "acca" ? <AccaCard acca={adminAttach.acca} /> : <DoubleCard double={adminAttach.double} />}
+              <button onClick={() => setAdminAttach(null)} aria-label="Remove attachment" className="absolute -right-1.5 -top-1 grid h-6 w-6 place-items-center rounded-full bg-ink text-xs font-bold text-white">×</button>
+            </div>
+          )}
+          {/* admin acca picker — recent landed accas across the community, anonymised */}
+          {showAccaPick && !adminAttach && (
+            <div className="no-scrollbar mt-2 max-h-44 overflow-y-auto rounded-lg border border-ink/10">
+              {adminShare?.accas.length ? adminShare.accas.map((a) => (
+                <button key={a.id} onClick={() => { setAdminAttach({ kind: "acca", acca: a }); setShowAccaPick(false); }} className="flex w-full items-center gap-2 border-b border-ink/5 px-3 py-2 text-left last:border-0 hover:bg-ink/[0.03]">
+                  <span className="h-2 w-2 flex-none rounded-full bg-grass" />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
+                    {a.legs.length} legs{fmtAmt(a.stake, a.currency) && fmtAmt(a.potential, a.currency) ? ` · ${fmtAmt(a.stake, a.currency)} → ${fmtAmt(a.potential, a.currency)}` : ""} · {a.legs[0]?.game ?? ""}{a.legs.length > 1 ? "…" : ""}
+                  </span>
+                </button>
+              )) : <div className="px-3 py-3 font-mono text-[11px] text-ink-mute">No landed accas to share yet.</div>}
+            </div>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {!attach && !adminAttach && (
+              <button onClick={() => { setShowAttach((v) => !v); setShowAccaPick(false); }} className="rounded-lg border border-ink/20 px-3 py-2 font-mono text-[12px] font-bold text-ink hover:border-ink/40">
                 {showAttach ? "Cancel" : "＋ Attach a result"}
               </button>
             )}
-            <button onClick={submit} disabled={busy || (!body.trim() && !attach)} className="ml-auto rounded-lg bg-flood px-4 py-2 font-bold text-ink disabled:opacity-40">
+            {/* admin-only shares — a landed acca or today's Onside Double */}
+            {adminShare && !attach && !adminAttach && (
+              <>
+                <button onClick={() => { setShowAccaPick((v) => !v); setShowAttach(false); }} className="rounded-lg border border-grass/40 px-3 py-2 font-mono text-[12px] font-bold text-grass-deep hover:border-grass">
+                  {showAccaPick ? "Cancel" : "🏆 Won acca"}
+                </button>
+                {adminShare.double && (
+                  <button onClick={() => { setAdminAttach({ kind: "double", double: adminShare.double! }); setShowAttach(false); setShowAccaPick(false); }} className="rounded-lg border border-flood/50 px-3 py-2 font-mono text-[12px] font-bold text-flood-deep hover:border-flood">
+                    ⚡ Onside Double
+                  </button>
+                )}
+              </>
+            )}
+            <button onClick={submit} disabled={busy || (!body.trim() && !attach && !adminAttach)} className="ml-auto rounded-lg bg-flood px-4 py-2 font-bold text-ink disabled:opacity-40">
               {busy ? "Posting…" : "Post"}
             </button>
           </div>
@@ -334,6 +442,8 @@ export default function CommunityFeed({
               </div>
               {p.body && <div className="mt-2.5 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{p.body}</div>}
               {p.kind === "picks" && p.attachment?.picks?.length ? <PicksCard picks={p.attachment.picks} /> : null}
+              {p.kind === "acca" && p.attachment?.acca ? <AccaCard acca={p.attachment.acca} /> : null}
+              {p.kind === "double" && p.attachment?.double ? <DoubleCard double={p.attachment.double} /> : null}
               {p.attachment && (p.kind === "result" || p.kind === "slip") && (
                 <div className="mt-2.5 inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-2 font-mono text-[12px] text-ink">
                   {p.attachment.market && <span className="font-bold">{p.attachment.market}</span>}
@@ -413,6 +523,8 @@ export default function CommunityFeed({
                 </div>
                 {openPost.body && <div className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{openPost.body}</div>}
                 {openPost.kind === "picks" && openPost.attachment?.picks?.length ? <PicksCard picks={openPost.attachment.picks} /> : null}
+                {openPost.kind === "acca" && openPost.attachment?.acca ? <AccaCard acca={openPost.attachment.acca} /> : null}
+                {openPost.kind === "double" && openPost.attachment?.double ? <DoubleCard double={openPost.attachment.double} /> : null}
                 {openPost.attachment && (openPost.kind === "result" || openPost.kind === "slip") && (
                   <div className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink/10 bg-white px-3 py-2 font-mono text-[12px] text-ink">
                     {openPost.attachment.market && <span className="font-bold">{openPost.attachment.market}</span>}

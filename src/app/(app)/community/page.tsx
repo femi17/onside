@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
-import CommunityFeed, { type CommunityPost, type ShareItem } from "@/components/CommunityFeed";
+import CommunityFeed, { type CommunityPost, type ShareItem, type AccaShare, type DoubleShare } from "@/components/CommunityFeed";
 import LeaderboardOptIn from "@/components/LeaderboardOptIn";
 
 // Community — built to design-reference/community.html. Real feed (Phase A+B): join with a handle,
@@ -56,6 +56,28 @@ export default async function CommunityPage() {
     market: r.market_label ?? r.market_key ?? "Bet",
     result: r.result,
   }));
+
+  // admin-only sharing sources: recent landed accas across the community (anonymised, via a
+  // security-definer RPC — RLS blocks a direct cross-member read) + today's Onside Double
+  let adminShare: { accas: AccaShare[]; double: DoubleShare | null } | null = null;
+  if (prof?.is_admin) {
+    const [{ data: accas }, { data: dbl }] = await Promise.all([
+      supabase.rpc("admin_recent_won_accas"),
+      supabase.from("onside_double").select("set_date, legs, summary").eq("user_id", user.id).order("set_date", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    type RawLeg = { game?: string; market?: string; prob?: number; agent?: string };
+    const accaList: AccaShare[] = Array.isArray(accas)
+      ? (accas as AccaShare[]).map((a) => ({ id: a.id, stake: a.stake ?? null, potential: a.potential ?? null, currency: a.currency ?? null, legs: a.legs ?? [] }))
+      : [];
+    const double: DoubleShare | null = dbl
+      ? {
+          date: String(dbl.set_date),
+          summary: (dbl.summary as string | null) ?? null,
+          legs: ((dbl.legs ?? []) as RawLeg[]).map((l) => ({ game: l.game ?? "Match", market: l.market ?? "Pick", prob: l.prob ?? null, agent: l.agent ?? null })),
+        }
+      : null;
+    adminShare = { accas: accaList, double };
+  }
 
   // the banner invites people to join the public channel (@onsideai), not to DM the bot
   const tgUrl = process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL ?? "https://t.me/onsideai";
@@ -116,6 +138,7 @@ export default async function CommunityPage() {
               myLikes={(myReacts ?? []).map((r) => r.post_id as string)}
               blockedHandles={blockedHandles}
               shareable={shareable}
+              adminShare={adminShare}
             />
           </div>
 
