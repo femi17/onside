@@ -110,6 +110,39 @@ p { color: var(--ink); }
 .card-links a:hover { text-decoration: underline; }
 .card-links a.sub { color: var(--muted); }
 
+/* ---- portfolio directory (solutions) ----
+   One compact row per product with its brand mark — stays short no matter how many
+   apps join the umbrella. The whole row is the link; badges reuse .prod-badge. */
+.portfolio { display: grid; gap: 12px; }
+.p-row {
+  display: grid; grid-template-columns: 56px 1fr auto; gap: 18px; align-items: center;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px 20px; text-decoration: none;
+  transition: transform .12s, border-color .15s, box-shadow .15s;
+}
+.p-row:hover { transform: translateY(-1px); border-color: var(--orange); box-shadow: 0 12px 26px -20px rgba(15,14,12,0.45); }
+.p-logo {
+  width: 56px; height: 56px; border-radius: 13px; display: grid; place-items: center;
+  overflow: hidden; flex: none;
+}
+.p-logo-loota { background: #fff; border: 1px solid var(--border); }
+.p-logo-loota img { width: 74%; height: auto; display: block; }
+.p-logo-roomy {
+  background: linear-gradient(150deg, #116A4E, #0C513C); color: #EAF3EC;
+  font-size: 26px; font-weight: 700; line-height: 1;
+}
+.p-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.p-name { font-weight: 700; font-size: 16px; color: var(--ink); }
+.p-desc { display: block; font-size: 13.5px; color: var(--muted); line-height: 1.6; margin-top: 3px; }
+.p-go { font-family: 'Space Mono', monospace; font-size: 12px; font-weight: 700; color: var(--orange); white-space: nowrap; }
+.p-row:hover .p-go { text-decoration: underline; }
+@media (max-width: 640px) {
+  .p-row { grid-template-columns: 44px 1fr; gap: 14px; padding: 14px 16px; }
+  .p-logo { width: 44px; height: 44px; border-radius: 10px; }
+  .p-logo-roomy { font-size: 20px; }
+  .p-go { display: none; } /* the row itself is the link; the URL chip is desktop garnish */
+}
+
 /* ---- value strip ---- */
 .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 @media (max-width: 680px) { .strip { grid-template-columns: 1fr; } }
