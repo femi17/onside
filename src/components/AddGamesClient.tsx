@@ -411,6 +411,9 @@ export default function AddGamesClient({
       .select("fixture_id, market_key, side, line")
       .eq("user_id", userId)
       .in("status", ["pending", "live"])
+      // a leg swept off the tracker (cut acca / removed) is not "already tracked" — the same
+      // bet can come back as a fresh standalone or a leg of a new acca
+      .not("tracker_hidden", "is", true)
       .in("fixture_id", fixtureIds);
     const taken = new Set((existing ?? []).map((r) => dupKey(r.fixture_id as number, r.market_key as string, r.side as string, r.line as number)));
     const fresh = basket.filter((b) => !taken.has(dupKey(b.fixtureId, b.marketKey, b.side, b.line)));

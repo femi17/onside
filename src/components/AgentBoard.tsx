@@ -527,7 +527,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     setBusyId(p.id);
     const { data: existing } = await supabase
       .from("tickets").select("market_key, line, side")
-      .eq("user_id", userId).eq("fixture_id", fx).in("status", ["pending", "live"]);
+      .eq("user_id", userId).eq("fixture_id", fx).in("status", ["pending", "live"])
+      .not("tracker_hidden", "is", true); // a cut acca's hidden legs don't block a fresh add
     const key = dupKey(fx, p.market_key, p.line, p.side);
     const dup = (existing ?? []).some((t) => dupKey(fx, t.market_key as string, t.line as number | null, t.side as string) === key);
     if (!dup) await supabase.from("tickets").insert(ticketRow(p, fx));
@@ -543,7 +544,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     const fxIds = Array.from(new Set(candidates.map((p) => fixtureId(p)!)));
     const { data: existing } = await supabase
       .from("tickets").select("fixture_id, market_key, line, side")
-      .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds);
+      .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds)
+      .not("tracker_hidden", "is", true); // a cut acca's hidden legs don't block a fresh add
     const taken = new Set((existing ?? []).map((r) => dupKey(r.fixture_id as number, r.market_key as string, r.line as number | null, r.side as string)));
     const rows = candidates
       .filter((p) => !taken.has(dupKey(fixtureId(p)!, p.market_key, p.line, p.side)))

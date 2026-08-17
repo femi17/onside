@@ -555,7 +555,8 @@ export default function ImportSlip({
     const fxIds = Array.from(new Set(rows.map((r) => r.fixture_id).filter((v): v is number => v != null)));
     const { data: existing } = await supabase
       .from("tickets").select("id, fixture_id, market_key, side, accumulator_id")
-      .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds);
+      .eq("user_id", userId).in("status", ["pending", "live"]).in("fixture_id", fxIds)
+      .not("tracker_hidden", "is", true); // a cut acca's hidden legs never absorb a fresh slip leg
     // group existing tracked bets by fixture+market+side — the SAME bet can have several rows, one per
     // acca it belongs to (that's allowed: a game can be a leg in more than one accumulator)
     const existingByKey = new Map<string, { id: string; accumulator_id: string | null }[]>();

@@ -284,6 +284,7 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
         .select("id, market_label, custom_market, fixtures(home_team, away_team, kickoff_utc)")
         .is("accumulator_id", null)
         .in("status", ["pending", "live"])
+        .not("tracker_hidden", "is", true) // removed-from-tracker singles aren't attachable
         .order("created_at", { ascending: false })
         .limit(30);
       setLoose((data ?? []) as unknown as LooseTicket[]);

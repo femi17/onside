@@ -139,6 +139,9 @@ export default async function AgentPage() {
     .from("tickets")
     .select("fixture_id, market_key, line, side")
     .eq("user_id", user.id)
+    // a leg swept off the tracker (cut acca / removed) is NOT "on tracker" — it must not
+    // block re-adding the same bet as a fresh standalone
+    .not("tracker_hidden", "is", true)
     .in("fixture_id", fixtureIds.length ? fixtureIds : [-1]);
   const takenKey = (fx: number, mk: string | null | undefined, line: number | null | undefined, side: string | null | undefined) => {
     const c = canonicalMarket(mk, line, side);
