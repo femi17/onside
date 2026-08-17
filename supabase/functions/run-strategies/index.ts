@@ -1017,43 +1017,76 @@ async function buildCornerFormMap(teamIds: number[]): Promise<Map<number, CornFo
   }
   return map;
 }
-// 🧭 H2H sense check — implicit, always on (owner-ruled 2026-08-16): even when the user's rule
-// says nothing about head-to-head, a pick that this matchup's OWN history clearly contradicts is
-// dropped. Conservative on purpose: needs ≥5 recorded meetings (6+ for win markets) and a STRONG
-// contradiction — mild disagreement is left to the model + the market bar. Full-time goal/result
-// markets only; corners/cards/halves/exotics exempt (no H2H basis). Thin history never vetoes.
+// 🧭 H2H sense check — implicit, always on, EVERY outcome (owner-ruled 2026-08-16, restated
+// 2026-08-17: the model→h2hVeto→formVeto→Guide pipeline is the DEFAULT for any bet outcome):
+// a pick that this matchup's OWN history clearly contradicts is dropped even with no rule.
+// Conservative on purpose: needs ≥5 recorded meetings (6+ for win/DC markets) and a STRONG
+// contradiction — mild disagreement is left to the model + the market bar. Markets where H2H
+// has nothing to say (corners, cards, draws, exotics) pass through untouched — the pick still
+// flows through the veto, the veto just has no basis to fire. Thin history never vetoes.
 function h2hVeto(mk: string | null, side: string | null, line: number | null, period: string | null | undefined, f: Fixture, h2h?: H2H): boolean {
   if (!h2h || h2h.n < 5) return false;
-  if (period && period !== "ft") return false;
+  const per = period ?? "ft";
   let key = mk ?? "";
   if (key === "total_goals_ou" && line != null && side) key = `${side}_${String(line).replace(".", "_")}`;
   const rate = (x: number) => x / h2h.n;
   const hs = f.home_team_id != null ? (h2h.team[f.home_team_id] ?? { w: 0, s: 0 }) : { w: 0, s: 0 };
   const as_ = f.away_team_id != null ? (h2h.team[f.away_team_id] ?? { w: 0, s: 0 }) : { w: 0, s: 0 };
+
+  // goal totals — ANY line, any period (period share mirrors the pricing model's half split).
+  // The classic FT lines keep their original owner-ruled thresholds; everything else uses the
+  // pairing's own scoring average vs the line, with wider margins than formVeto (5-10 meetings
+  // is a thinner sample than last-5 form).
+  const gm = key.match(/^(over|under)_(\d+)(?:_(\d))?$/);
+  if (gm) {
+    if (per === "ft") {
+      switch (key) {
+        case "over_1_5": return h2h.avg < 1.2;
+        case "over_2_5": return rate(h2h.over25) < 0.3;
+        case "over_3_5": return rate(h2h.over35) < 0.2;
+        case "under_2_5": return rate(h2h.over25) > 0.7;
+        case "under_3_5": return rate(h2h.over35) > 0.6;
+      }
+    }
+    const gl = Number(gm[2]) + (gm[3] ? Number(`0.${gm[3]}`) : 0);
+    const share = per === "1h" ? H1_GOALS : per === "2h" ? 1 - H1_GOALS : 1;
+    const exp = h2h.avg * share;
+    if (gm[1] === "over") return exp < gl - (per === "ft" ? 1.0 : 0.5);
+    return exp > gl + (per === "ft" ? 1.5 : 0.75);
+  }
+
+  if (per !== "ft") return false;
+  // win picks incl. 1UP/never-down variants: never beaten this opponent on record
+  if (/^home_win/.test(key)) return h2h.n >= 6 && hs.w === 0;
+  if (/^away_win/.test(key)) return h2h.n >= 6 && as_.w === 0;
   switch (key) {
     case "home_to_score": return rate(hs.s) < 0.5;      // picked to score, but usually doesn't vs THIS opponent
     case "away_to_score": return rate(as_.s) < 0.5;
     case "btts": return side === "no" ? rate(h2h.btts) > 0.7 : rate(h2h.btts) < 0.3;
-    case "over_1_5": return h2h.avg < 1.2;
-    case "over_2_5": return rate(h2h.over25) < 0.3;
-    case "over_3_5": return rate(h2h.over35) < 0.2;
-    case "under_2_5": return rate(h2h.over25) > 0.7;
-    case "under_3_5": return rate(h2h.over35) > 0.6;
-    case "home_win": return h2h.n >= 6 && hs.w === 0;   // has never beaten this opponent on record
-    case "away_win": return h2h.n >= 6 && as_.w === 0;
+    // double chance / draw-no-bet fail only when the third outcome lands — veto when the OTHER
+    // side won every single recorded meeting (the backed team never even drew)
+    case "double_chance_1x": return h2h.n >= 6 && as_.w === h2h.n;
+    case "double_chance_x2": return h2h.n >= 6 && hs.w === h2h.n;
+    case "dnb": return h2h.n >= 6 && (side === "away" ? hs.w === h2h.n : as_.w === h2h.n);
+    case "home_no_bet": return h2h.n >= 6 && as_.w === h2h.n;
+    case "away_no_bet": return h2h.n >= 6 && hs.w === h2h.n;
+    // clean sheets / win-to-nil: the side being kept out scores in nearly every meeting
+    case "home_clean_sheet": case "home_win_to_nil": return rate(as_.s) > 0.7;
+    case "away_clean_sheet": case "away_win_to_nil": return rate(hs.s) > 0.7;
     default: return false;
   }
 }
 
-// 🧭 Recent-form sense check — implicit, always on (owner-approved 2026-08-16, replayed first;
-// extended same day to ALL user-choosable outcomes on owner ruling): even with no rule, a pick
-// that both teams' own displayed last-5 form EXTREMELY contradicts is dropped — same philosophy as
-// h2hVeto and the Onside Guide (the card SHOWS the form; a pick that visibly contradicts its own
-// evidence never ships). Conservative on purpose: a team must have a FULL 5 recent games on record
-// (thin data never vetoes) and only extreme contradictions fire. Covers every goal-total line at
-// any period (share-scaled), to-score/btts/team totals, win variants, clean sheets. Corners/cards
-// (goal form says nothing) and draw/DC/DNB/odd-even/exotics (form can't contradict them) stay with
-// the model bar. Replays before each shipping: v1 vetoed ZERO settled picks; the extension vetoed
+// 🧭 Recent-form sense check — implicit, always on, EVERY outcome (owner-approved 2026-08-16,
+// restated 2026-08-17: model→h2hVeto→formVeto→Guide is the DEFAULT pipeline for any bet outcome):
+// even with no rule, a pick that both teams' own displayed last-5 form EXTREMELY contradicts is
+// dropped — same philosophy as h2hVeto and the Onside Guide (the card SHOWS the form; a pick that
+// visibly contradicts its own evidence never ships). Conservative on purpose: a team must have a
+// FULL 5 recent games on record (thin data never vetoes) and only extreme contradictions fire.
+// Covers every goal-total line at any period (share-scaled), to-score/btts/team totals, win
+// variants, double chance / draw-no-bet, clean sheets. Corners/cards (goal form says nothing),
+// draw and odd-even/exotics (form can't contradict them) pass through with no basis to fire.
+// Replays before each shipping: v1 vetoed ZERO settled picks; the totals extension vetoed
 // 4 (2W/2L, a 50% set vs 70% kept) — drops below-average picks at no net cost.
 function formVeto(mk: string | null, side: string | null, line: number | null, period: string | null | undefined, hf?: Form, af?: Form): boolean {
   const per = period ?? "ft";
@@ -1082,6 +1115,11 @@ function formVeto(mk: string | null, side: string | null, line: number | null, p
   // win picks (incl. 1UP/never-down variants) for a team that lost all five
   if (/^home_win/.test(key) && full(hf) && hf.losses5 === 5) return true;
   if (/^away_win/.test(key) && full(af) && af.losses5 === 5) return true;
+  // double chance / draw-no-bet: still backing a team that lost all five — "win or draw"
+  // needs at least the occasional point, and five straight losses is the strongest form
+  // contradiction the pick can have
+  if ((key === "double_chance_1x" || key === "home_no_bet" || (key === "dnb" && side !== "away")) && full(hf) && hf.losses5 === 5) return true;
+  if ((key === "double_chance_x2" || key === "away_no_bet" || (key === "dnb" && side === "away")) && full(af) && af.losses5 === 5) return true;
   // clean sheet / win-to-nil against a side scoring 12+ in its last 5 (2.4 a game)
   if ((key === "home_clean_sheet" || key === "home_win_to_nil") && full(af) && af.gf5 >= 12) return true;
   if ((key === "away_clean_sheet" || key === "away_win_to_nil") && full(hf) && hf.gf5 >= 12) return true;
