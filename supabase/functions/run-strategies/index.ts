@@ -1580,6 +1580,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // Edge alone shipped a 46% 1X "value" pick — right for volume betting, wrong for a pick
       // service. No settled delivery had ever been under 50% before that, so this costs nothing.
       if (chosen.model_prob != null && chosen.model_prob < 0.5) continue;
+      // too-good-to-be-true cap (owner-ruled 2026-08-17): odds >20% away from the model usually
+      // mean the bookies know something it can't see (line-ups, B-team, context). The confidence
+      // dot already graded these 🟠; now they don't ship at all. No settled pick ever exceeded 20%.
+      if (chosen.edge != null && chosen.edge > 0.20) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -1616,6 +1620,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       continue;
     }
     const edge = mp - kp;
+    // too-good-to-be-true cap — see the set-path note above
+    if (edge > 0.20) continue;
     if (!passesDeferred(mp, kp, edge)) continue;
     priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });
   }
