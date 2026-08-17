@@ -499,15 +499,28 @@ export default function ImportSlip({
         const txt = `${s.market_label ?? ""} ${s.value ?? ""}`.toLowerCase();
         const half = /\b(1st|first)\s*half\b/.test(txt) ? "1h" : /\b(2nd|second)\s*half\b/.test(txt) ? "2h" : null;
         const isGoals = !/(corner|card|book|shot|foul|offside|assist)/.test(txt);
-        const ouM = txt.match(/\b(over|under)\b\s*(\d+(?:\.5)?)/);
+        // tolerate the line styles bookmakers print: "Under 1.5", "Under(1.5)", "U 1,5" — anything
+        // up to 3 non-digit chars between the word and the number, comma decimals normalised
+        const ouM = txt.match(/\b(over|under)\b[^0-9]{0,3}(\d+(?:[.,]\d)?)/);
         const fixed = /^(over|under)_(\d)_5$/.exec(key ?? "");
         if (half && isGoals && (ouM || fixed || key === "total_goals_ou")) {
           side = ouM ? (ouM[1] === "under" ? "under" : "over") : fixed ? fixed[1] : side ?? "over";
-          line = ouM ? Number(ouM[2]) : fixed ? Number(`${fixed[2]}.5`) : line;
-          key = "total_goals_ou";
-          period = half;
-          value = null;
-          label = `${half === "1h" ? "1st" : "2nd"} half — ${side === "under" ? "Under" : "Over"} ${line} goals`;
+          // line: printed text first, then the fixed key, then whatever the canon/reader carried
+          line = ouM ? Number(ouM[2].replace(",", ".")) : fixed ? Number(`${fixed[2]}.5`) : line ?? (s.line ? Number(s.line) : null);
+          // no line found anywhere → a total_goals_ou row would read "Under null goals" and could
+          // never grade. Leave the leg exactly as read (manual-settleable) instead of converting.
+          if (line != null) {
+            key = "total_goals_ou";
+            period = half;
+            value = null;
+            label = `${half === "1h" ? "1st" : "2nd"} half — ${side === "under" ? "Under" : "Over"} ${line} goals`;
+          }
+        }
+        // a goal-total with no line can never grade (and reads "Under null goals") — keep such a
+        // leg as a custom manual-settle bet under its original printed label instead
+        if (key === "total_goals_ou" && line == null) {
+          key = "custom";
+          label = s.market_label || label;
         }
       }
 
