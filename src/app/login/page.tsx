@@ -143,9 +143,6 @@ export default function LoginPage() {
           ? "New here? Create an account"
           : "Already have an account? Sign in"}
       </button>
-      <Link href="/how-it-works" className="mt-3 text-center font-mono text-[12px] font-bold text-flood hover:underline">
-        See how Onside works →
-      </Link>
       </div>
       <Footer />
     </>

@@ -47,10 +47,10 @@ const STEPS: { img: string; kicker: string; title: string; body: string }[] = [
 ];
 
 export default function HowItWorksPage() {
+  // same page skeleton as terms/privacy: a flex-1 content column, footer at the true end
   return (
     <>
-    <main className="min-h-screen bg-pitch px-5 pb-20 pt-10">
-      <div className="mx-auto max-w-2xl">
+      <div className="mx-auto w-full max-w-2xl flex-1 px-5 pb-20 pt-10">
         <div className="mb-8 flex items-center justify-between gap-3">
           <Link href="/" className="flex items-center gap-2">
             <span className="glyph" />
@@ -95,8 +95,7 @@ export default function HowItWorksPage() {
           </Link>
         </div>
       </div>
-    </main>
-    <Footer />
+      <Footer />
     </>
   );
 }
