@@ -14,9 +14,6 @@ export default function Landing() {
           </span>
         </div>
         <nav className="flex items-center gap-6 text-sm font-semibold text-onpitch-mute">
-          <Link href="/how-it-works" className="hidden hover:text-chalk sm:inline">
-            How it works
-          </Link>
           <Link href="/login" className="hover:text-chalk">
             Sign in
           </Link>
@@ -52,10 +49,10 @@ export default function Landing() {
               Start free
             </Link>
             <Link
-              href="/how-it-works"
+              href="/tracker"
               className="rounded-xl border border-white/15 px-5 py-3.5 font-bold text-chalk"
             >
-              See how it works
+              See the app
             </Link>
           </div>
           <p className="mt-4 font-mono text-xs text-onpitch-mute">

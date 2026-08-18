@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import Footer from "@/components/Footer";
+import BackButton from "@/components/BackButton";
 
 // The golden-path walkthrough, built from REAL screenshots of the app (a seeded demo account,
 // captured by scripts/capture-guide.mjs at a mobile viewport). Re-run the script after UI
@@ -46,14 +48,18 @@ const STEPS: { img: string; kicker: string; title: string; body: string }[] = [
 
 export default function HowItWorksPage() {
   return (
+    <>
     <main className="min-h-screen bg-pitch px-5 pb-20 pt-10">
       <div className="mx-auto max-w-2xl">
-        <Link href="/" className="mb-8 flex items-center gap-2">
-          <span className="glyph" />
-          <span className="font-disp text-xl font-extrabold tracking-tight text-chalk">
-            ON<span className="text-flood">SIDE</span>
-          </span>
-        </Link>
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <Link href="/" className="flex items-center gap-2">
+            <span className="glyph" />
+            <span className="font-disp text-xl font-extrabold tracking-tight text-chalk">
+              ON<span className="text-flood">SIDE</span>
+            </span>
+          </Link>
+          <BackButton />
+        </div>
 
         <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">How it works</p>
         <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
@@ -90,5 +96,7 @@ export default function HowItWorksPage() {
         </div>
       </div>
     </main>
+    <Footer />
+    </>
   );
 }
