@@ -1584,6 +1584,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // mean the bookies know something it can't see (line-ups, B-team, context). The confidence
       // dot already graded these 🟠; now they don't ship at all. No settled pick ever exceeded 20%.
       if (chosen.edge != null && chosen.edge > 0.20) continue;
+      // owner-ruled 2026-08-18: EVERY delivered pick must carry a model rating — a card that
+      // can't print its probabilities never ships
+      if (chosen.model_prob == null) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -1601,14 +1604,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // corners, cards and every canonicalised catalog key work here too
     const baseCand: Cand = { mk: eff.mk, side: eff.side, line: eff.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value ?? null };
     const mp = modelFor(cell, baseCand);
+    // owner-ruled 2026-08-18: EVERY delivered pick must carry a model rating — the old
+    // model-less unpriced path is gone (cup/U23 games now get rated via the widened model
+    // scope instead of shipping blind)
+    if (mp == null) continue;
     // delivery floor (owner-ruled 2026-08-17): never ship a pick the model itself calls
     // more-likely-to-miss — edge over the odds is not enough (see set path note)
-    if (mp != null && mp < 0.5) continue;
-    if (mp == null) {
-      if (!passesDeferred(null, null, null)) continue;
-      unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: null, market_prob: null });
-      continue;
-    }
+    if (mp < 0.5) continue;
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketFor(baseCand, bms2);
     if (kp == null) {
@@ -2129,6 +2131,24 @@ Deno.serve(async (req) => {
         .not("status", "in", `(${NOT_PICKABLE.join(",")})`).limit(3000);
       for (const r of up ?? []) leagueSet.add(r.league_id);
     }
+    // Teams playing cups / U23 / continental games keep their REAL history in their domestic
+    // league — widen the model's scope to every league the window's teams appeared in over the
+    // last year (friendlies excluded server-side), so those fixtures get rated from history we
+    // already hold instead of shipping model-less. (Owner-ruled 2026-08-18: every delivered
+    // pick must carry a model rating — this is what makes that bar reachable for cup games.)
+    try {
+      const { data: upFx } = await sb.from("fixtures").select("home_team_id, away_team_id")
+        .gte("kickoff_utc", new Date().toISOString()).lte("kickoff_utc", new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString())
+        .in("league_id", leagueSet.size ? Array.from(leagueSet) : [-1]).limit(3000);
+      const tids = Array.from(new Set((upFx ?? []).flatMap((r: any) => [r.home_team_id, r.away_team_id]).filter((x: any): x is number => x != null)));
+      if (tids.length) {
+        const { data: extra } = await sb.rpc("team_league_ids", {
+          p_team_ids: tids,
+          p_since: new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString(),
+        });
+        for (const l of (extra as number[] | null) ?? []) leagueSet.add(l);
+      }
+    } catch { /* scope expansion is best-effort — the base league set still builds the model */ }
     // learning layer: load the calibrated temperature (daily self-check) + the cross-agent
     // memories BEFORE any scoring, so every probability and every ranking this run reflects
     // what the engine has learned from its own delivered picks.
