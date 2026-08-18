@@ -65,17 +65,40 @@ export default async function CommunityPage() {
       supabase.rpc("admin_recent_won_accas"),
       supabase.from("onside_double").select("set_date, legs, summary").eq("user_id", user.id).order("set_date", { ascending: false }).limit(1).maybeSingle(),
     ]);
-    type RawLeg = { game?: string; market?: string; prob?: number; agent?: string };
+    type RawLeg = { game?: string; market?: string; prob?: number; agent?: string; fixture_id?: number; delivery_id?: string };
     const accaList: AccaShare[] = Array.isArray(accas)
       ? (accas as AccaShare[]).map((a) => ({ id: a.id, stake: a.stake ?? null, potential: a.potential ?? null, currency: a.currency ?? null, legs: a.legs ?? [] }))
       : [];
-    const double: DoubleShare | null = dbl
-      ? {
-          date: String(dbl.set_date),
-          summary: (dbl.summary as string | null) ?? null,
-          legs: ((dbl.legs ?? []) as RawLeg[]).map((l) => ({ game: l.game ?? "Match", market: l.market ?? "Pick", prob: l.prob ?? null, agent: l.agent ?? null })),
-        }
-      : null;
+    let double: DoubleShare | null = null;
+    if (dbl) {
+      const rawLegs = (dbl.legs ?? []) as RawLeg[];
+      // enrich legs with their market keys (from the admin's own deliveries) so the posted card
+      // can grade each leg client-side as the games finish — "follow it live" made literal
+      const dIds = rawLegs.map((l) => l.delivery_id).filter((v): v is string => !!v);
+      const { data: dels } = dIds.length
+        ? await supabase.from("deliveries").select("id, market_key, side, line, period, bet_value").in("id", dIds)
+        : { data: [] as { id: string; market_key: string | null; side: string | null; line: number | null; period: string | null; bet_value: string | null }[] };
+      const byId = new Map((dels ?? []).map((d) => [d.id as string, d]));
+      double = {
+        date: String(dbl.set_date),
+        summary: (dbl.summary as string | null) ?? null,
+        legs: rawLegs.map((l) => {
+          const d = l.delivery_id ? byId.get(l.delivery_id) : undefined;
+          return {
+            game: l.game ?? "Match",
+            market: l.market ?? "Pick",
+            prob: l.prob ?? null,
+            agent: l.agent ?? null,
+            fixture_id: l.fixture_id ?? null,
+            market_key: (d?.market_key as string | null) ?? null,
+            side: (d?.side as string | null) ?? null,
+            line: d?.line != null ? Number(d.line) : null,
+            period: (d?.period as string | null) ?? null,
+            bet_value: (d?.bet_value as string | null) ?? null,
+          };
+        }),
+      };
+    }
     adminShare = { accas: accaList, double };
   }
 

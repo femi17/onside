@@ -4,16 +4,23 @@
 // slip pill, like posts, report, and block members. Posting/opt-in/rate-limit are enforced server-side
 // by the community_post / join_community RPCs; likes go straight to community_reactions (RLS-scoped).
 // Phase E: live via Supabase realtime on community_posts, plus an own-only block list.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { SCORE_GRADABLE, scoreGrade } from "@/lib/ticket";
 
 export type PickLine = { match: string; market: string | null; edge: number | null; ko: string | null };
 // admin-shared attachments: a landed acca (anonymised — no member identity) and the day's Double
 export type AccaShare = { id: string; stake: number | null; potential: number | null; currency: string | null; legs: { game: string; market: string }[] };
-export type DoubleShare = { date: string; summary: string | null; legs: { game: string; market: string; prob: number | null; agent: string | null }[] };
+export type DoubleLeg = {
+  game: string; market: string; prob: number | null; agent: string | null;
+  // live-follow fields (posts made before these existed render as static cards)
+  fixture_id?: number | null; market_key?: string | null; side?: string | null;
+  line?: number | null; period?: string | null; bet_value?: string | null;
+};
+export type DoubleShare = { date: string; summary: string | null; legs: DoubleLeg[] };
 export type Attachment = {
   match?: string; league?: string | null; market?: string; result?: string; agent?: string; picks?: PickLine[];
   acca?: { legs: { game: string; market: string }[]; stake?: number | null; potential?: number | null; currency?: string | null };
@@ -105,8 +112,66 @@ function AccaCard({ acca }: { acca: NonNullable<NonNullable<Attachment>["acca"]>
   );
 }
 
-// the day's Onside Double — two banker picks with their model confidence
+// the day's Onside Double — two banker picks with their model confidence. LIVE for everyone:
+// the card fetches its legs' fixtures (readable to any signed-in member) and shows the score,
+// the minute, then ✓ landed / ✕ missed as games settle — refreshed every 30s while in play.
+type LegFx = { id: number; status: string | null; elapsed: number | null; home_goals: number | null; away_goals: number | null; ft_home: number | null; ft_away: number | null };
+const FX_DONE = new Set(["FT", "AET", "PEN"]);
+const FX_LIVE = new Set(["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT"]);
+
 function DoubleCard({ double }: { double: DoubleShare }) {
+  const supabase = createClient();
+  const [fx, setFx] = useState<Map<number, LegFx>>(new Map());
+  const ids = double.legs.map((l) => l.fixture_id).filter((v): v is number => v != null);
+
+  useEffect(() => {
+    if (!ids.length) return;
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const load = async () => {
+      const { data } = await supabase
+        .from("fixtures")
+        .select("id, status, elapsed, home_goals, away_goals, ft_home, ft_away")
+        .in("id", ids);
+      if (!alive) return;
+      const m = new Map<number, LegFx>();
+      for (const f of (data ?? []) as LegFx[]) m.set(f.id, f);
+      setFx(m);
+      // every game finished → stop polling; this card is done moving
+      if ([...m.values()].every((f) => FX_DONE.has(f.status ?? ""))) { if (timer) clearInterval(timer); timer = null; }
+    };
+    load();
+    timer = setInterval(load, 30_000);
+    return () => { alive = false; if (timer) clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids.join(",")]);
+
+  // per-leg right-hand state: confidence before KO → score+minute live → result at FT
+  const legState = (l: DoubleLeg): ReactNode => {
+    const f = l.fixture_id != null ? fx.get(l.fixture_id) : undefined;
+    if (!f || (!FX_LIVE.has(f.status ?? "") && !FX_DONE.has(f.status ?? ""))) {
+      return l.prob != null ? <span className="flex-none font-bold text-grass-deep">{l.prob}%</span> : null;
+    }
+    const nonGoal = /corner|card|booking/.test(l.market_key ?? "");
+    const h = (FX_DONE.has(f.status ?? "") ? f.ft_home ?? f.home_goals : f.home_goals) ?? 0;
+    const a = (FX_DONE.has(f.status ?? "") ? f.ft_away ?? f.away_goals : f.away_goals) ?? 0;
+    if (FX_LIVE.has(f.status ?? "")) {
+      return (
+        <span className="flex-none font-bold text-flood-deep">
+          {nonGoal ? "live" : `${h}–${a}`}{f.elapsed != null ? ` ${f.elapsed}'` : ""}
+        </span>
+      );
+    }
+    // finished: grade what a final score can grade (FT-period goal markets); others show the score
+    const gradable = !nonGoal && (l.period ?? "ft") === "ft" && l.market_key != null && SCORE_GRADABLE.has(l.market_key);
+    const res = gradable ? scoreGrade(l.market_key ?? null, l.side ?? null, l.line ?? null, h, a, l.bet_value ?? null) : null;
+    return (
+      <span className={`flex-none font-bold ${res === "won" ? "text-grass-deep" : res === "lost" ? "text-brick" : "text-ink-mute"}`}>
+        {nonGoal ? "FT" : `${h}–${a}`}{res === "won" ? " ✓" : res === "lost" ? " ✕" : ""}
+      </span>
+    );
+  };
+
   return (
     <div className="mt-2.5 overflow-hidden rounded-lg border border-flood/40 bg-flood/[0.08] font-mono text-[12px] text-ink">
       <div className="border-b border-flood/25 bg-flood/15 px-3 py-2 font-bold text-ink">
@@ -119,12 +184,12 @@ function DoubleCard({ double }: { double: DoubleShare }) {
             <span className="block truncate">{l.game}</span>
             <b className="mt-0.5 block truncate text-flood-deep">{l.market}</b>
           </span>
-          {l.prob != null && <span className="flex-none font-bold text-grass-deep">{l.prob}%</span>}
+          {legState(l)}
         </div>
       ))}
       <div className="border-t border-ink/10 bg-white/60 px-3 py-2 text-[11px] text-ink-mute">
-        The two safest picks of the day, chosen by the engine —{" "}
-        <Link href="/agent" className="font-bold text-flood-deep hover:underline">follow it live</Link>.
+        The engine&apos;s two safest picks today, updating live right here —{" "}
+        <Link href="/agent" className="font-bold text-flood-deep hover:underline">get your own agents</Link>.
       </div>
     </div>
   );
