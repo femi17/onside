@@ -251,6 +251,27 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
   const confirm = useConfirm();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rbMsg, setRbMsg] = useState<string | null>(null);
+  const [shared, setShared] = useState(false);
+
+  // mint (or reuse) the slip's public link and hand it to the OS share sheet — WhatsApp is the
+  // real destination. The page + card are anonymised server-side; falling back to the clipboard
+  // on desktop. This is the product's growth loop: every shared slip is a landing page.
+  async function shareAcca() {
+    setRbMsg(null);
+    const { data: token, error } = await supabase.rpc("share_acca", { p_acca_id: acca.id });
+    if (error || !token) { setRbMsg("Couldn't create the share link."); return; }
+    const url = `${window.location.origin}/s/${token}`;
+    const fold = acca.leg_count ?? acca.tickets?.length ?? 0;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `My ${fold}-fold acca on Onside`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShared(true);
+        setTimeout(() => setShared(false), 2500);
+      }
+    } catch { /* user closed the share sheet — nothing to clean up */ }
+  }
   const [addOpen, setAddOpen] = useState(false);
   const [loose, setLoose] = useState<LooseTicket[] | null>(null);
 
@@ -444,6 +465,18 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
             <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide text-ink-mute">
               <span className="rounded bg-ink px-1.5 py-0.5 font-bold tracking-wider text-chalk-2">{acca.bookmaker ?? "Onside"}</span>
               {won ? "won" : dead ? "cut" : "live"}
+              {/* share — public anonymised link + card for any slip, any state */}
+              <button
+                onClick={shareAcca}
+                aria-label="Share this slip"
+                title="Share this slip"
+                className="grid h-6 w-6 flex-none place-items-center rounded-md text-ink-mute transition-colors hover:bg-flood/15 hover:text-flood-deep"
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+                  <path d="M11 5.5 8 2.5m0 0L5 5.5M8 2.5V10M3.5 8v4.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {shared && <span className="font-bold text-grass-deep normal-case">Link copied</span>}
               {dead && (
                 <>
                   {/* rebet — rebuild the slip from the games still open (matches what users do
