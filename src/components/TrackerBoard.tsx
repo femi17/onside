@@ -1040,17 +1040,41 @@ export default function TrackerBoard({ tickets, since }: { tickets: Ticket[]; si
 
       <div className="mx-auto max-w-5xl px-5 pb-10 pt-5 md:px-8">
         {counts.all === 0 ? (
-          <div className="mt-10 rounded-2xl border border-dashed border-ink/15 bg-chalk p-12 text-center shadow-xl">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-flood/15 font-mono text-xl text-flood-deep">+</div>
+          // first-run checklist: an empty tracker steers to the three things Onside is for
+          <div className="mt-10 rounded-2xl border border-dashed border-ink/15 bg-chalk p-8 text-center shadow-xl sm:p-12">
             <h2 className="font-disp text-xl font-bold text-ink">Nothing tracked today.</h2>
             <p className="mx-auto mt-2 max-w-sm text-sm text-ink-mute">
-              Add a game and the market you bet — Onside tracks it live through to settlement.
+              Three ways in — each one tracks itself live through to settlement.
             </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-3">
-              <Link href="/add" className="inline-block rounded-xl bg-flood px-5 py-3 font-bold text-ink">
-                Add a bet
+            <div className="mx-auto mt-6 flex max-w-md flex-col gap-2.5 text-left">
+              <Link href="/add" className="flex items-center gap-3 rounded-xl border border-ink/10 bg-white px-4 py-3.5 transition-colors hover:border-flood">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-flood/15 font-mono text-sm font-bold text-flood-deep">1</span>
+                <span className="min-w-0">
+                  <b className="block text-[14px] text-ink">Upload a bet slip</b>
+                  <span className="block text-[12px] text-ink-mute">A screenshot is enough — every leg gets read and tracked</span>
+                </span>
+                <span className="ml-auto font-mono text-ink-mute">→</span>
+              </Link>
+              <Link href="/strategies/new" className="flex items-center gap-3 rounded-xl border border-ink/10 bg-white px-4 py-3.5 transition-colors hover:border-flood">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-flood/15 font-mono text-sm font-bold text-flood-deep">2</span>
+                <span className="min-w-0">
+                  <b className="block text-[14px] text-ink">Create an agent</b>
+                  <span className="block text-[12px] text-ink-mute">Your strategy, scanned across your leagues every day</span>
+                </span>
+                <span className="ml-auto font-mono text-ink-mute">→</span>
+              </Link>
+              <Link href="/agent" className="flex items-center gap-3 rounded-xl border border-ink/10 bg-white px-4 py-3.5 transition-colors hover:border-flood">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-flood/15 font-mono text-sm font-bold text-flood-deep">3</span>
+                <span className="min-w-0">
+                  <b className="block text-[14px] text-ink">Check today&apos;s picks</b>
+                  <span className="block text-[12px] text-ink-mute">The feed and the Onside Double — track any pick with one tap</span>
+                </span>
+                <span className="ml-auto font-mono text-ink-mute">→</span>
               </Link>
             </div>
+            <Link href="/how-it-works" className="mt-5 inline-block font-mono text-[12px] font-bold text-flood-deep hover:underline">
+              See the full walkthrough →
+            </Link>
           </div>
         ) : allView ? (
           <div className="flex flex-col gap-8">
