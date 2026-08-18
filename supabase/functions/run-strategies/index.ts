@@ -1909,7 +1909,9 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         home_form: hf ? { w: hf.wins5, d: hf.draws5, l: hf.losses5, gf: hf.gf5, ga: hf.ga5, n: hf.n } : null,
         away_form: af ? { w: af.wins5, d: af.draws5, l: af.losses5, gf: af.gf5, ga: af.ga5, n: af.n } : null,
         h2h: h2h && h2h.n ? h2h : null,
-        model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), btts: round2(agg.btts) } : null,
+        // home_score/away_score: the to-score probabilities — stored so *_score_prob rules are
+        // Guide-verifiable on the card (same closure as home_win_prob, 2026-08-18)
+        model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), btts: round2(agg.btts), home_score: round2(agg.homeScore), away_score: round2(agg.awayScore) } : null,
         // stat-model expectations so corner/card picks can explain themselves with real numbers
         ...(cellR?.corn?.ok ? { corners_exp: Math.round((cellR.corn.lh + cellR.corn.la) * 10) / 10 } : {}),
         ...(cellR?.card?.ok ? { cards_exp: Math.round((cellR.card.lh + cellR.card.la) * 10) / 10 } : {}),
@@ -1929,7 +1931,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     const per = (ff: any) => (ff && ff.n ? (ff.gf + ff.ga) / ff.n : null);
     const gfAvg = (ff: any) => (ff && ff.n ? ff.gf / ff.n : null);
     const ppgOf = (ff: any) => (ff && ff.n ? (3 * ff.w + ff.d) / ff.n : null);
-    const displayVal = (field: string, hf: any, af: any, rs?: any): number | null => {
+    const displayVal = (field: string, hf: any, af: any, rs?: any, mp?: number | null): number | null => {
       switch (field) {
         case "home_goals_avg": return gfAvg(hf);
         case "away_goals_avg": return gfAvg(af);
@@ -1945,6 +1947,9 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         // — a pick must never show numbers that contradict its agent's rule
         case "home_win_prob": return rs?.model?.home ?? null;
         case "away_win_prob": return rs?.model?.away ?? null;
+        case "home_score_prob": return rs?.model?.home_score ?? null;
+        case "away_score_prob": return rs?.model?.away_score ?? null;
+        case "model_prob": return mp ?? null;
         default: return null;
       }
     };
@@ -1952,7 +1957,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       const rs: any = reasonsByFx.get(r.f.id);
       const hf = rs?.home_form ?? null, af = rs?.away_form ?? null;
       for (const c of rule.filters) {
-        const x = displayVal(c.field, hf, af, rs);
+        const x = displayVal(c.field, hf, af, rs, r.model_prob ?? null);
         if (x == null) continue;
         const ok = c.op === "gte" ? x >= c.value : c.op === "lte" ? x <= c.value : c.op === "gt" ? x > c.value
           : c.op === "lt" ? x < c.value : c.op === "eq" ? Math.abs(x - c.value) < 1e-9
