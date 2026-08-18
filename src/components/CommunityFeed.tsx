@@ -88,7 +88,11 @@ function AccaCard({ acca }: { acca: NonNullable<NonNullable<Attachment>["acca"]>
       </div>
       {acca.legs.map((l, i) => (
         <div key={i} className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
-          <span className="min-w-0 flex-1 truncate">{l.game} · <b>{l.market}</b></span>
+          {/* market on its OWN line — long team names were truncating the actual bet away */}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{l.game}</span>
+            <b className="mt-0.5 block truncate text-flood-deep">{l.market}</b>
+          </span>
           <span className="flex-none font-bold text-grass-deep">✓</span>
         </div>
       ))}
@@ -110,7 +114,11 @@ function DoubleCard({ double }: { double: DoubleShare }) {
       </div>
       {double.legs.map((l, i) => (
         <div key={i} className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 last:border-0">
-          <span className="min-w-0 flex-1 truncate">{l.game} · <b>{l.market}</b></span>
+          {/* market on its OWN line — long team names were truncating the actual bet away */}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{l.game}</span>
+            <b className="mt-0.5 block truncate text-flood-deep">{l.market}</b>
+          </span>
           {l.prob != null && <span className="flex-none font-bold text-grass-deep">{l.prob}%</span>}
         </div>
       ))}
