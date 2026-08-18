@@ -451,6 +451,9 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
     grouped[c].push(leg);
   }
   const dead = acca.status === "lost" || counts.cut > 0;
+  // rebet only makes sense while something is still playable — an ongoing or upcoming game.
+  // All legs settled = nothing left to carry into a fresh slip, so the icon hides.
+  const openLegs = legs.filter((l) => l.status === "pending" || l.status === "live").length;
   // a voided leg drops out — the acca is won when every non-void leg landed
   const countedLegs = legs.filter((l) => l.status !== "void");
   const won = acca.status === "won" || (countedLegs.length > 0 && countedLegs.every((l) => l.status === "won"));
@@ -480,7 +483,9 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
               {dead && (
                 <>
                   {/* rebet — rebuild the slip from the games still open (matches what users do
-                      at the bookie after a cut: same slip, minus the dead weight) */}
+                      at the bookie after a cut: same slip, minus the dead weight). Hidden once
+                      every leg has settled — nothing playable is left to carry over. */}
+                  {openLegs > 0 && (
                   <button
                     onClick={rebetAcca}
                     disabled={busyId === acca.id || !userId}
@@ -492,6 +497,7 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
                       <path d="M13.5 6.5a6 6 0 1 0 .5 3M13.5 2.5v4h-4" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
+                  )}
                   <button
                     onClick={deleteAcca}
                     disabled={busyId === acca.id}
