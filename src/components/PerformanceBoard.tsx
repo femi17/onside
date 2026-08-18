@@ -113,10 +113,22 @@ const HELP: Record<HelpKey, { title: string; body: string[] }> = {
   },
 };
 
-export default function PerformanceBoard({ picks, events, learningAgents = [], strategies = [], hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; learningAgents?: string[]; strategies?: PerfStrategy[]; hideHeader?: boolean }) {
+export type Discovery = {
+  id: string; title: string; detail: string; rule_text: string;
+  market_key: string; side: string | null; line: number | null;
+  score: number; train_n: number; holdout_n: number; status: string;
+};
+const DISC_MK: Record<string, string> = {
+  double_chance_1x: "Home or draw (1X)", double_chance_x2: "Draw or away (X2)", home_win: "Home win",
+  over_1_5: "Over 1.5 goals", over_2_5: "Over 2.5 goals", under_2_5: "Under 2.5 goals", under_3_5: "Under 3.5 goals",
+  btts: "Both teams to score", home_to_score: "Home to score", away_to_score: "Away to score", home_goals_ou: "Home team goals",
+};
+
+export default function PerformanceBoard({ picks, events, learningAgents = [], strategies = [], discoveries = [], hideHeader = false }: { picks: PerfPick[]; events: LearningEvent[]; learningAgents?: string[]; strategies?: PerfStrategy[]; discoveries?: Discovery[]; hideHeader?: boolean }) {
   const [agent, setAgent] = useState<string | null>(null);
   const [days, setDays] = useState<14 | null>(null); // null = this season (all)
   const [help, setHelp] = useState<HelpKey | null>(null); // which KPI explainer modal is open
+  const [copiedDisc, setCopiedDisc] = useState<string | null>(null); // discovery whose rule was just copied
 
   const agents = useMemo(() => Array.from(new Set(picks.map(agentOf))).sort(), [picks]);
 
@@ -575,6 +587,46 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                   ? <>{agent} doesn&apos;t have Learning on — no self-tuning to show for it. Turn on Learning in the builder (Pro Max) and its adjustments will appear here.</>
                   : <>No self-tuning yet — a learning agent (Pro Max) adjusts its bar after 20+ settled picks. Turn on Learning when building an agent.</>}
               </p>
+            )}
+
+            {/* 🔎 the insight miner — weekly sweep of the full results history for patterns the
+                rule language can express; only holdout-validated ones surface. The engine
+                SUGGESTS, the owner applies: copy the rule into an agent's rule box. */}
+            {!agent && discoveries.length > 0 && (
+              <>
+                <div className="mt-8 mb-2 flex items-center gap-3">
+                  <span className="font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">
+                    What the engine noticed this week
+                  </span>
+                  <div className="h-px flex-1 bg-white/10" />
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  {discoveries.map((d) => (
+                    <div key={d.id} className="rounded-xl border border-flood/25 bg-pitch-2 p-4">
+                      <div className="flex items-center gap-2 text-[13.5px] text-chalk">
+                        <span aria-hidden>🔎</span>
+                        <b className="min-w-0 flex-1">{d.title}</b>
+                        <span className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-flood" title="How far above the market-wide baseline this pattern lands">
+                          +{Math.round(d.score * 100)}%
+                        </span>
+                      </div>
+                      <p className="mt-1.5 font-mono text-[11.5px] leading-relaxed text-onpitch-mute">{d.detail}</p>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="min-w-0 rounded bg-white/5 px-2 py-1 font-mono text-[11px] text-chalk">{d.rule_text}</span>
+                        <button
+                          onClick={async () => { try { await navigator.clipboard.writeText(d.rule_text); setCopiedDisc(d.id); setTimeout(() => setCopiedDisc(null), 2000); } catch { /* clipboard denied */ } }}
+                          className="flex-none rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/35"
+                        >
+                          {copiedDisc === d.id ? "Copied ✓" : "Copy rule"}
+                        </button>
+                      </div>
+                      <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-onpitch-mute">
+                        Paste it as the rule of a <b className="text-chalk">{DISC_MK[d.market_key] ?? d.market_key}</b> agent — validated on {d.train_n + d.holdout_n} games including a holdout it had never seen.
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </>
         )}

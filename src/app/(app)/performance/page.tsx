@@ -54,12 +54,20 @@ async function PerfData() {
     // the user's agents (id + shield) so the per-agent tab can show + toggle the Onside Shield
     supabase.from("strategies").select("id, name, shield, status"),
   ]);
+  // 🔎 the insight miner's validated suggestions (weekly sweep, holdout-gated) — see mine_discoveries()
+  const { data: discoveries } = await supabase
+    .from("discoveries")
+    .select("id, title, detail, rule_text, market_key, side, line, score, train_n, holdout_n, status")
+    .eq("status", "new")
+    .order("score", { ascending: false })
+    .limit(6);
   return (
     <PerformanceBoard
       picks={(data ?? []) as never}
       events={(events ?? []) as never}
       learningAgents={(learners ?? []).map((s) => s.name as string).filter(Boolean)}
       strategies={(strategies ?? []) as never}
+      discoveries={(discoveries ?? []) as never}
       hideHeader
     />
   );
