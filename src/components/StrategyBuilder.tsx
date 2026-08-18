@@ -175,6 +175,7 @@ export default function StrategyBuilder({
   existingCount,
   leagues,
   existing,
+  prefill,
 }: {
   userId: string;
   plan: string;
@@ -185,19 +186,24 @@ export default function StrategyBuilder({
   existingCount: number;
   leagues: LeagueOpt[];
   existing?: ExistingStrategy;
+  // seeded from a /performance discovery card — name, market and rule arrive pre-filled
+  prefill?: { name?: string; marketKey?: string; ruleText?: string };
 }) {
   const router = useRouter();
   const supabase = createClient();
   const editing = !!existing;
 
-  // when editing, reverse-map the saved market back to the right builder mode
+  // when editing, reverse-map the saved market back to the right builder mode; a discovery
+  // prefill maps its market key the same way (falls back to the default preset if unknown)
   const initMarket = (() => {
-    if (!existing) return { mode: "preset" as const, presetIdx: 1, familyIdx: 0, customText: "" };
-    const pi = PRESETS.findIndex((p) => p.key === existing.market_key);
+    const mk = existing?.market_key ?? prefill?.marketKey;
+    if (!mk) return { mode: "preset" as const, presetIdx: 1, familyIdx: 0, customText: "" };
+    const pi = PRESETS.findIndex((p) => p.key === mk);
     if (pi >= 0) return { mode: "preset" as const, presetIdx: pi, familyIdx: 0, customText: "" };
-    const fi = FAMILIES.findIndex((f) => f.key === existing.market_key);
+    const fi = FAMILIES.findIndex((f) => f.key === mk);
     if (fi >= 0) return { mode: "family" as const, presetIdx: 1, familyIdx: fi, customText: "" };
-    return { mode: "custom" as const, presetIdx: 1, familyIdx: 0, customText: existing.custom_market ?? existing.market_label ?? existing.market_key };
+    if (existing) return { mode: "custom" as const, presetIdx: 1, familyIdx: 0, customText: existing.custom_market ?? existing.market_label ?? existing.market_key };
+    return { mode: "preset" as const, presetIdx: 1, familyIdx: 0, customText: "" };
   })();
   const foundSel = existing ? SELECT.findIndex((s) => s.key === existing.selectivity) : -1;
   const initSelIdx = foundSel >= 0 ? foundSel : 1;
@@ -211,14 +217,14 @@ export default function StrategyBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [name, setName] = useState(existing?.name ?? "Weekend Overs");
+  const [name, setName] = useState(existing?.name ?? prefill?.name ?? "Weekend Overs");
   const [mode, setMode] = useState<"preset" | "custom" | "family" | "surprise">(initMarket.mode);
   const [presetIdx, setPresetIdx] = useState(initMarket.presetIdx);
   const [familyIdx, setFamilyIdx] = useState(initMarket.familyIdx);
   const [surprisePick, setSurprisePick] = useState<{ key: string; label: string; side: string | null; line: number | null } | null>(null);
   const [customText, setCustomText] = useState(initMarket.customText);
   const [customValue, setCustomValue] = useState(existing?.bet_value ?? "");
-  const [rule, setRule] = useState(existing?.rule_text ?? "");
+  const [rule, setRule] = useState(existing?.rule_text ?? prefill?.ruleText ?? "");
   const [picked, setPicked] = useState<Set<number>>(new Set(existing?.league_ids ?? []));
   // "surprise" is a MODE, not a frozen pick: the engine re-rolls a fresh set of in-window leagues at
   // every run. `picked` under surprise only holds a client-side preview roll — it is NOT persisted.

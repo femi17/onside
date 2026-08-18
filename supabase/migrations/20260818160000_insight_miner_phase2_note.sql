@@ -1,0 +1,5 @@
+-- see remote migrations insight_miner_phase2 + insight_catalog_for_paper_validation (applied 2026-08-18);
+-- mirrored for the record: deliveries mining (mine_delivery_discoveries), paper validation (paper_validate_discoveries
+-- + discovery_catalog with the 13 corpus predicates), _insight_sample shared builder, mine_all_insights wrapper,
+-- crons: onside-mine-insights (Mon 04:15, now mine_all_insights) + onside-paper-validate (daily 05:00).
+-- Full SQL lives in the Supabase migration history for these two names.

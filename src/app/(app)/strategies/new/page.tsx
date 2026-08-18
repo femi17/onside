@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import StrategyBuilder, { type LeagueOpt } from "@/components/StrategyBuilder";
 
-export default async function NewStrategyPage() {
+export default async function NewStrategyPage({ searchParams }: { searchParams: Promise<{ name?: string; market?: string; rule?: string }> }) {
+  const sp = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -40,6 +41,8 @@ export default async function NewStrategyPage() {
       canLearn={limits?.learning ?? false}
       existingCount={existingCount ?? 0}
       leagues={leagues}
+      // prefill from a /performance discovery card ("Build agent →") — name, market and rule
+      prefill={sp.name || sp.market || sp.rule ? { name: sp.name, marketKey: sp.market, ruleText: sp.rule } : undefined}
     />
   );
 }

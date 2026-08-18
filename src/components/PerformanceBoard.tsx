@@ -117,6 +117,7 @@ export type Discovery = {
   id: string; title: string; detail: string; rule_text: string;
   market_key: string; side: string | null; line: number | null;
   score: number; train_n: number; holdout_n: number; status: string;
+  grade?: string; shadow_n?: number; shadow_hits?: number;
 };
 const DISC_MK: Record<string, string> = {
   double_chance_1x: "Home or draw (1X)", double_chance_x2: "Draw or away (X2)", home_win: "Home win",
@@ -606,11 +607,22 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                       <div className="flex items-center gap-2 text-[13.5px] text-chalk">
                         <span aria-hidden>🔎</span>
                         <b className="min-w-0 flex-1">{d.title}</b>
+                        {d.grade === "early" && (
+                          <span className="flex-none rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-onpitch-mute" title="Found on a small sample — firms up weekly as more picks settle">
+                            early signal
+                          </span>
+                        )}
                         <span className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-flood" title="How far above the market-wide baseline this pattern lands">
                           +{Math.round(d.score * 100)}%
                         </span>
                       </div>
                       <p className="mt-1.5 font-mono text-[11.5px] leading-relaxed text-onpitch-mute">{d.detail}</p>
+                      {/* paper record: how the suggestion has done on NEW games since it was made */}
+                      {(d.shadow_n ?? 0) > 0 && (
+                        <p className="mt-1 font-mono text-[11px] font-bold text-grass">
+                          📄 Paper record since suggested: {d.shadow_hits}/{d.shadow_n} ({Math.round((100 * (d.shadow_hits ?? 0)) / (d.shadow_n ?? 1))}%)
+                        </p>
+                      )}
                       <div className="mt-2.5 flex flex-wrap items-center gap-2">
                         <span className="min-w-0 rounded bg-white/5 px-2 py-1 font-mono text-[11px] text-chalk">{d.rule_text}</span>
                         <button
@@ -619,9 +631,15 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                         >
                           {copiedDisc === d.id ? "Copied ✓" : "Copy rule"}
                         </button>
+                        <Link
+                          href={`/strategies/new?name=${encodeURIComponent(d.title)}&market=${encodeURIComponent(d.market_key)}&rule=${encodeURIComponent(d.rule_text)}`}
+                          className="flex-none rounded-lg bg-flood px-2.5 py-1 font-mono text-[11px] font-bold text-ink transition-transform hover:-translate-y-0.5"
+                        >
+                          Build agent →
+                        </Link>
                       </div>
                       <p className="mt-2 font-mono text-[10.5px] leading-relaxed text-onpitch-mute">
-                        Paste it as the rule of a <b className="text-chalk">{DISC_MK[d.market_key] ?? d.market_key}</b> agent — validated on {d.train_n + d.holdout_n} games including a holdout it had never seen.
+                        Runs as a <b className="text-chalk">{DISC_MK[d.market_key] ?? d.market_key}</b> agent — validated on {d.train_n + d.holdout_n} games including a holdout it had never seen.
                       </p>
                     </div>
                   ))}

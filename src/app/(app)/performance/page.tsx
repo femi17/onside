@@ -57,7 +57,7 @@ async function PerfData() {
   // 🔎 the insight miner's validated suggestions (weekly sweep, holdout-gated) — see mine_discoveries()
   const { data: discoveries } = await supabase
     .from("discoveries")
-    .select("id, title, detail, rule_text, market_key, side, line, score, train_n, holdout_n, status")
+    .select("id, title, detail, rule_text, market_key, side, line, score, train_n, holdout_n, status, grade, shadow_n, shadow_hits")
     .eq("status", "new")
     .order("score", { ascending: false })
     .limit(6);
