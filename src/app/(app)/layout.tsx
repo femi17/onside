@@ -5,6 +5,7 @@ import SignOutButton from "@/components/SignOutButton";
 import SidebarNav from "@/components/SidebarNav";
 import MobileNav from "@/components/MobileNav";
 import LiveGamesFab from "@/components/LiveGamesFab";
+import AgentFab from "@/components/AgentFab";
 import PushChime from "@/components/PushChime";
 import InstallPushPrompt from "@/components/InstallPushPrompt";
 import UpdateWatcher from "@/components/UpdateWatcher";
@@ -116,6 +117,8 @@ export default async function AppLayout({
 
       {/* floating live-games peek — rides along on every page except the tracker itself */}
       <LiveGamesFab />
+      {/* mobile-only middle-right shortcut to the agent feed */}
+      <AgentFab />
       {/* plays a short chime when a push arrives and this tab is focused */}
       <PushChime />
       {/* app-like soft-ask for notification permission on first launch when installed */}
