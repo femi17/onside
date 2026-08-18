@@ -245,11 +245,12 @@ type LooseTicket = {
   fixtures: { home_team: string; away_team: string; kickoff_utc: string } | null;
 };
 
-function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: number; plan: string; uploadsLeft: number | null }) {
+function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: Acca; nowMs: number; plan: string; uploadsLeft: number | null; userId?: string | null; onRebet?: (id: string) => void }) {
   const supabase = createClient();
   const router = useRouter();
   const confirm = useConfirm();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [rbMsg, setRbMsg] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [loose, setLoose] = useState<LooseTicket[] | null>(null);
 
@@ -298,6 +299,73 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
     setBusyId(null);
     setAddOpen(false);
     setLoose(null);
+    router.refresh();
+  }
+
+  // Rebet: users often re-place a cut slip at the bookie minus the dead weight. One tap builds
+  // a FRESH acca from the legs still open (the cut and finished games are dropped); the dead
+  // slip stays as the record. Source is "manual" so it never inflates the screenshot-upload
+  // quota, but it does count toward the daily acca limit like any new slip (plan-gated trigger).
+  async function rebetAcca() {
+    if (!userId) return;
+    setRbMsg(null);
+    const { data: openLegs } = await supabase
+      .from("tickets")
+      .select("fixture_id, market_key, market_label, custom_market, line, side, period, bet_value, source, strategy_id")
+      .eq("accumulator_id", acca.id)
+      .in("status", ["pending", "live"]);
+    const n = openLegs?.length ?? 0;
+    if (n < 2) {
+      setRbMsg(n === 1 ? "Only one game is still open — track it as a single from the leg below instead." : "No games still open on this slip — nothing to rebet.");
+      return;
+    }
+    const okGo = await confirm({
+      title: "Rebet this slip?",
+      body: `The cut and finished games are dropped — the ${n} still-open games start a fresh slip. It counts as one of today's accumulators.`,
+      confirmLabel: "Rebet",
+    });
+    if (!okGo) return;
+    setBusyId(acca.id);
+    const { data: fresh, error } = await supabase
+      .from("accumulators")
+      .insert({
+        user_id: userId,
+        title: acca.title ? `${acca.title} · rebet` : "Rebet slip",
+        bookmaker: acca.bookmaker,
+        stake: acca.stake,
+        potential_return: null, // fewer legs = different odds; unknown until the user edits
+        currency: acca.currency,
+        leg_count: n,
+        source: "manual",
+        status: "open",
+      })
+      .select("id")
+      .single();
+    if (error || !fresh) {
+      setBusyId(null);
+      const limit = error?.message.match(/DAILY_ACCA_LIMIT:(\w+):(\d+)/);
+      setRbMsg(limit ? `Your ${limit[1].replace("_", " ")} plan tracks ${limit[2]} accumulator${limit[2] === "1" ? "" : "s"} a day — the rebet needs a free slot.` : error?.message ?? "Couldn't create the rebet slip.");
+      return;
+    }
+    await supabase.from("tickets").insert(
+      (openLegs ?? []).map((l) => ({
+        user_id: userId,
+        accumulator_id: fresh.id,
+        fixture_id: l.fixture_id,
+        market_key: l.market_key,
+        market_label: l.market_label,
+        custom_market: l.custom_market,
+        line: l.line,
+        side: l.side,
+        period: l.period,
+        bet_value: l.bet_value,
+        source: l.source,
+        strategy_id: l.strategy_id,
+        status: "pending",
+      }))
+    );
+    setBusyId(null);
+    onRebet?.(fresh.id);
     router.refresh();
   }
 
@@ -377,20 +445,36 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft }: { acca: Acca; nowMs: numbe
               <span className="rounded bg-ink px-1.5 py-0.5 font-bold tracking-wider text-chalk-2">{acca.bookmaker ?? "Onside"}</span>
               {won ? "won" : dead ? "cut" : "live"}
               {dead && (
-                <button
-                  onClick={deleteAcca}
-                  disabled={busyId === acca.id}
-                  aria-label="Delete this slip"
-                  title="Delete this slip"
-                  className="grid h-6 w-6 flex-none place-items-center rounded-md text-ink-mute transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
-                >
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
-                    <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3L12 4M6.5 7v4.5M9.5 7v4.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
+                <>
+                  {/* rebet — rebuild the slip from the games still open (matches what users do
+                      at the bookie after a cut: same slip, minus the dead weight) */}
+                  <button
+                    onClick={rebetAcca}
+                    disabled={busyId === acca.id || !userId}
+                    aria-label="Rebet — start a fresh slip from the games still open"
+                    title="Rebet — start a fresh slip from the games still open"
+                    className="grid h-6 w-6 flex-none place-items-center rounded-md text-ink-mute transition-colors hover:bg-grass/15 hover:text-grass-deep disabled:opacity-40"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+                      <path d="M13.5 6.5a6 6 0 1 0 .5 3M13.5 2.5v4h-4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={deleteAcca}
+                    disabled={busyId === acca.id}
+                    aria-label="Delete this slip"
+                    title="Delete this slip"
+                    className="grid h-6 w-6 flex-none place-items-center rounded-md text-ink-mute transition-colors hover:bg-brick/10 hover:text-brick disabled:opacity-40"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+                      <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1.4 1.4 0 0 0 1.4 1.3h3.8a1.4 1.4 0 0 0 1.4-1.3L12 4M6.5 7v4.5M9.5 7v4.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </>
               )}
             </div>
             <div className="mt-2 font-disp text-[15px] font-extrabold">{fold}-fold accumulator</div>
+            {rbMsg && <p className="mt-1.5 max-w-[38ch] font-mono text-[11px] leading-relaxed text-brick">{rbMsg}</p>}
           </div>
           <div className="text-right font-mono">
             {hasStake ? (
@@ -652,7 +736,7 @@ function AccaPill({ acca, active, onClick, nowMs }: { acca: Acca; active: boolea
   );
 }
 
-export default function AccumulatorsBoard({ accas, plan = "free", cap = null, uploadsLeft = null }: { accas: Acca[]; plan?: string; cap?: number | null; uploadsLeft?: number | null }) {
+export default function AccumulatorsBoard({ accas, plan = "free", cap = null, uploadsLeft = null, userId = null }: { accas: Acca[]; plan?: string; cap?: number | null; uploadsLeft?: number | null; userId?: string | null }) {
   const nowMs = useMinuteTick();
   const router = useRouter();
   const supabase = createClient();
@@ -744,7 +828,7 @@ export default function AccumulatorsBoard({ accas, plan = "free", cap = null, up
       <div className="flex min-h-0 flex-1 gap-6">
         {/* detail — the selected slip, leg by leg */}
         <main className="no-scrollbar min-w-0 flex-1 lg:overflow-y-auto lg:pb-10">
-          {selected && <AccaCard acca={selected} nowMs={nowMs} plan={plan} uploadsLeft={uploadsLeft} />}
+          {selected && <AccaCard acca={selected} nowMs={nowMs} plan={plan} uploadsLeft={uploadsLeft} userId={userId} onRebet={setSelId} />}
         </main>
 
         {/* fixed sidebar (right) — pick a previous slip to open on the left */}

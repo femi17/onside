@@ -50,7 +50,7 @@ export default async function AccumulatorsPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
-      <AccumulatorsBoard accas={accas} plan={plan} cap={cap} uploadsLeft={uploadsLeft} />
+      <AccumulatorsBoard accas={accas} plan={plan} cap={cap} uploadsLeft={uploadsLeft} userId={user?.id ?? null} />
     </>
   );
 }
