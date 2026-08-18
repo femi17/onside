@@ -49,7 +49,7 @@ export default function Landing() {
               Start free
             </Link>
             <Link
-              href="/tracker"
+              href="/how-it-works"
               className="rounded-xl border border-white/15 px-5 py-3.5 font-bold text-chalk"
             >
               See the app
