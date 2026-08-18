@@ -1927,7 +1927,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     const per = (ff: any) => (ff && ff.n ? (ff.gf + ff.ga) / ff.n : null);
     const gfAvg = (ff: any) => (ff && ff.n ? ff.gf / ff.n : null);
     const ppgOf = (ff: any) => (ff && ff.n ? (3 * ff.w + ff.d) / ff.n : null);
-    const displayVal = (field: string, hf: any, af: any): number | null => {
+    const displayVal = (field: string, hf: any, af: any, rs?: any): number | null => {
       switch (field) {
         case "home_goals_avg": return gfAvg(hf);
         case "away_goals_avg": return gfAvg(af);
@@ -1939,6 +1939,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         case "away_wins_last5": return af?.w ?? null;
         case "home_form_ppg": return ppgOf(hf);
         case "away_form_ppg": return ppgOf(af);
+        // model-field rules re-verified against the card's OWN displayed ratings (reasons.model)
+        // — a pick must never show numbers that contradict its agent's rule
+        case "home_win_prob": return rs?.model?.home ?? null;
+        case "away_win_prob": return rs?.model?.away ?? null;
         default: return null;
       }
     };
@@ -1946,7 +1950,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       const rs: any = reasonsByFx.get(r.f.id);
       const hf = rs?.home_form ?? null, af = rs?.away_form ?? null;
       for (const c of rule.filters) {
-        const x = displayVal(c.field, hf, af);
+        const x = displayVal(c.field, hf, af, rs);
         if (x == null) continue;
         const ok = c.op === "gte" ? x >= c.value : c.op === "lte" ? x <= c.value : c.op === "gt" ? x > c.value
           : c.op === "lt" ? x < c.value : c.op === "eq" ? Math.abs(x - c.value) < 1e-9

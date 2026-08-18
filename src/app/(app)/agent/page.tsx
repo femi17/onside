@@ -61,7 +61,7 @@ export default async function AgentPage() {
   const per = (f: Form5 | null) => (f && f.n ? (f.gf + f.ga) / f.n : null); // team blend (engine formula)
   const gfAvg = (f: Form5 | null) => (f && f.n ? f.gf / f.n : null);
   const ppg = (f: Form5 | null) => (f && f.n ? (3 * f.w + f.d) / f.n : null);
-  const guideValue = (field: string, hf: Form5 | null, af: Form5 | null): number | null => {
+  const guideValue = (field: string, hf: Form5 | null, af: Form5 | null, model?: { home?: number; away?: number } | null): number | null => {
     switch (field) {
       case "home_goals_avg": return gfAvg(hf);
       case "away_goals_avg": return gfAvg(af);
@@ -73,7 +73,11 @@ export default async function AgentPage() {
       case "away_wins_last5": return af?.w ?? null;
       case "home_form_ppg": return ppg(hf);
       case "away_form_ppg": return ppg(af);
-      default: return null; // odds/model fields aren't displayed per-pick — not Guide-verifiable
+      // model-field rules verified against the card's OWN displayed ratings (reasons.model) —
+      // covers picks delivered before a rule was set/changed, which the engine never re-screens
+      case "home_win_prob": return model?.home ?? null;
+      case "away_win_prob": return model?.away ?? null;
+      default: return null; // odds fields aren't displayed per-pick — not Guide-verifiable
     }
   };
   const holds = (op: string, x: number, v: number, v2?: number): boolean =>
@@ -86,10 +90,10 @@ export default async function AgentPage() {
   const guideFails = (r: Record<string, unknown>): boolean => {
     const filters = guideFilters.get(r.strategy_id as string);
     if (!filters) return false;
-    const reasons = (r.criteria as { reasons?: { home_form?: Form5 | null; away_form?: Form5 | null } } | null)?.reasons;
+    const reasons = (r.criteria as { reasons?: { home_form?: Form5 | null; away_form?: Form5 | null; model?: { home?: number; away?: number } | null } } | null)?.reasons;
     const hf = reasons?.home_form ?? null, af = reasons?.away_form ?? null;
     for (const c of filters) {
-      const x = guideValue(c.field, hf, af);
+      const x = guideValue(c.field, hf, af, reasons?.model ?? null);
       if (x != null && !holds(c.op, x, c.value, c.value2)) return true;
     }
     return false;
