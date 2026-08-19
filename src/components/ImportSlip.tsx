@@ -197,11 +197,47 @@ export default function ImportSlip({
   // this counter) and a single upload reads as "counted as 2".
   useEffect(() => { setReadsUsed(0); }, [uploadsLeft]);
   const [ok, setOk] = useState<string | null>(null); // success line
+  // A read slip is PAID FOR (it burned a daily read) the moment parse-slip returns — so it must
+  // survive anything that kills React state before "Track" is pressed: a page reload (deploys do
+  // this), a mis-tap on the backdrop, the × button. Draft lives in localStorage and only clears
+  // on a successful track or an explicit "start over".
+  const draftKey = `onside:slip-draft:${userId}`;
+  const [restored, setRestored] = useState(false);
   // inline "find game" search for a selection we couldn't auto-match
   const [findRow, setFindRow] = useState<number | null>(null);
   const [findQ, setFindQ] = useState("");
   const [findResults, setFindResults] = useState<Game[] | null>(null);
   const [finding, setFinding] = useState(false);
+
+  // bring a lost slip back: restore the draft once on mount (reload-proof recovery)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      const d = JSON.parse(raw) as { sels?: Sel[]; slipMeta?: SlipMeta | null; expectedLegs?: number | null; savedAt?: number };
+      // a day-old draft is stale (its games have kicked off or gone) — drop it
+      if (!d?.sels?.length || Date.now() - (d.savedAt ?? 0) > 24 * 3600 * 1000) {
+        localStorage.removeItem(draftKey);
+        return;
+      }
+      setSels(d.sels);
+      setSlipMeta(d.slipMeta ?? null);
+      setExpectedLegs(d.expectedLegs ?? null);
+      setRestored(true);
+    } catch { /* corrupt draft — ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // keep the draft current with every edit (ticks, Find-game matches, extra screenshots)
+  useEffect(() => {
+    try {
+      if (sels && sels.length) localStorage.setItem(draftKey, JSON.stringify({ sels, slipMeta, expectedLegs, savedAt: Date.now() }));
+    } catch { /* storage full/unavailable — the session copy still works */ }
+  }, [sels, slipMeta, expectedLegs, draftKey]);
+
+  function clearDraft() {
+    try { localStorage.removeItem(draftKey); } catch { /* nothing to clear */ }
+  }
 
   // search fixtures on the spot to resolve a selection we couldn't auto-match
   useEffect(() => {
@@ -266,6 +302,24 @@ export default function ImportSlip({
     setFindRow(null);
     setFindQ("");
     setFindResults(null);
+    setRestored(false);
+  }
+
+  // closing the window is NOT discarding: the read slip stays (it already cost a read) and is
+  // right there on reopen. Only transient chrome (messages, open searches) resets.
+  function closeKeep() {
+    setOpen(false);
+    setMsg(null);
+    setOk(null);
+    setFindRow(null);
+    setFindQ("");
+    setFindResults(null);
+  }
+
+  // explicit "start over": the only user action that throws a read slip away
+  function discardDraft() {
+    clearDraft();
+    reset();
   }
 
   // one slip can span several screenshots (a long acca) AND each screenshot can be a tall
@@ -624,6 +678,8 @@ export default function ImportSlip({
       setMsg(error.message);
       return;
     }
+    // tracked = the draft did its job; only now does it clear
+    clearDraft();
     // show a clear success, then take them to what they just created
     const trackedN = accumulatorId ? attached : chosen.length;
     setOk(`✓ Tracked ${trackedN} game${trackedN === 1 ? "" : "s"}${accumulatorId ? " as an accumulator" : ""}.`);
@@ -640,9 +696,11 @@ export default function ImportSlip({
       <div className="flex flex-col items-end gap-1">
         <button
           onClick={() => setOpen(true)}
-          disabled={remaining <= 0}
-          aria-label={`Upload betslip — ${remaining} read${remaining === 1 ? "" : "s"} left today`}
-          title="Upload betslip"
+          // a waiting read slip keeps the door open even at zero reads left — tracking is free,
+          // and that slip may be the very read that spent the last one
+          disabled={remaining <= 0 && !sels?.length}
+          aria-label={sels?.length ? "Resume your betslip" : `Upload betslip — ${remaining} read${remaining === 1 ? "" : "s"} left today`}
+          title={sels?.length ? "Resume your betslip" : "Upload betslip"}
           className="relative flex h-11 w-11 flex-none items-center justify-center rounded-xl border border-white/15 font-bold text-chalk transition-colors hover:border-white/30 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-white/15 md:h-auto md:w-auto md:px-4 md:py-3"
         >
           {/* upload icon on mobile, full-text button on desktop */}
@@ -655,12 +713,18 @@ export default function ImportSlip({
           <span className={`absolute -right-1.5 -top-1.5 grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 font-mono text-[10px] font-bold leading-none md:hidden ${remaining <= 0 ? "bg-brick text-chalk" : "bg-flood text-ink"}`}>
             {remaining}
           </span>
-          <span className="hidden md:inline">Upload betslip</span>
+          {/* a read-but-untracked slip is waiting — pulse so it isn't forgotten */}
+          {!open && sels && sels.length > 0 && (
+            <span className="absolute -left-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-grass motion-reduce:animate-none" aria-hidden="true" />
+          )}
+          <span className="hidden md:inline">{sels?.length ? "Resume betslip" : "Upload betslip"}</span>
         </button>
         <span className={`hidden font-mono text-[10px] md:block ${remaining <= 0 ? "text-flood" : "text-onpitch-mute"}`}>
-          {remaining <= 0
-            ? "Daily slip reads used — add by hand"
-            : `${remaining} of ${uploadQuota} slip read${uploadQuota === 1 ? "" : "s"} left today`}
+          {sels?.length
+            ? `${sels.length} game${sels.length === 1 ? "" : "s"} read — not tracked yet`
+            : remaining <= 0
+              ? "Daily slip reads used — add by hand"
+              : `${remaining} of ${uploadQuota} slip read${uploadQuota === 1 ? "" : "s"} left today`}
         </span>
       </div>
 
@@ -670,10 +734,7 @@ export default function ImportSlip({
         <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto p-4 sm:p-8">
           <div
             className="fixed inset-0 bg-ink/60 backdrop-blur-sm"
-            onClick={() => {
-              setOpen(false);
-              reset();
-            }}
+            onClick={closeKeep}
           />
           <div className="relative z-10 w-full max-w-lg rounded-2xl bg-chalk p-5 text-ink shadow-2xl">
             <div className="flex items-start justify-between">
@@ -684,10 +745,7 @@ export default function ImportSlip({
                 </p>
               </div>
               <button
-                onClick={() => {
-                  setOpen(false);
-                  reset();
-                }}
+                onClick={closeKeep}
                 aria-label="Close"
                 className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink/5 font-mono text-lg text-ink-mute"
               >
@@ -736,6 +794,11 @@ export default function ImportSlip({
 
             {msg && <p className="mt-3 font-mono text-xs text-brick">{msg}</p>}
             {ok && <p className="mt-3 font-mono text-xs font-bold text-grass-deep">{ok}</p>}
+            {restored && sels && sels.length > 0 && !ok && (
+              <p className="mt-3 rounded-lg border border-grass/30 bg-grass/[0.08] px-2.5 py-1.5 font-mono text-[11.5px] leading-snug text-grass-deep">
+                ↩ Your last read slip was restored — no extra read used. Finish it below.
+              </p>
+            )}
 
             {sels && sels.length > 0 && (
               <>
@@ -882,6 +945,14 @@ export default function ImportSlip({
                   className="mt-4 w-full rounded-xl bg-ink px-4 py-3 font-bold text-chalk-2 disabled:opacity-40"
                 >
                   {busy === "tracking" ? "Tracking…" : `Track ${chosen.length} game${chosen.length === 1 ? "" : "s"}`}
+                </button>
+                {/* the ONLY way a read slip is thrown away — closing/reloading always keeps it */}
+                <button
+                  disabled={busy !== null}
+                  onClick={discardDraft}
+                  className="mt-2 w-full rounded-xl px-4 py-1.5 font-mono text-[11px] font-bold text-ink-mute transition-colors hover:text-brick disabled:opacity-40"
+                >
+                  ✕ Discard this slip &amp; start over
                 </button>
               </>
             )}
