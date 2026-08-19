@@ -252,7 +252,9 @@ export default function StrategyBuilder({
 
   const [previewN, setPreviewN] = useState<number | null>(null);
   const [previewFx, setPreviewFx] = useState<{ home_team: string; away_team: string }[]>([]);
-  const [earliestKickoff, setEarliestKickoff] = useState<string | null>(null);
+  // every in-scope kickoff (fetched page, asc) — drives the "before/after delivery time" note
+  const [scopeKickoffs, setScopeKickoffs] = useState<string[]>([]);
+  const earliestKickoff = scopeKickoffs[0] ?? null;
 
   const customParsed = useMemo(() => (mode === "custom" && customText.trim() ? recognizeBet(customText) : null), [mode, customText]);
 
@@ -462,8 +464,8 @@ export default function StrategyBuilder({
         : all;
       setPreviewN(kickAt ? inScope.length : count ?? all.length);
       setPreviewFx(inScope.slice(0, 3));
-      // earliest kickoff in scope — used to keep the delivery time before the first match
-      setEarliestKickoff(inScope[0]?.kickoff_utc ?? null);
+      // all in-scope kickoffs — the delivery-time note counts how many fall before delivery
+      setScopeKickoffs(inScope.map((f) => f.kickoff_utc));
     };
     const id = setTimeout(run, 250);
     return () => { cancelled = true; clearTimeout(id); };
@@ -481,22 +483,21 @@ export default function StrategyBuilder({
     return dt.getTime() <= now.getTime();
   }, [target, time]);
 
-  // keep the delivery time ahead of the first kickoff so picks arrive before the matches start
-  // (skipped when today's time already passed — the delivery is tomorrow, so today's kickoff
-  // doesn't constrain it)
-  const deliveryWarn = useMemo<string | null>(() => {
+  // Any delivery time is valid: the engine's same-day hunt window starts at the run moment, so
+  // games kicking off before delivery simply drop out of the slate. This note just tells the
+  // user how many drop (never blocks the save — the old hard block here was wrong).
+  const timeSkip = useMemo<{ skipped: number; remaining: number } | null>(() => {
     const [hh, mm] = time.split(":").map(Number);
     if (Number.isNaN(hh)) return null;
-    if (DAY_MATCHED.has(target) && !sameDayLater && earliestKickoff) {
-      const ko = new Date(earliestKickoff);
+    if (!DAY_MATCHED.has(target) || sameDayLater || !scopeKickoffs.length) return null;
+    let skipped = 0;
+    for (const k of scopeKickoffs) {
+      const ko = new Date(k);
       const dt = new Date(ko); dt.setHours(hh, mm, 0, 0);
-      if (dt.getTime() >= ko.getTime()) {
-        const koStr = ko.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        return `The first match kicks off at ${koStr} — set delivery earlier so picks arrive before kickoff.`;
-      }
+      if (dt.getTime() >= ko.getTime()) skipped++;
     }
-    return null;
-  }, [target, time, earliestKickoff, sameDayLater]);
+    return skipped ? { skipped, remaining: scopeKickoffs.length - skipped } : null;
+  }, [target, time, scopeKickoffs, sameDayLater]);
 
   // Human-readable outcome label: always spells out WHICH selection was chosen (side/line/period),
   // so a mix chip is never ambiguous — "Match result (1X2)" alone doesn't tell you the pick.
@@ -717,7 +718,6 @@ export default function StrategyBuilder({
     if (!editing && existingCount >= maxAgents) return { ok: false, err: `Your ${plan.replace("_", " ")} plan allows ${maxAgents} agents. Upgrade for more.` };
     // scanning every competition (empty selection) is a Pro Max perk; capped plans must choose
     if (plan !== "pro_max" && picked.size === 0 && !leagueSurprise) return { ok: false, err: "Pick your leagues — or hit 🎲 Surprise me. Scanning every competition is a Pro Max perk." };
-    if (deliveryWarn) return { ok: false, err: deliveryWarn };
 
     const base = {
       user_id: userId,
@@ -1433,8 +1433,16 @@ export default function StrategyBuilder({
                 ))}
               </div>
             </div>
-            {deliveryWarn ? (
-              <p className="mt-2 text-[12.5px] font-semibold text-brick">{deliveryWarn}</p>
+            {timeSkip && timeSkip.remaining === 0 ? (
+              <p className="mt-2 text-[12.5px] font-semibold text-brick">
+                All {timeSkip.skipped} game{timeSkip.skipped === 1 ? "" : "s"} in scope kick off before {time} — the agent
+                will find nothing at delivery. Pick an earlier time to catch them.
+              </p>
+            ) : timeSkip ? (
+              <p className="mt-2 text-[12px] text-ink-mute">
+                {timeSkip.skipped} game{timeSkip.skipped === 1 ? " kicks" : "s kick"} off before {time} and will be
+                skipped — your picks come from the remaining {timeSkip.remaining}.
+              </p>
             ) : sameDayLater ? (
               <p className="mt-2 text-[12px] text-ink-mute">
                 {time} already passed today — the agent runs at its next chance: right away if it
