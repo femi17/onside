@@ -1334,20 +1334,22 @@ function marketGroupOf(mkRaw: string): string {
 }
 // --- model-band calibration (owner-ruled 2026-08-20) ---
 // Every delivered % is a CLAIM, and every settled pick tests it. Settled picks pool globally
-// into (market family × EXACT integer %) cells — owner-ruled same day, second pass: 10-point
-// bands hide a failing 82-84% inside a green 80-90, so "home win @ 68%" and "home win @ 67%"
-// are separate cells. bandVeto() kicks out kinds of picks the model has PROVEN to over-claim,
-// before they're ever delivered. Global, not per-agent: the % is the model's, so its track
-// record is model-wide (per-agent slices would never reach evidence-grade n).
+// into cells keyed by the EXACT BET at the EXACT integer % — market_key + side + line +
+// period + % (owner-ruled, fourth pass: no generalizing across markets; "over 1.5 @ 76%" and
+// "home to score @ 76%" keep separate ledgers, because one can fail while the other works).
+// bandVeto() kicks out kinds of picks the model has PROVEN to over-claim, before they're ever
+// delivered. Global, not per-agent: the % is the model's, so its track record is model-wide
+// (per-agent slices would never reach evidence-grade n).
 type BandCell = { n: number; won: number; probSum: number };
 let CALIB = new Map<string, BandCell>(); // set by buildMemories() each run; empty = fail-open
-const bandKey = (mk: string | null, mp: number) => `${marketGroupOf(String(mk ?? ""))}|${Math.round(mp * 100)}`;
+const bandKey = (mk: string | null, side: string | null, line: number | string | null, period: string | null, mp: number) =>
+  `${mk ?? ""}|${side ?? ""}|${line == null || line === "" ? "" : Number(line)}|${period ?? "ft"}|${Math.round(mp * 100)}`;
 const BAND_MIN_N = 25;    // settled picks a cell needs before it may block (unproven ≠ bad)
 const BAND_SLACK = 0.15;  // actual rate this far under the cell's average claim = over-claiming
 const BAND_FLOOR = 0.45;  // …or landing under 45% outright (Shield's floor), whatever the claim
-function bandVeto(mk: string | null, mp: number | null): boolean {
+function bandVeto(mk: string | null, side: string | null, line: number | string | null, period: string | null, mp: number | null): boolean {
   if (mp == null || !(mp > 0 && mp < 1)) return false;
-  const c = CALIB.get(bandKey(mk, mp));
+  const c = CALIB.get(bandKey(mk, side, line, period, mp));
   if (!c || c.n < BAND_MIN_N) return false;
   const actual = c.won / c.n, claimed = c.probSum / c.n;
   return actual < claimed - BAND_SLACK || actual < BAND_FLOOR;
@@ -1356,19 +1358,20 @@ async function buildMemories(): Promise<{ league: Map<number, LeagueMem>; market
   const league = new Map<number, LeagueMem>();
   const market = new Map<string, LeagueMem>();
   // band calibration reads ALL settled history (the table is small and calibration is scarce);
-  // replay 2026-08-20 (10-pt bands): 0 of 238 settled picks would have been dropped. Exact-%
-  // cells are thinner still, so no cell is near the n≥25 evidence floor yet — the screen ships
-  // inert and arms per-percent as volume accrues.
+  // replay 2026-08-20 (10-pt bands): 0 of 238 settled picks would have been dropped. Exact-bet
+  // exact-% cells are thinner still, so no cell is near the n≥25 evidence floor yet — the
+  // screen ships inert and arms per-bet-per-percent as volume accrues.
   const calib = new Map<string, BandCell>();
   const { data: settledAll } = await sb.from("deliveries")
-    .select("model_prob,result,market_key")
+    .select("model_prob,result,market_key,side,line,period")
     .in("result", ["won", "lost"]).not("model_prob", "is", null).limit(5000);
   for (const d of (settledAll ?? []) as any[]) {
     const p = Number(d.model_prob);
     if (!(p > 0 && p < 1)) continue;
-    const c = calib.get(bandKey(d.market_key, p)) ?? { n: 0, won: 0, probSum: 0 };
+    const k = bandKey(d.market_key, d.side ?? null, d.line ?? null, d.period ?? null, p);
+    const c = calib.get(k) ?? { n: 0, won: 0, probSum: 0 };
     c.n++; if (d.result === "won") c.won++; c.probSum += p;
-    calib.set(bandKey(d.market_key, p), c);
+    calib.set(k, c);
   }
   CALIB = calib;
   const since = new Date(Date.now() - 60 * 86400000).toISOString();
@@ -1627,8 +1630,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
       if (formVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, hForm, aForm)) continue;
-      // model-band screen: this kind of pick at this % has proven to land far under its claim
-      if (bandVeto(chosen.mk, chosen.model_prob)) continue;
+      // model-band screen: this exact bet at this % has proven to land far under its claim
+      if (bandVeto(chosen.mk, chosen.side ?? null, chosen.line ?? null, chosen.period ?? "ft", chosen.model_prob)) continue;
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
       continue;
     }
@@ -1649,8 +1652,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // delivery floor (owner-ruled 2026-08-17): never ship a pick the model itself calls
     // more-likely-to-miss — edge over the odds is not enough (see set path note)
     if (mp < 0.5) continue;
-    // model-band screen: this kind of pick at this % has proven to land far under its claim
-    if (bandVeto(eff.mk, mp)) continue;
+    // model-band screen: this exact bet at this % has proven to land far under its claim
+    if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketFor(baseCand, bms2);
     if (kp == null) {

@@ -247,34 +247,29 @@ function XIcon() {
 }
 
 // ---- model-band colour coding (owner-ruled 2026-08-20) ----
-// The feed % wears its own track record so choosing a game never needs a trip to /performance:
-// green = picks of this kind (market family × EXACT %, owner-ruled: an 81% is not an 80-90
-// bucket) have landed AT/ABOVE their claimed %, yellow = close under the claim, red = far
-// under (the engine's bandVeto stops delivering these at 25+ settled, so red is a short-lived
-// early warning). Plain until the exact % has 5 settled — unproven ≠ bad. Data = the same
-// global cells the engine studies (band_calibration RPC), fetched once per page, shared by
-// every card.
+// The feed % wears its own track record so choosing a game never needs a trip to /performance.
+// A cell is the EXACT BET at the EXACT % — market + side + line + period + integer % (owner-
+// ruled, fourth pass: no generalizing across markets; "over 1.5 @ 76%" and "home to score
+// @ 76%" keep separate ledgers, because one can fail while the other works). Green = that
+// exact bet at that exact % has landed AT/ABOVE its claim, yellow = close under, red = far
+// under (the engine's bandVeto stops delivering those at 25+ settled, so red is a short-lived
+// early warning). Plain until the cell has 5 settled — unproven ≠ bad. Data = the same global
+// cells the engine studies (band_calibration RPC), fetched once per page, shared by every card.
 type BandCell = { n: number; won: number; probSum: number };
 let bandCalibCache: Map<string, BandCell> | null = null;
 let bandCalibPromise: Promise<Map<string, BandCell>> | null = null;
-// family buckets mirror the engine's marketGroupOf (NOT the display groupOfMk above — that one
-// folds to-score into goals; the calibration cells keep them apart)
-function bandFamOf(mk: string): string {
-  if (/corner/.test(mk)) return "corners";
-  if (/card|booking/.test(mk)) return "cards";
-  if (/1up|2up|never_down/.test(mk)) return "early";
-  if (/^(home_win|away_win|draw$|result_1x2|double_chance|dnb|handicap)/.test(mk)) return "result";
-  if (/^(home_to_score|away_to_score|btts|home_clean_sheet|away_clean_sheet|home_win_to_nil|away_win_to_nil)/.test(mk)) return "score";
-  return "goals";
-}
+// MUST mirror the engine's bandKey exactly — deliveries rows are the shared source, so keys
+// line up by construction (line normalised through Number, period coalesced to ft)
+const betCellKey = (mk: string | null, side: string | null, line: number | string | null, period: string | null, pctInt: number) =>
+  `${mk ?? ""}|${side ?? ""}|${line == null || line === "" ? "" : Number(line)}|${period ?? "ft"}|${pctInt}`;
 function useBandCalib(): Map<string, BandCell> | null {
   const [calib, setCalib] = useState<Map<string, BandCell> | null>(bandCalibCache);
   useEffect(() => {
     if (bandCalibCache) return;
     bandCalibPromise ??= Promise.resolve(createClient().rpc("band_calibration")).then(({ data }) => {
       const m = new Map<string, BandCell>();
-      for (const r of (data ?? []) as { family: string; pct: number; n: number; won: number; prob_sum: number }[]) {
-        m.set(`${r.family}|${r.pct}`, { n: Number(r.n), won: Number(r.won), probSum: Number(r.prob_sum) });
+      for (const r of (data ?? []) as { market_key: string | null; side: string | null; line: number | string | null; period: string | null; pct: number; n: number; won: number; prob_sum: number }[]) {
+        m.set(betCellKey(r.market_key, r.side, r.line, r.period, Number(r.pct)), { n: Number(r.n), won: Number(r.won), probSum: Number(r.prob_sum) });
       }
       bandCalibCache = m;
       return m;
@@ -285,14 +280,15 @@ function useBandCalib(): Map<string, BandCell> | null {
   }, []);
   return calib;
 }
-const BAND_SHOW_N = 5; // settled picks an exact-% cell needs before its record colours the %
-function bandTone(calib: Map<string, BandCell> | null, mk: string | null, mp: number | null): { cls: string; hint: string } {
-  const neutral = { cls: "", hint: "Not enough settled picks at this exact % yet to grade the claim." };
+const BAND_SHOW_N = 5; // settled outcomes an exact-bet-exact-% cell needs before it colours
+function bandTone(calib: Map<string, BandCell> | null, p: AgentPick): { cls: string; hint: string } {
+  const neutral = { cls: "", hint: "Not enough settled picks of this exact bet at this exact % yet to grade the claim." };
+  const mp = p.model_prob ?? null;
   if (!calib || mp == null || !(mp > 0 && mp < 1)) return neutral;
-  const c = calib.get(`${bandFamOf(mk ?? "")}|${Math.round(mp * 100)}`);
+  const c = calib.get(betCellKey(p.market_key, p.side ?? null, p.line ?? null, p.period ?? null, Math.round(mp * 100)));
   if (!c || c.n < BAND_SHOW_N) return neutral;
   const actual = c.won / c.n, claimed = c.probSum / c.n;
-  const rec = `picks of this kind at exactly ${Math.round(claimed * 100)}% have landed ${Math.round(actual * 100)}% of the time (${c.n} settled)`;
+  const rec = `this exact bet at exactly ${Math.round(claimed * 100)}% has landed ${Math.round(actual * 100)}% of the time (${c.n} settled)`;
   if (actual >= claimed - 0.02) return { cls: "text-grass-deep", hint: `Green: ${rec} — the claim holds up.` };
   if (actual >= claimed - 0.08) return { cls: "text-flood-deep", hint: `Yellow: ${rec} — slightly under the claim.` };
   return { cls: "text-brick", hint: `Red: ${rec} — far under the claim; treat this % with caution.` };
@@ -321,7 +317,7 @@ function Item({
   const ms = stateOf(p, nowMs);
   const grp = groupOf(p, ms);
   const calib = useBandCalib();
-  const tone = bandTone(calib, p.market_key, p.model_prob ?? null);
+  const tone = bandTone(calib, p);
   const won = p.status === "won";
   const lost = p.status === "lost";
   const voided = p.status === "void"; // game postponed/cancelled — auto-voided, no result
