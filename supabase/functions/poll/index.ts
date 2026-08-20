@@ -910,7 +910,15 @@ async function poll() {
     }
   }
 
-  const cornerFixtures = [...byFixture.entries()].filter(([id, ts]) => liveMap.has(id) && ts.some((t) => CORNER_MARKETS.has(t.market_key))).map(([id]) => id);
+  // A live corner bet needs the corner stats WHEREVER it lives — tracked tickets, agent picks,
+  // OR untracked feed deliveries (owner ruling: corner bets show their own count on EVERY
+  // surface; the old tickets-only gate left the feed's corner picks blank until someone
+  // tracked one). This only widens WHICH live fixtures get the stats call — the ticket
+  // updates below still run off byFixture alone, so current_value keeps its single writer.
+  const cornerLive = new Set<number>();
+  for (const m of [byFixture, apByFixture, dlByFixture])
+    for (const [id, ts] of m) if (liveMap.has(id) && ts.some((t: any) => CORNER_MARKETS.has(t.market_key))) cornerLive.add(id);
+  const cornerFixtures = [...cornerLive];
   for (const id of cornerFixtures) {
     const statsArr = await afGet("fixtures/statistics", { fixture: String(id) });
     if (!statsArr.length) continue;
