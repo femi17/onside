@@ -346,8 +346,15 @@ function Item({
           </div>
           <div className="mt-0.5 min-w-0">
             <div className="flex items-center gap-1.5">
+              {/* the card % is the MODEL'S CHANCE for this exact bet (the explainer's "put
+                  together, the model gives X an N% chance") — owner-ruled: that's the number
+                  users compare picks by. Older picks without a stored model_prob fall back to
+                  the edge so they aren't blank; the edge itself still lives in the explainer. */}
               <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
-                {market}<b className="hidden text-flood-deep md:inline"> · {p.agent_name}</b>{p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+                {market}<b className="hidden text-flood-deep md:inline"> · {p.agent_name}</b>
+                {p.model_prob != null
+                  ? ` · ${Math.round(p.model_prob * 100)}%`
+                  : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
               </span>
               {/* Onside score — the Double's own ranking, on every priced pick. ≥87 = the elite
                   band (historically ~9-in-10), so it gets the loud treatment. */}
