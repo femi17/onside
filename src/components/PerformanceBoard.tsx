@@ -244,6 +244,41 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
       return { ...band, n: inBand.length, actual: inBand.length ? w / inBand.length : 0, predicted };
     }).filter((b) => b.n > 0);
 
+    // by bet type × confidence — the same (market family × 10-point band) cells the ENGINE's
+    // model-band screen studies (marketGroupOf + bandVeto in run-strategies): "home win @ 68%"
+    // and "home win @ 56%" are different cells, and a cell that has proven to land far under
+    // its claim gets skipped by the engine before delivery. This panel is that loop's face.
+    const famOf = (mk: string | null): string => {
+      const k = mk ?? "";
+      if (/corner/.test(k)) return "Corners";
+      if (/card|booking/.test(k)) return "Cards";
+      if (/1up|2up|never_down/.test(k)) return "Early pay";
+      if (/^(home_win|away_win|draw$|result_1x2|double_chance|dnb|handicap)/.test(k)) return "Result";
+      if (/^(home_to_score|away_to_score|btts|home_clean_sheet|away_clean_sheet|home_win_to_nil|away_win_to_nil)/.test(k)) return "To score";
+      return "Goals";
+    };
+    const famMap = new Map<string, { n: number; won: number; probSum: number }>();
+    for (const p of settled) {
+      if (p.model_prob == null || !(p.model_prob > 0 && p.model_prob < 1)) continue;
+      const k = `${famOf(p.market_key)}|${Math.min(9, Math.floor(p.model_prob * 10))}`;
+      const c = famMap.get(k) ?? { n: 0, won: 0, probSum: 0 };
+      c.n++; if (p.result === "won") c.won++; c.probSum += p.model_prob;
+      famMap.set(k, c);
+    }
+    const famBands = Array.from(famMap.entries())
+      .map(([k, c]) => {
+        const [fam, b] = k.split("|");
+        const actual = c.won / c.n, predicted = c.probSum / c.n;
+        return {
+          fam, band: `${Number(b) * 10}–${Number(b) * 10 + 10}%`, n: c.n, actual, predicted,
+          // the engine's own skip rule (BAND_MIN_N/SLACK/FLOOR in run-strategies) — a row this
+          // flag marks is being kicked out of deliveries automatically
+          blocked: c.n >= 25 && (actual < predicted - 0.15 || actual < 0.45),
+        };
+      })
+      .filter((r) => r.n >= 3)
+      .sort((a, b) => a.fam.localeCompare(b.fam) || a.band.localeCompare(b.band));
+
     // by league — where the edge is real
     const lgMap = new Map<string, { won: number; total: number; mkt: number; priced: number; pricedWon: number }>();
     for (const p of settled) {
@@ -276,7 +311,7 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
     const best = graded.find((l) => (l.edgePct as number) > 0.02) ?? null;
     const worst = [...graded].reverse().find((l) => (l.edgePct as number) < -0.02) ?? null;
 
-    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, clvPicks, avgClv, beatCloseRate, clvLeagues, pnl, green, greenStrike, weeks, bands, leagues, tiers, tierHolds, best, worst };
+    return { inScope, settled, won, total, winRate, priced, avgMarket, vsMarket, clvPicks, avgClv, beatCloseRate, clvLeagues, pnl, green, greenStrike, weeks, bands, famBands, leagues, tiers, tierHolds, best, worst };
   }, [picks, agent, days]);
 
   // self-tuning log (Pro Max learning agents), filtered to the same agent + timeframe
@@ -448,6 +483,29 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                     </div>
                   ))}
                 </div>
+              </Panel>
+
+              {/* by bet type × confidence — the engine's model-band learning, made visible */}
+              <Panel title="By bet type & confidence" sub="A home win @ 68% vs @ 56% — which claims hold up? (tick = claimed)">
+                {d.famBands.length ? (
+                  <div className="no-scrollbar mt-1 flex max-h-[212px] flex-col overflow-y-auto">
+                    {d.famBands.map((r) => (
+                      <div key={`${r.fam}${r.band}`} className="mt-3 flex items-center gap-3">
+                        <span className="w-[104px] flex-none truncate font-mono text-[11px] text-ink">
+                          {r.blocked ? "🚫 " : ""}{r.fam} {r.band}
+                        </span>
+                        <div className="relative h-2.5 flex-1 rounded-[5px] bg-ink/[0.08]">
+                          <div className={`absolute inset-y-0 left-0 rounded-[5px] ${r.blocked ? "bg-brick" : "bg-grass"}`} style={{ width: `${r.actual * 100}%` }} />
+                          <div className="absolute -top-[3px] h-[15px] w-0.5 bg-ink/50" style={{ left: `${r.predicted * 100}%` }} />
+                        </div>
+                        <span className="w-14 flex-none text-right font-mono text-[11px] text-ink-mute">{pct(r.actual)} · {r.n}</span>
+                      </div>
+                    ))}
+                    <p className="mt-3 text-[11.5px] leading-snug text-ink-mute">
+                      🚫 = this kind of pick has proven to land far under its claim (25+ settled), so the engine now skips it before delivery.
+                    </p>
+                  </div>
+                ) : <Empty>Settled picks with a model % needed.</Empty>}
               </Panel>
 
               {/* by tier */}
