@@ -246,6 +246,57 @@ function XIcon() {
   );
 }
 
+// ---- model-band colour coding (owner-ruled 2026-08-20) ----
+// The feed % wears its own track record so choosing a game never needs a trip to /performance:
+// green = picks of this kind (market family × 10-pt band) have landed AT/ABOVE their claimed %,
+// yellow = close under the claim, red = far under (the engine's bandVeto stops delivering these
+// at 25+ settled, so red is a short-lived early warning). Plain until a band has 10 settled —
+// unproven ≠ bad. Data = the same global cells the engine studies (band_calibration RPC),
+// fetched once per page and shared by every card.
+type BandCell = { n: number; won: number; probSum: number };
+let bandCalibCache: Map<string, BandCell> | null = null;
+let bandCalibPromise: Promise<Map<string, BandCell>> | null = null;
+// family buckets mirror the engine's marketGroupOf (NOT the display groupOfMk above — that one
+// folds to-score into goals; the calibration cells keep them apart)
+function bandFamOf(mk: string): string {
+  if (/corner/.test(mk)) return "corners";
+  if (/card|booking/.test(mk)) return "cards";
+  if (/1up|2up|never_down/.test(mk)) return "early";
+  if (/^(home_win|away_win|draw$|result_1x2|double_chance|dnb|handicap)/.test(mk)) return "result";
+  if (/^(home_to_score|away_to_score|btts|home_clean_sheet|away_clean_sheet|home_win_to_nil|away_win_to_nil)/.test(mk)) return "score";
+  return "goals";
+}
+function useBandCalib(): Map<string, BandCell> | null {
+  const [calib, setCalib] = useState<Map<string, BandCell> | null>(bandCalibCache);
+  useEffect(() => {
+    if (bandCalibCache) return;
+    bandCalibPromise ??= Promise.resolve(createClient().rpc("band_calibration")).then(({ data }) => {
+      const m = new Map<string, BandCell>();
+      for (const r of (data ?? []) as { family: string; band: number; n: number; won: number; prob_sum: number }[]) {
+        m.set(`${r.family}|${r.band}`, { n: Number(r.n), won: Number(r.won), probSum: Number(r.prob_sum) });
+      }
+      bandCalibCache = m;
+      return m;
+    });
+    let cancelled = false;
+    bandCalibPromise.then((m) => { if (!cancelled) setCalib(m); });
+    return () => { cancelled = true; };
+  }, []);
+  return calib;
+}
+const BAND_SHOW_N = 10; // settled picks a cell needs before its record colours the %
+function bandTone(calib: Map<string, BandCell> | null, mk: string | null, mp: number | null): { cls: string; hint: string } {
+  const neutral = { cls: "", hint: "Not enough settled picks of this kind yet to grade the claim." };
+  if (!calib || mp == null || !(mp > 0 && mp < 1)) return neutral;
+  const c = calib.get(`${bandFamOf(mk ?? "")}|${Math.min(9, Math.floor(mp * 10))}`);
+  if (!c || c.n < BAND_SHOW_N) return neutral;
+  const actual = c.won / c.n, claimed = c.probSum / c.n;
+  const rec = `picks like this have landed ${Math.round(actual * 100)}% of the time vs the ${Math.round(claimed * 100)}% claimed (${c.n} settled)`;
+  if (actual >= claimed - 0.02) return { cls: "text-grass-deep", hint: `Green: ${rec} — the claim holds up.` };
+  if (actual >= claimed - 0.08) return { cls: "text-flood-deep", hint: `Yellow: ${rec} — slightly under the claim.` };
+  return { cls: "text-brick", hint: `Red: ${rec} — far under the claim; treat this % with caution.` };
+}
+
 function Item({
   p,
   nowMs,
@@ -268,6 +319,8 @@ function Item({
   const f = p.fixtures;
   const ms = stateOf(p, nowMs);
   const grp = groupOf(p, ms);
+  const calib = useBandCalib();
+  const tone = bandTone(calib, p.market_key, p.model_prob ?? null);
   const won = p.status === "won";
   const lost = p.status === "lost";
   const voided = p.status === "void"; // game postponed/cancelled — auto-voided, no result
@@ -352,9 +405,13 @@ function Item({
                   the edge so they aren't blank; the edge itself still lives in the explainer. */}
               <span className="min-w-0 truncate font-mono text-[11px] text-ink-mute">
                 {market}<b className="hidden text-flood-deep md:inline"> · {p.agent_name}</b>
-                {p.model_prob != null
-                  ? ` · ${Math.round(p.model_prob * 100)}%`
-                  : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+                {p.model_prob != null ? (
+                  <>
+                    {" · "}
+                    {/* colour = this band's real track record vs its claim (hover for the numbers) */}
+                    <b title={tone.hint} className={tone.cls || undefined}>{Math.round(p.model_prob * 100)}%</b>
+                  </>
+                ) : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
               </span>
               {/* the Onside score badge used to sit here too, but two look-alike numbers on one
                   row read as competing percentages (owner-ruled) — the card keeps ONLY the
