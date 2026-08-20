@@ -361,6 +361,20 @@ Deno.serve(async (req) => {
           }
         }
       }
+      // A label with no words lost its market text entirely ("Excluded number of Goals - Home 0"
+      // came back as just "0"). raw_market keeps the verbatim print — rebuild the label from it
+      // so the recognizer downstream can still classify the bet instead of tracking a bare digit.
+      if (!/[a-z]/i.test(label ?? "") && /[a-z]/i.test(s.raw_market ?? "")) {
+        label = `${String(s.raw_market).trim()}${label ? ` — ${label}` : ""}`;
+      }
+      // HALF SCOPE, deterministically: the prompt tells the model to keep "1st half -" in the
+      // label, but compliance is per-leg luck — the same slip returned "1st half - Under 2" on one
+      // leg and a bare "Under 2" on another, and a half bet whose label loses the half settles on
+      // the WHOLE match. raw_market is the verbatim printed market text, so recover the scope from
+      // it (or the label/value) and re-prefix — same trust model as the team-total detection above.
+      const halfSrc = `${s.raw_market ?? ""} ${s.market_label ?? ""} ${value}`;
+      const half = /\b(1st|first)\s*half\b/i.test(halfSrc) ? "1st" : /\b(2nd|second)\s*half\b/i.test(halfSrc) ? "2nd" : null;
+      if (half && !/\b(1st|2nd|first|second)\s*half\b/i.test(label ?? "")) label = `${half} half - ${label}`;
       const row = {
         home: s.home, away: s.away, league: s.league,
         market_key: mk, market_label: label, value: value || null, side,
