@@ -356,18 +356,9 @@ function Item({
                   ? ` · ${Math.round(p.model_prob * 100)}%`
                   : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
               </span>
-              {/* Onside score — the Double's own ranking, on every priced pick. ≥87 = the elite
-                  band (historically ~9-in-10), so it gets the loud treatment. */}
-              {p.onside_score != null && (
-                <span
-                  title="Onside score — how this pick ranks on the same scale the Onside Double picks from (bookies' odds + market type + agent record)"
-                  className={`flex-none rounded px-1.5 py-0.5 font-mono text-[9.5px] font-bold tabular-nums ${
-                    p.onside_score >= 87 ? "bg-flood/25 text-flood-deep" : "bg-ink/[0.06] text-ink-mute"
-                  }`}
-                >
-                  ⚡{p.onside_score.toFixed(1)}
-                </span>
-              )}
+              {/* the Onside score badge used to sit here too, but two look-alike numbers on one
+                  row read as competing percentages (owner-ruled) — the card keeps ONLY the
+                  model %, and the Onside score still shows inside the why-explainer */}
               <button
                 onClick={onExplain}
                 aria-label="Why the agent picked this"
