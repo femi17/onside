@@ -653,7 +653,7 @@ function maxGoalsInRow(goals: any[], team?: string): number {
   return max;
 }
 
-async function buildFacts(fixtureId: number, rows: any[]): Promise<Facts> {
+async function buildFacts(fixtureId: number, rows: any[], fromStore = false): Promise<Facts> {
   const { data: fx } = await sb.from("fixtures").select("home_goals,away_goals,ft_home,ft_away,winner,events,status,updated_at").eq("id", fixtureId).single();
   const { data: st } = await sb.from("fixture_stats").select("corners_home,corners_away,corners_home_ht,corners_away_ht").eq("fixture_id", fixtureId).maybeSingle();
   const hg = fx?.ft_home ?? fx?.home_goals ?? 0, ag = fx?.ft_away ?? fx?.away_goals ?? 0;
@@ -668,7 +668,17 @@ async function buildFacts(fixtureId: number, rows: any[]): Promise<Facts> {
   const needCorners = rows.some((t) => CORNER_MARKETS.has(t.market_key));
   const needStats = rows.some((t) => STAT_MARKETS.has(t.market_key));
   const needEvents = needCorners || needStats || rows.some((t) => EVENT_MARKETS.has(t.market_key) || (t.period && t.period !== "ft"));
-  if (needEvents) {
+  if (needEvents && fromStore) {
+    // Late-stats sweep grades HOURS after FT from what's already stored — the live loop's event
+    // timeline + the overnight stats backfill — so a row that still can't grade (e.g. a 1st-half
+    // corner line with no HT snapshot) retries each tick for the cost of DB reads only, never
+    // re-buying provider calls (the trap the 45-min sweep window was capping).
+    const evs: any[] = Array.isArray(fx?.events) ? fx.events : [];
+    goals = evs.filter((e) => !isCardEv(e));
+    cards = evs.filter((e) => isCardEv(e));
+    penalty = goals.some((g: any) => g.kind === "pen");
+    hasEvents = evs.length > 0;
+  } else if (needEvents) {
     try {
       const raw = await afGet("fixtures", { id: String(fixtureId) });
       const one = raw[0];
@@ -726,14 +736,14 @@ async function revertVarSettles(table: string, statusCol: string, fixtureId: num
   }
   return n;
 }
-async function settle(fixtureId: number) {
+async function settle(fixtureId: number, fromStore = false) {
   const cols = "id,market_key,side,line,period,bet_value";
   const { data: ts } = await sb.from("tickets").select(cols).eq("fixture_id", fixtureId).in("status", ["pending", "live"]);
   const { data: aps } = await sb.from("agent_picks").select(cols).eq("fixture_id", fixtureId).in("status", ["pending", "live"]);
   const { data: dls } = await sb.from("deliveries").select(cols).eq("fixture_id", fixtureId).eq("result", "pending");
   const all = [...(ts ?? []), ...(aps ?? []), ...(dls ?? [])];
   if (!all.length) return;
-  const facts = await buildFacts(fixtureId, all);
+  const facts = await buildFacts(fixtureId, all, fromStore);
   await settleRows("tickets", ts ?? [], facts);
   await settleRows("agent_picks", aps ?? [], facts);
   await settleRows("deliveries", dls ?? [], facts, "result");
@@ -907,6 +917,31 @@ async function poll() {
       if (settleBudget <= 0) break;
       settleBudget--;
       await settle(f.id);
+    }
+  }
+
+  // Late-stats sweep: this provider often publishes statistics HOURS after FT (the overnight
+  // collect-stats backfill writes most fixture_stats rows 18-25h after kickoff), long past the
+  // 45-min window above — which stranded corner/stat bets as pending-until-manual-settle. Once
+  // the backfilled totals ARE in fixture_stats for a finished fixture that still has pending
+  // corner/stat rows, grade from the store (fromStore settle = zero provider calls, so a row
+  // that still can't grade retries harmlessly).
+  {
+    const lateIds = new Set<number>();
+    for (const m of [byFixture, apByFixture, dlByFixture])
+      for (const [id, ts] of m) if (ts.some((t: any) => CORNER_MARKETS.has(t.market_key) || STAT_MARKETS.has(t.market_key))) lateIds.add(id);
+    if (lateIds.size) {
+      const { data: fin } = await sb.from("fixtures").select("id, updated_at").in("id", [...lateIds]).in("status", FINISHED);
+      // beyond the fresh-FT window (the sweep above owns that); stats present = grading can succeed
+      const oldFin = (fin ?? []).filter((f: any) => now - new Date(f.updated_at).getTime() > 45 * 60 * 1000).map((f: any) => f.id);
+      if (oldFin.length) {
+        const { data: ready } = await sb.from("fixture_stats").select("fixture_id").in("fixture_id", oldFin).not("corners_home", "is", null);
+        for (const r of ready ?? []) {
+          if (settleBudget <= 0) break;
+          settleBudget--;
+          await settle(r.fixture_id, true);
+        }
+      }
     }
   }
 
