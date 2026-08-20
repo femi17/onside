@@ -230,40 +230,20 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
       .slice(-6)
       .map(([k, b]) => ({ label: weekLabel(k), actual: b.total ? b.won / b.total : 0, market: b.priced ? b.mkt / b.priced : 0 }));
 
-    // calibration — the ONE card for it (owner-ruled 2026-08-20): every % claim singled out
-    // per bet type at the EXACT integer % ("80-90% won't make us know if 82-84 is failing"),
-    // the same (family × exact %) cells the engine's bandVeto studies. A cell that has proven
-    // to land far under its claim (25+ settled) gets skipped by the engine before delivery.
-    const famOf = (mk: string | null): string => {
-      const k = mk ?? "";
-      if (/corner/.test(k)) return "Corners";
-      if (/card|booking/.test(k)) return "Cards";
-      if (/1up|2up|never_down/.test(k)) return "Early pay";
-      if (/^(home_win|away_win|draw$|result_1x2|double_chance|dnb|handicap)/.test(k)) return "Result";
-      if (/^(home_to_score|away_to_score|btts|home_clean_sheet|away_clean_sheet|home_win_to_nil|away_win_to_nil)/.test(k)) return "To score";
-      return "Goals";
-    };
-    const calMap = new Map<string, { n: number; won: number; probSum: number }>();
-    for (const p of settled) {
-      if (p.model_prob == null || !(p.model_prob > 0 && p.model_prob < 1)) continue;
-      const k = `${famOf(p.market_key)}|${Math.round(p.model_prob * 100)}`;
-      const c = calMap.get(k) ?? { n: 0, won: 0, probSum: 0 };
-      c.n++; if (p.result === "won") c.won++; c.probSum += p.model_prob;
-      calMap.set(k, c);
-    }
-    const bands = Array.from(calMap.entries())
-      .map(([k, c]) => {
-        const [fam, pctStr] = k.split("|");
-        const actual = c.won / c.n, predicted = c.probSum / c.n;
-        return {
-          fam, pct: Number(pctStr), n: c.n, actual, predicted,
-          // the engine's own skip rule (BAND_MIN_N/SLACK/FLOOR in run-strategies) — a row this
-          // flag marks is being kicked out of deliveries automatically
-          blocked: c.n >= 25 && (actual < predicted - 0.15 || actual < 0.45),
-        };
-      })
-      // high-confidence claims first — that's where betting decisions are made
-      .sort((a, b) => a.fam.localeCompare(b.fam) || b.pct - a.pct);
+    // calibration: the GROUPED overview (owner-ruled 2026-08-20, third pass: bands here, the
+    // exact-per-% judgment lives on the agent feed's colour-coded %) — does an 80% band hit 80%?
+    const bands = [
+      { lo: 0.5, hi: 0.6, label: "50–60%" },
+      { lo: 0.6, hi: 0.7, label: "60–70%" },
+      { lo: 0.7, hi: 0.8, label: "70–80%" },
+      { lo: 0.8, hi: 0.9, label: "80–90%" },
+      { lo: 0.9, hi: 1.01, label: "90%+" },
+    ].map((band) => {
+      const inBand = settled.filter((p) => p.model_prob != null && p.model_prob >= band.lo && p.model_prob < band.hi);
+      const w = inBand.filter((p) => p.result === "won").length;
+      const predicted = inBand.length ? inBand.reduce((s, p) => s + (p.model_prob as number), 0) / inBand.length : 0;
+      return { ...band, n: inBand.length, actual: inBand.length ? w / inBand.length : 0, predicted };
+    }).filter((b) => b.n > 0);
 
     // by league — where the edge is real
     const lgMap = new Map<string, { won: number; total: number; mkt: number; priced: number; pricedWon: number }>();
@@ -436,25 +416,20 @@ export default function PerformanceBoard({ picks, events, learningAgents = [], s
                 ) : <Empty>Not enough settled weeks yet.</Empty>}
               </Panel>
 
-              {/* calibration — every % singled out per bet type (the engine's exact cells) */}
-              <Panel title="Calibration" sub="Every % claim, singled out — does an 81% land 81%? (tick = claimed)">
+              {/* calibration — grouped overview; the exact-per-% verdicts colour the feed's % */}
+              <Panel title="Calibration" sub="When it says 80%, does it hit 80%? (tick = predicted)">
                 {d.bands.length ? (
-                  <div className="no-scrollbar mt-1 flex max-h-[280px] flex-col overflow-y-auto">
+                  <div className="mt-2">
                     {d.bands.map((b) => (
-                      <div key={`${b.fam}${b.pct}`} className="mt-3 flex items-center gap-3">
-                        <span className="w-[104px] flex-none truncate font-mono text-[11px] text-ink">
-                          {b.blocked ? "🚫 " : ""}{b.fam} {b.pct}%
-                        </span>
+                      <div key={b.label} className="mt-3 flex items-center gap-3">
+                        <span className="w-16 font-mono text-[12px] text-ink">{b.label}</span>
                         <div className="relative h-2.5 flex-1 rounded-[5px] bg-ink/[0.08]">
-                          <div className={`absolute inset-y-0 left-0 rounded-[5px] ${b.blocked ? "bg-brick" : "bg-grass"}`} style={{ width: `${b.actual * 100}%` }} />
+                          <div className="absolute inset-y-0 left-0 rounded-[5px] bg-grass" style={{ width: `${b.actual * 100}%` }} />
                           <div className="absolute -top-[3px] h-[15px] w-0.5 bg-ink/50" style={{ left: `${b.predicted * 100}%` }} />
                         </div>
-                        <span className="w-14 flex-none text-right font-mono text-[11px] text-ink-mute">{pct(b.actual)} · {b.n}</span>
+                        <span className="w-14 text-right font-mono text-[11px] text-ink-mute">{pct(b.actual)} · {b.n}</span>
                       </div>
                     ))}
-                    <p className="mt-3 text-[11.5px] leading-snug text-ink-mute">
-                      🚫 = this exact % has proven to land far under its claim (25+ settled), so the engine now skips it before delivery.
-                    </p>
                   </div>
                 ) : <Empty>Priced picks needed to calibrate.</Empty>}
               </Panel>
