@@ -361,6 +361,17 @@ function Item({
   // ("4.5 /1"). liveTrack puts the dominant figure in `big`; corner/card picks keep their
   // team-split event counts (separate owner ruling with the 9–3 example).
   const ouTrack = !cornerBet && !cardBet && track && track.of.startsWith(" / ") ? track : null;
+  // Corner over/unders use the SAME dominant-number format as the goal O/Us (owner-ruled with
+  // the 0/9.5 example): Over = corner count BIG / line small, Under = line BIG / count small.
+  // Count is the bet's own scope (team markets count that team, period-aware); no feed yet
+  // counts as 0. Non-O/U corner markets keep the 9–3 team split.
+  const cornerOu = (() => {
+    if (!cornerBet || (p.side !== "over" && p.side !== "under") || p.line == null) return null;
+    const mk = p.market_key ?? "";
+    const count = /^home_/.test(mk) ? cornH ?? 0 : /^away_/.test(mk) ? cornA ?? 0 : (cornH ?? 0) + (cornA ?? 0);
+    const line = Number(p.line);
+    return p.side === "over" ? { big: String(count), of: ` / ${line}` } : { big: String(line), of: ` / ${count}` };
+  })();
   let chipMobile: ReactNode = "";
   let chipDesktop: ReactNode = "";
   let chipCls = "text-ink-mute";
@@ -369,13 +380,10 @@ function Item({
   else if (voided) { chipMobile = "Void"; chipDesktop = "Void — game off"; }
   else if (cat === "live") {
     chipCls = "text-flood-deep";
-    // corner pick with no provider corner feed (some competitions never publish live stats):
-    // say so instead of a blank where the count should be — the goal scoreline must never
-    // stand in (owner ruling), and silence reads as a bug
     chipMobile = chipDesktop = ouTrack
       ? <>{ouTrack.big}<span className="text-[10px] text-ink-mute">{ouTrack.of}</span>{liveMin ? `  ${liveMin}` : ""}</>
-      : cornerBet && !score
-        ? ["corners n/a", liveMin].filter(Boolean).join("  ")
+      : cornerOu
+        ? <>{cornerOu.big}<span className="text-[10px] text-ink-mute">{cornerOu.of}</span>{liveMin ? `  ${liveMin}` : ""}</>
         : [score, liveMin].filter(Boolean).join("  ") || "Live";
   }
   else if (awaitingFeed) { chipCls = "text-flood-deep"; chipMobile = chipDesktop = "Awaiting"; }
