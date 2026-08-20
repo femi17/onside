@@ -369,9 +369,14 @@ function Item({
   else if (voided) { chipMobile = "Void"; chipDesktop = "Void — game off"; }
   else if (cat === "live") {
     chipCls = "text-flood-deep";
+    // corner pick with no provider corner feed (some competitions never publish live stats):
+    // say so instead of a blank where the count should be — the goal scoreline must never
+    // stand in (owner ruling), and silence reads as a bug
     chipMobile = chipDesktop = ouTrack
       ? <>{ouTrack.big}<span className="text-[10px] text-ink-mute">{ouTrack.of}</span>{liveMin ? `  ${liveMin}` : ""}</>
-      : [score, liveMin].filter(Boolean).join("  ") || "Live";
+      : cornerBet && !score
+        ? ["corners n/a", liveMin].filter(Boolean).join("  ")
+        : [score, liveMin].filter(Boolean).join("  ") || "Live";
   }
   else if (awaitingFeed) { chipCls = "text-flood-deep"; chipMobile = chipDesktop = "Awaiting"; }
   else if (staleFeed) { chipMobile = chipDesktop = "No data"; }
