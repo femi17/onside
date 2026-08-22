@@ -630,6 +630,8 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const [shareNote, setShareNote] = useState<string | null>(null);
   const shareName = agent ?? (agents.length === 1 ? agents[0] : null);
   const shareSid = shareName ? (picks.find((p) => p.agent_name === shareName)?.strategy_id ?? null) : null;
+  // a minted link belongs to ONE agent — switching the chip must not carry it over
+  useEffect(() => { setShareUrl(null); setShareNote(null); }, [shareName]);
   async function shareAgent(sid: string, name: string) {
     setShareNote(null);
     const { data: token, error } = await supabase.rpc("share_strategy", { p_strategy_id: sid });
