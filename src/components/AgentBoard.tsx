@@ -622,6 +622,27 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
 
   const agents = useMemo(() => Array.from(new Set(picks.map((p) => p.agent_name))), [picks]);
   const filtered = agent ? picks.filter((p) => p.agent_name === agent) : picks;
+
+  // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
+  // same growth loop as slip sharing: mint token → /a/[token] landing + OG card. Hidden on
+  // "All agents" with several running, since a link is per agent.
+  const [shareCopied, setShareCopied] = useState(false);
+  const shareName = agent ?? (agents.length === 1 ? agents[0] : null);
+  const shareSid = shareName ? (picks.find((p) => p.agent_name === shareName)?.strategy_id ?? null) : null;
+  async function shareAgent(sid: string, name: string) {
+    const { data: token, error } = await supabase.rpc("share_strategy", { p_strategy_id: sid });
+    if (error || !token) return;
+    const url = `${window.location.origin}/a/${token}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${name} — my AI betting agent on Onside`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2500);
+      }
+    } catch { /* user closed the share sheet — nothing to clean up */ }
+  }
   const emptyForView = agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
 
   // stable ordering: within each day, sort by match kickoff time (chronological), with deterministic
@@ -700,6 +721,18 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               {agents.map((a) => (
                 <Chip key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Chip>
               ))}
+            </div>
+          )}
+          {shareSid && shareName && (
+            <div className="mt-3 flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => shareAgent(shareSid, shareName)}
+                className="rounded-md border border-ink/15 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink-mute transition hover:border-ink/40 hover:text-ink"
+              >
+                📤 Share {shareName}&apos;s feed
+              </button>
+              {shareCopied && <span className="font-mono text-[11px] text-grass-deep">Link copied ✓</span>}
             </div>
           )}
           {/* in-app "no games" note — mirrors the Telegram note so a run that found nothing reads
