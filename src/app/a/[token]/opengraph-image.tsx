@@ -9,7 +9,6 @@ export const contentType = "image/png";
 
 type PublicAgent = {
   name: string; market: string | null;
-  record: { won: number; lost: number };
   picks: { result: string; fx_status: string | null }[];
 };
 
@@ -31,8 +30,9 @@ export default async function Image({ params }: { params: Promise<{ token: strin
     if (res.ok) a = (await res.json()) as PublicAgent | null;
   } catch { /* fall through to the brand card */ }
 
-  const settled = a ? a.record.won + a.record.lost : 0;
-  const winPct = settled ? Math.round(((a as PublicAgent).record.won / settled) * 100) : null;
+  // the day's own tally, from the day's picks — never the agent's whole history (owner ruling)
+  const won = a ? a.picks.filter((p) => p.result === "won").length : 0;
+  const lost = a ? a.picks.filter((p) => p.result === "lost").length : 0;
   const liveNow = a ? a.picks.filter((p) => p.result === "pending" && LIVE.has(p.fx_status ?? "")).length : 0;
   const stateTxt = liveNow ? `● ${liveNow} IN PLAY` : "AI AGENT";
   const stateColor = liveNow ? "#ffb43c" : "#9fb0a6";
@@ -57,11 +57,11 @@ export default async function Image({ params }: { params: Promise<{ token: strin
           <div style={{ display: "flex", fontSize: 84, fontWeight: 800, color: "#f4f1e8" }}>
             {a ? a.name : "Your rules. Daily picks."}
           </div>
-          {a && settled > 0 ? (
+          {a && won + lost + liveNow > 0 ? (
             <div style={{ display: "flex", gap: 28, fontSize: 30, fontWeight: 700 }}>
-              <span style={{ color: "#57a773" }}>✓ {a.record.won} landed</span>
-              <span style={{ color: "#c0563f" }}>✕ {a.record.lost} cut</span>
-              {winPct != null ? <span style={{ color: "#9fb0a6" }}>{winPct}% landed</span> : null}
+              {won > 0 ? <span style={{ color: "#57a773" }}>✓ {won} landed today</span> : null}
+              {lost > 0 ? <span style={{ color: "#c0563f" }}>✕ {lost} cut</span> : null}
+              {liveNow > 0 ? <span style={{ color: "#ffb43c" }}>● {liveNow} in play</span> : null}
             </div>
           ) : null}
         </div>

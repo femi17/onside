@@ -12,8 +12,7 @@ type Pick = {
   fx_status: string | null; elapsed: number | null; hg: number | null; ag: number | null;
 };
 type PublicAgent = {
-  name: string; market: string | null; created_at: string;
-  record: { won: number; lost: number }; picks: Pick[];
+  name: string; market: string | null; created_at: string; picks: Pick[];
 };
 
 const LIVE = new Set(["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "SUSP", "INT"]);
@@ -32,8 +31,8 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   const { token } = await params;
   const a = await loadAgent(token);
   if (!a) return { title: "Agent not found — Onside" };
-  const settled = a.record.won + a.record.lost;
-  const rec = settled ? ` · ${a.record.won}/${settled} landed` : "";
+  const won = a.picks.filter((p) => p.result === "won").length;
+  const rec = won ? ` · ✓ ${won} landed today` : a.picks.length ? ` · ${a.picks.length} picks today` : "";
   return {
     title: `${a.name} — AI betting agent${rec} — Onside`,
     description: "An Onside agent hunts fixtures by its owner's rules and delivers picks daily — tracked live, settled automatically. Build your own for free.",
@@ -61,8 +60,9 @@ export default async function SharedAgentPage({ params }: { params: Promise<{ to
     );
   }
 
-  const settled = a.record.won + a.record.lost;
-  const winPct = settled ? Math.round((a.record.won / settled) * 100) : null;
+  // the day's own tally, from the day's picks — never the agent's whole history (owner ruling)
+  const won = a.picks.filter((p) => p.result === "won").length;
+  const lost = a.picks.filter((p) => p.result === "lost").length;
   const liveNow = a.picks.filter((p) => p.result === "pending" && LIVE.has(p.fx_status ?? "")).length;
 
   return (
@@ -85,11 +85,11 @@ export default async function SharedAgentPage({ params }: { params: Promise<{ to
             </div>
             <div className="mt-2 font-disp text-xl font-extrabold">{a.name}</div>
             {a.market && <div className="mt-0.5 font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">{a.market}</div>}
-            {settled > 0 && (
+            {won + lost + liveNow > 0 && (
               <div className="mt-3 flex flex-wrap gap-3 font-mono text-[11px] text-ink-mute">
-                <span className="text-grass-deep">✓ {a.record.won} landed</span>
-                <span className="text-brick">✕ {a.record.lost} cut</span>
-                {winPct != null && <span>{winPct}% of settled picks landed</span>}
+                {won > 0 && <span className="text-grass-deep">✓ {won} landed today</span>}
+                {lost > 0 && <span className="text-brick">✕ {lost} cut</span>}
+                {liveNow > 0 && <span className="text-flood-deep">● {liveNow} in play</span>}
               </div>
             )}
           </div>
