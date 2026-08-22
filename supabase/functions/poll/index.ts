@@ -12,6 +12,10 @@ const AF_BASE = "https://v3.football.api-sports.io";
 const LIVE = ["1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT"];
 const FINISHED = ["FT", "AET", "PEN"];
 const NOTPLAYED = ["PST", "CANC", "ABD", "AWD", "WO"];
+// Earliest believable full-time: kickoff + 45' + half-time + 45'. The provider sometimes flags a
+// live game FT mid-match (Vasas–Puskás 2026-08-22 came back FT 0-0 at kickoff+64'); an FT younger
+// than this is a feed glitch, not a result — hold it and recheck next pass.
+const MIN_FT_MS = 100 * 60 * 1000;
 const REG_TIME = ["1H", "2H", "HT"];
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -770,8 +774,8 @@ async function poll() {
   const now = Date.now();
   const nowIso = new Date().toISOString();
   { const staleCut = new Date(now - 30 * 60 * 1000).toISOString();
-    const { data: stale } = await sb.from("fixtures").select("id").in("status", LIVE).lt("updated_at", staleCut);
-    const ids = (stale ?? []).map((r: any) => r.id);
+    const { data: stale } = await sb.from("fixtures").select("id,kickoff_utc").in("status", LIVE).lt("updated_at", staleCut);
+    const ids = (stale ?? []).filter((r: any) => now - new Date(r.kickoff_utc).getTime() >= MIN_FT_MS).map((r: any) => r.id);
     if (ids.length) {
       const { data: bet } = await sb.from("tickets").select("fixture_id").in("fixture_id", ids).in("status", ["pending", "live"]);
       const guard = new Set((bet ?? []).map((r: any) => r.fixture_id));
@@ -782,7 +786,7 @@ async function poll() {
   const winStart = new Date(now - 3 * 3600 * 1000).toISOString();
   const winEnd = new Date(now + 5 * 60 * 1000).toISOString();
 
-  const { data: windowFx } = await sb.from("fixtures").select("id,status,elapsed")
+  const { data: windowFx } = await sb.from("fixtures").select("id,status,elapsed,kickoff_utc")
     .gte("kickoff_utc", winStart).lte("kickoff_utc", winEnd).not("status", "in", `(${FINISHED.join(",")})`);
 
   const { data: trackedTix } = await sb.from("tickets").select("fixture_id").in("status", ["pending", "live"]).not("fixture_id", "is", null);
@@ -879,6 +883,7 @@ async function poll() {
     // NOT a result -- leave it for reconcile (fresh API status -> voids postponed/not-played games)
     // so we never grade a phantom 0-0 as won/lost.
     if ((f.elapsed ?? 0) < 80) continue;
+    if (now - new Date(f.kickoff_utc).getTime() < MIN_FT_MS) continue; // elapsed says late but the clock says mid-match — glitched elapsed, not a finish
     if (settleBudget <= 0) continue; // drain remaining settlements next pass
     settleBudget--;
     await sb.from("fixtures").update({ status: "FT", updated_at: nowIso }).eq("id", f.id);
@@ -892,6 +897,7 @@ async function poll() {
     for (const fx of results) {
       const short = fx.fixture?.status?.short;
       if (FINISHED.includes(short) && settleBudget <= 0) continue; // drain remaining settlements next pass
+      if (short === "FT" && now - new Date(fx.fixture?.date ?? 0).getTime() < MIN_FT_MS) continue; // impossible-early FT from the by-id fetch — the exact Vasas glitch; leave the row live and recheck
       await ensureOrientation(fx); // reconcile fetches carry teams too â€” same swap guard as live
       await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", fx.fixture.id);
       if (FINISHED.includes(short)) { settleBudget--; await settle(fx.fixture.id); }
