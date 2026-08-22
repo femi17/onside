@@ -134,6 +134,7 @@ export type ExistingStrategy = {
   rule_text: string | null;
   rule_parsed: ParsedRule | null;
   kickoff_at: string | null;
+  kickoff_until: string | null;
   league_ids: number[] | null;
   league_mode: string | null;
   selectivity: string | null;
@@ -238,8 +239,10 @@ export default function StrategyBuilder({
   });
   const [time, setTime] = useState(existing?.deliver_at ? existing.deliver_at.slice(0, 5) : "06:00");
   const [target, setTarget] = useState(existing?.target_day ?? "same_day");
-  // optional kickoff pin: only games starting at exactly this local time ("" = any time)
+  // optional kickoff pin: only games starting at this local time ("" = any time). With an
+  // until-time it becomes a window (inclusive; until < at wraps past midnight for late games).
   const [kickAt, setKickAt] = useState(existing?.kickoff_at ? existing.kickoff_at.slice(0, 5) : "");
+  const [kickUntil, setKickUntil] = useState(existing?.kickoff_until ? existing.kickoff_until.slice(0, 5) : "");
   const [channels, setChannels] = useState<Set<string>>(new Set(existing?.channels ?? ["app"]));
   const [tgLinked, setTgLinked] = useState(true); // optimistic: avoids a warning flash before we know
   const [learning, setLearning] = useState(existing?.learning ?? false);
@@ -457,11 +460,16 @@ export default function StrategyBuilder({
       const { data, count } = await q;
       if (cancelled) return;
       // a kickoff pin filters by LOCAL start time, which the DB can't do — filter the page here
-      // (the count is then "of the first 200", close enough for a preview)
+      // (the count is then "of the first 200", close enough for a preview). Exact time when only
+      // "at" is set; inclusive window with "until" (until < at wraps past midnight).
       const all = (data ?? []) as { home_team: string; away_team: string; kickoff_utc: string }[];
-      const inScope = kickAt
-        ? all.filter((f) => new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { hour12: false }).slice(0, 5) === kickAt)
-        : all;
+      const koOk = (iso: string) => {
+        if (!kickAt) return true;
+        const hm = new Date(iso).toLocaleTimeString("en-GB", { hour12: false }).slice(0, 5);
+        if (!kickUntil) return hm === kickAt;
+        return kickAt <= kickUntil ? hm >= kickAt && hm <= kickUntil : hm >= kickAt || hm <= kickUntil;
+      };
+      const inScope = kickAt ? all.filter((f) => koOk(f.kickoff_utc)) : all;
       setPreviewN(kickAt ? inScope.length : count ?? all.length);
       setPreviewFx(inScope.slice(0, 3));
       // all in-scope kickoffs — the delivery-time note counts how many fall before delivery
@@ -469,7 +477,7 @@ export default function StrategyBuilder({
     };
     const id = setTimeout(run, 250);
     return () => { cancelled = true; clearTimeout(id); };
-  }, [picked, target, kickAt, supabase]);
+  }, [picked, target, kickAt, kickUntil, supabase]);
 
   // A same-day time that's already passed is FINE — the engine simply fires at its next chance
   // (right away if the agent hasn't run today, else tomorrow at that time). The old hard block here
@@ -733,6 +741,7 @@ export default function StrategyBuilder({
       deliver_at: jitteredDeliverAt(time),
       target_day: target,
       kickoff_at: kickAt ? `${kickAt}:00` : null,
+      kickoff_until: kickAt && kickUntil ? `${kickUntil}:00` : null,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
       channels: Array.from(channels),
       learning: canLearn ? learning : false,
@@ -882,7 +891,7 @@ export default function StrategyBuilder({
         <Row k="Leagues" v={leagueSurprise ? "🎲 Surprise · re-rolls each run" : picked.size === 0 ? (plan === "pro_max" ? "All competitions" : "Pick some") : `${picked.size} of ${maxLeagues}`} />
         <Row k="Selectivity" v={`${sel.name.split(" ")[0]} · ${sel.eq.replace("min edge ", "")}`} />
         <Row k="Cap" v={`${cap} / prediction`} />
-        {kickAt && <Row k="Kickoff" v={`${kickAt} games only`} />}
+        {kickAt && <Row k="Kickoff" v={kickUntil ? `${kickAt}–${kickUntil} window` : `${kickAt} games only`} />}
         <Row k="Delivery" v={`${time} · ${chLabel}`} />
         <Row k="Learning" v={learning && canLearn ? "On" : "Off"} />
       </div>
@@ -1243,7 +1252,7 @@ export default function StrategyBuilder({
                 : <>Showing leagues that play {TARGETS.find((t) => t.k === target)?.h}. Your agent hunts this window at each delivery.</>}
             </p>
 
-            {/* optional kickoff pin — only games starting at exactly this local time */}
+            {/* optional kickoff pin — exact local start time, or a window when "to" is set */}
             <div className="mb-3 flex flex-wrap items-center gap-2.5">
               <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">⏰ Kickoff at</span>
               <input
@@ -1252,12 +1261,29 @@ export default function StrategyBuilder({
                 onChange={(e) => setKickAt(e.target.value)}
                 className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
               />
+              {kickAt && (
+                <>
+                  <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">to</span>
+                  <input
+                    type="time"
+                    value={kickUntil}
+                    onChange={(e) => setKickUntil(e.target.value)}
+                    className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
+                  />
+                </>
+              )}
               {kickAt ? (
                 <>
-                  <span className="text-[12px] text-ink-mute">only games starting {kickAt} count</span>
+                  <span className="text-[12px] text-ink-mute">
+                    {kickUntil
+                      ? kickAt <= kickUntil
+                        ? `games starting ${kickAt}–${kickUntil} count`
+                        : `games starting ${kickAt}–${kickUntil} count (past midnight)`
+                      : `only games starting ${kickAt} count — set "to" for a window`}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setKickAt("")}
+                    onClick={() => { setKickAt(""); setKickUntil(""); }}
                     className="rounded-md border border-ink/15 px-2 py-1 font-mono text-[10.5px] font-bold uppercase text-ink-mute transition hover:border-ink/40 hover:text-ink"
                   >
                     ✕ Any time

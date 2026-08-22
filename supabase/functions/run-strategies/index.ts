@@ -1888,12 +1888,19 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     .order("kickoff_utc", { ascending: true }).limit(200);
   if (leagues !== "all") q = q.in("league_id", leagues);
   const { data: fixtures } = await q;
-  // optional kickoff pin ("games starting 15:00"): only fixtures whose LOCAL kickoff (strategy tz)
-  // matches the chosen HH:MM survive — empty = any time, the old behaviour
+  // optional kickoff pin: only fixtures whose LOCAL kickoff (strategy tz) fits survive.
+  // kickoff_at alone = exact HH:MM match (the original pin); with kickoff_until it's an
+  // inclusive window, wrapping past midnight when until < at ("22:00 to 01:00" = late games).
+  // Empty kickoff_at = any time, the old behaviour (kickoff_until is ignored without it).
   const kickAt = strategy.kickoff_at ? String(strategy.kickoff_at).slice(0, 5) : null;
-  let candidates = (fixtures ?? []).filter((f: Fixture) =>
-    !takenAll.has(f.id) &&
-    (!kickAt || new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { timeZone: tz, hour12: false }).slice(0, 5) === kickAt));
+  const kickUntil = strategy.kickoff_until ? String(strategy.kickoff_until).slice(0, 5) : null;
+  const koOk = (f: Fixture) => {
+    if (!kickAt) return true;
+    const hm = new Date(f.kickoff_utc).toLocaleTimeString("en-GB", { timeZone: tz, hour12: false }).slice(0, 5);
+    if (!kickUntil) return hm === kickAt;
+    return kickAt <= kickUntil ? hm >= kickAt && hm <= kickUntil : hm >= kickAt || hm <= kickUntil;
+  };
+  let candidates = (fixtures ?? []).filter((f: Fixture) => !takenAll.has(f.id) && koOk(f));
 
   // 🛡️ Onside Shield (opt-in per agent, strategies.shield): drop fixtures in leagues where THIS
   // agent is measurably failing — ≥5 settled picks in the league and under 45% won. Recomputed
