@@ -626,26 +626,28 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
   // same growth loop as slip sharing: mint token → /a/[token] landing + OG card. Hidden on
   // "All agents" with several running, since a link is per agent.
-  const [shareMsg, setShareMsg] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null); // minted link, always shown clickable
+  const [shareNote, setShareNote] = useState<string | null>(null);
   const shareName = agent ?? (agents.length === 1 ? agents[0] : null);
   const shareSid = shareName ? (picks.find((p) => p.agent_name === shareName)?.strategy_id ?? null) : null;
   async function shareAgent(sid: string, name: string) {
-    setShareMsg(null);
+    setShareNote(null);
     const { data: token, error } = await supabase.rpc("share_strategy", { p_strategy_id: sid });
-    if (error || !token) { setShareMsg("Couldn't create the share link — try again."); return; }
+    if (error || !token) { setShareNote("Couldn't create the share link — try again."); return; }
     const url = `${window.location.origin}/a/${token}`;
-    try {
-      if (navigator.share) { await navigator.share({ title: `${name} — my AI betting agent on Onside`, url }); return; }
-    } catch (e) {
-      if ((e as Error).name === "AbortError") return; // user closed the share sheet
-      // share sheet unavailable/failed — fall through to the clipboard
+    setShareUrl(url);
+    // the OS share sheet is mobile-only on purpose: desktop Chrome/Edge expose navigator.share
+    // but the Windows flyout regularly opens nothing — clipboard + visible link is reliable
+    const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+    if (mobile && navigator.share) {
+      try { await navigator.share({ title: `${name} — my AI betting agent on Onside`, url }); return; }
+      catch { return; /* user closed the sheet; the link stays visible below */ }
     }
     try {
       await navigator.clipboard.writeText(url);
-      setShareMsg("Link copied ✓");
-      setTimeout(() => setShareMsg(null), 3000);
+      setShareNote("Link copied ✓");
     } catch {
-      setShareMsg(url); // last resort: show the link so it can be copied by hand
+      setShareNote("Copy the link:"); // clipboard blocked — the clickable link is right there
     }
   }
   const emptyForView = agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
@@ -737,7 +739,12 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               >
                 📤 Share {shareName}&apos;s feed
               </button>
-              {shareMsg && <span className="break-all font-mono text-[11px] text-chalk">{shareMsg}</span>}
+              {shareNote && <span className="font-mono text-[11px] text-chalk">{shareNote}</span>}
+              {shareUrl && (
+                <a href={shareUrl} target="_blank" rel="noopener" className="break-all font-mono text-[11px] text-flood underline decoration-flood/50 underline-offset-2 hover:text-chalk">
+                  {shareUrl.replace(/^https?:\/\//, "")}
+                </a>
+              )}
             </div>
           )}
           {/* in-app "no games" note — mirrors the Telegram note so a run that found nothing reads
