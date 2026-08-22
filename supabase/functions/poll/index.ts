@@ -951,6 +951,77 @@ async function poll() {
     }
   }
 
+  // Corner reconcile sweep: the provider's live corner feed can FREEZE late in a game and only be
+  // corrected on their side well after FT (CSKA v Lokomotiv 2026-08-22: live stats stuck at 4-0
+  // from the 78th minute, true final 5-1 — every settle-time fetch inside the grace window still
+  // saw 4-0). One shot per fixture, 90min-24h after FT: re-fetch the final totals, heal the
+  // fixture_stats row (the feed reads it live, so every surface heals at once), and re-grade EVERY
+  // corner bet on the fixture — including already-settled ones. A result that flips re-fires the
+  // landed/missed push as a correction (owner-ruled 2026-08-22: correct WITH push, never silently).
+  // fixtures.stats_reconciled_at is the one-shot flag; when the provider has nothing, the flag is
+  // still set but NO fixture_stats row is inserted, so the overnight collect-stats backfill (whose
+  // candidate query looks for fixtures MISSING a stats row) still owns those. Runs only on active
+  // poll passes (same as the sweeps above) — a fixture finishing right before a quiet spell
+  // reconciles on the next active pass, well inside the 24h window.
+  let cornerHeals = 0, cornerFlips = 0;
+  {
+    const RECONCILE_MIN_MS = 90 * 60 * 1000, RECONCILE_MAX_MS = 24 * 60 * 60 * 1000;
+    let reconcileBudget = 4; // 1 provider call each; leftovers drain on later passes
+    const cut = new Date(now - RECONCILE_MAX_MS).toISOString();
+    const mkList = [...CORNER_MARKETS];
+    const cornerIds = new Set<number>();
+    for (const [table] of [["tickets"], ["agent_picks"], ["deliveries"]] as const) {
+      const { data } = await sb.from(table).select("fixture_id").in("market_key", mkList).gte("settled_at", cut).not("fixture_id", "is", null);
+      for (const r of data ?? []) cornerIds.add(r.fixture_id as number);
+    }
+    for (const m of [byFixture, apByFixture, dlByFixture])
+      for (const [id, ts] of m) if (ts.some((t: any) => CORNER_MARKETS.has(t.market_key))) cornerIds.add(id);
+    if (cornerIds.size) {
+      const { data: cand } = await sb.from("fixtures").select("id,home_team_id").in("id", [...cornerIds]).in("status", FINISHED)
+        .is("stats_reconciled_at", null).lte("updated_at", new Date(now - RECONCILE_MIN_MS).toISOString()).gte("updated_at", cut);
+      for (const f of cand ?? []) {
+        if (reconcileBudget <= 0) break;
+        reconcileBudget--;
+        try {
+          const sArr = await afGet("fixtures/statistics", { fixture: String(f.id) });
+          await sb.from("fixtures").update({ stats_reconciled_at: nowIso }).eq("id", f.id); // one shot, even when the provider has nothing
+          if (!sArr.length) continue;
+          const ps = parseStats(sArr, { teams: { home: { id: f.home_team_id } } });
+          const { data: prev } = await sb.from("fixture_stats").select("corners_home,corners_away").eq("fixture_id", f.id).maybeSingle();
+          // never let a provider null clobber a stored count
+          const ch = ps.corners_home ?? prev?.corners_home ?? null;
+          const ca = ps.corners_away ?? prev?.corners_away ?? null;
+          if (ch == null && ca == null) continue;
+          if (!prev) await sb.from("fixture_stats").insert({ fixture_id: f.id, corners_home: ch, corners_away: ca, updated_at: nowIso });
+          else if (prev.corners_home !== ch || prev.corners_away !== ca) {
+            await sb.from("fixture_stats").update({ corners_home: ch, corners_away: ca, updated_at: nowIso }).eq("fixture_id", f.id);
+            cornerHeals++;
+          }
+          // Re-grade every corner bet on this fixture from the healed store (fromStore = no further
+          // provider calls). Pending rows settle normally; settled rows whose grade moved get
+          // corrected. The status/result column is included ONLY when it actually changed — the
+          // settled-push triggers are AFTER UPDATE OF that column and fire whenever it's listed,
+          // so a value-only heal must not mention it.
+          for (const [table, statusCol] of [["tickets", "status"], ["agent_picks", "status"], ["deliveries", "result"]] as const) {
+            const { data: rows } = await sb.from(table).select(`id,market_key,side,line,period,bet_value,current_value,${statusCol}`).eq("fixture_id", f.id).in("market_key", mkList);
+            if (!rows?.length) continue;
+            const facts = await buildFacts(f.id, rows, true);
+            for (const t of rows) {
+              const r = grade(t, facts);
+              if (r === null) continue;
+              const v = liveValue(t.market_key, facts.hg, facts.ag, facts.corners ?? 0);
+              const flip = r !== (t as any)[statusCol];
+              if (!flip && Number(t.current_value) === v) continue;
+              const patch: Record<string, unknown> = { current_value: v };
+              if (flip) { patch[statusCol] = r; patch.settled_at = nowIso; cornerFlips++; }
+              await sb.from(table).update(patch).eq("id", t.id);
+            }
+          }
+        } catch (_e) { /* provider hiccup before the flag write — retried next pass */ }
+      }
+    }
+  }
+
   // A live corner bet needs the corner stats WHEREVER it lives — tracked tickets, agent picks,
   // OR untracked feed deliveries (owner ruling: corner bets show their own count on EVERY
   // surface; the old tickets-only gate left the feed's corner picks blank until someone
@@ -985,7 +1056,7 @@ async function poll() {
     if (liveMap.get(id)?.fixture?.status?.short === "HT") htSettled += await settleHalfTime(id);
   }
 
-  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted, orientationFixes };
+  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted, orientationFixes, cornerHeals, cornerFlips };
 }
 Deno.serve(async () => {
   try {
