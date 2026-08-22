@@ -13,11 +13,12 @@ export default async function AgentPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  // Load by TIME WINDOW (start of yesterday, Lagos), not a blind row limit: at the Pro Max cap
+  // Load by TIME WINDOW (last 7 dates, Lagos), not a blind row limit: at the Pro Max cap
   // (50 picks × up to 14 agents) a single midday batch used to push the overnight batches past a
   // fixed limit(200) — picks looked "wiped" from the feed although nothing was deleted. The high
-  // limit stays only as a safety ceiling for the payload.
-  const sinceIso = new Date(Date.parse(lagosTodayStartISO()) - 24 * 3600 * 1000).toISOString();
+  // limit stays only as a safety ceiling for the payload. Days beyond today render collapsed
+  // (accordion in AgentBoard), so the wider window doesn't make the feed a long scroll.
+  const sinceIso = new Date(Date.parse(lagosTodayStartISO()) - 6 * 24 * 3600 * 1000).toISOString();
   const { data } = await supabase
     .from("deliveries")
     .select(
@@ -137,6 +138,14 @@ export default async function AgentPage() {
         .filter((v): v is number => v != null)
     )
   );
+  // …but realtime only binds to fixtures that can still change: the feed now spans a week, and
+  // binding two channels per finished fixture would re-bloat the channel the per-fixture scoping
+  // exists to avoid. (fixtureIds itself stays complete — the tracker lookup below needs past days.)
+  const DONE = new Set(["FT", "AET", "PEN", "PST", "CANC", "ABD", "AWD", "WO"]);
+  const changeableFixtureIds = (data ?? [])
+    .filter((r: Record<string, unknown>) => !DONE.has(((r.fixtures as { status?: string } | null)?.status) ?? ""))
+    .map((r: Record<string, unknown>) => (r.fixtures as { id?: number } | null)?.id)
+    .filter((v): v is number => v != null);
 
   // which of these picks are already on the user's tracker (so their button shows "On tracker"
   // instead of prompting to add again) — matched by fixture + market + side, CANONICALISED so the
@@ -292,10 +301,10 @@ export default async function AgentPage() {
     }
   }
 
-  // realtime covers the feed's games AND the double's legs (past-day legs may be off-feed)
+  // realtime covers the feed's still-changeable games AND the double's legs (past-day legs may be off-feed)
   const liveFixtureIds = Array.from(
     new Set([
-      ...fixtureIds,
+      ...changeableFixtureIds,
       ...Object.values(doubleDeliveries)
         .map((d) => (d.fixtures as { id?: number } | null)?.id)
         .filter((v): v is number => v != null),

@@ -525,6 +525,9 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   const [settlingId, setSettlingId] = useState<string | null>(null);
   const [explain, setExplain] = useState<AgentPick | null>(null); // which pick's "why" modal is open
   const [doubleOpen, setDoubleOpen] = useState(false); // mobile: banker-double sheet (behind the FAB)
+  // accordion: user toggles per day key; days without an entry fall back to the default
+  // (only the newest day open) — the feed spans a week now, so older days start folded
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
 
   // settle a no-data delivery (provider never covered the game) so it stops showing "no feed data".
   // Goes through an RPC that only flips result + stores the entered score for the caller's own
@@ -782,21 +785,35 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               // per-day scoreboard: how many settled picks landed (won of won+lost) — void/pending excluded
               const won = day.items.filter((p) => p.status === "won").length;
               const settled = day.items.filter((p) => p.status === "won" || p.status === "lost").length;
+              const open = openDays[key] ?? key === days[0][0];
               return (
               <section key={key}>
-                <div className="mb-2.5 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute">
+                <button
+                  type="button"
+                  onClick={() => setOpenDays((s) => ({ ...s, [key]: !open }))}
+                  aria-expanded={open}
+                  className="mb-2.5 flex w-full items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-onpitch-mute transition-colors hover:text-chalk"
+                >
                   <span>{day.label} · {day.items.length}</span>
                   {settled > 0 && (
                     <span className="rounded bg-grass/15 px-1.5 py-0.5 text-grass" title={`${won} of ${settled} settled picks landed`}>
                       {won}/{settled} landed
                     </span>
                   )}
-                </div>
-                <div className="flex flex-col gap-2">
-                  {day.items.map((p) => (
-                    <Item key={p.id} p={p} nowMs={nowMs} onTrack={addToTracker} tracked={tracked.has(p.id)} busy={busyId === p.id} onSettle={settleDelivery} settling={settlingId === p.id} onExplain={() => setExplain(p)} />
-                  ))}
-                </div>
+                  <svg
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                    className={`ml-auto h-3.5 w-3.5 flex-none transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {open && (
+                  <div className="flex flex-col gap-2">
+                    {day.items.map((p) => (
+                      <Item key={p.id} p={p} nowMs={nowMs} onTrack={addToTracker} tracked={tracked.has(p.id)} busy={busyId === p.id} onSettle={settleDelivery} settling={settlingId === p.id} onExplain={() => setExplain(p)} />
+                    ))}
+                  </div>
+                )}
               </section>
               );
             })}
