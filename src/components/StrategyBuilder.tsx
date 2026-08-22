@@ -1261,17 +1261,13 @@ export default function StrategyBuilder({
                 onChange={(e) => setKickAt(e.target.value)}
                 className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
               />
-              {kickAt && (
-                <>
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">to</span>
-                  <input
-                    type="time"
-                    value={kickUntil}
-                    onChange={(e) => setKickUntil(e.target.value)}
-                    className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
-                  />
-                </>
-              )}
+              <span className="font-mono text-[11px] uppercase tracking-wide text-ink-mute">to</span>
+              <input
+                type="time"
+                value={kickUntil}
+                onChange={(e) => setKickUntil(e.target.value)}
+                className="rounded-lg border border-ink/15 bg-white px-2.5 py-1.5 font-mono text-[12px] font-bold text-ink focus:outline focus:outline-2 focus:outline-flood"
+              />
               {kickAt ? (
                 <>
                   <span className="text-[12px] text-ink-mute">
@@ -1290,7 +1286,9 @@ export default function StrategyBuilder({
                   </button>
                 </>
               ) : (
-                <span className="text-[12px] text-ink-mute">optional — leave empty for any kickoff time</span>
+                <span className="text-[12px] text-ink-mute">
+                  {kickUntil ? "set a start time too — the window needs both" : "optional — leave empty for any kickoff time"}
+                </span>
               )}
             </div>
 
