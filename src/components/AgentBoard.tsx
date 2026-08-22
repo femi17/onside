@@ -626,22 +626,27 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
   // same growth loop as slip sharing: mint token → /a/[token] landing + OG card. Hidden on
   // "All agents" with several running, since a link is per agent.
-  const [shareCopied, setShareCopied] = useState(false);
+  const [shareMsg, setShareMsg] = useState<string | null>(null);
   const shareName = agent ?? (agents.length === 1 ? agents[0] : null);
   const shareSid = shareName ? (picks.find((p) => p.agent_name === shareName)?.strategy_id ?? null) : null;
   async function shareAgent(sid: string, name: string) {
+    setShareMsg(null);
     const { data: token, error } = await supabase.rpc("share_strategy", { p_strategy_id: sid });
-    if (error || !token) return;
+    if (error || !token) { setShareMsg("Couldn't create the share link — try again."); return; }
     const url = `${window.location.origin}/a/${token}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: `${name} — my AI betting agent on Onside`, url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        setShareCopied(true);
-        setTimeout(() => setShareCopied(false), 2500);
-      }
-    } catch { /* user closed the share sheet — nothing to clean up */ }
+      if (navigator.share) { await navigator.share({ title: `${name} — my AI betting agent on Onside`, url }); return; }
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return; // user closed the share sheet
+      // share sheet unavailable/failed — fall through to the clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMsg("Link copied ✓");
+      setTimeout(() => setShareMsg(null), 3000);
+    } catch {
+      setShareMsg(url); // last resort: show the link so it can be copied by hand
+    }
   }
   const emptyForView = agent ? emptyRuns.filter((e) => e.agent_name === agent) : emptyRuns;
 
@@ -724,15 +729,15 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
             </div>
           )}
           {shareSid && shareName && (
-            <div className="mt-3 flex items-center gap-2.5">
+            <div className="mt-3 flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => shareAgent(shareSid, shareName)}
-                className="rounded-md border border-ink/15 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink-mute transition hover:border-ink/40 hover:text-ink"
+                className="rounded-md border border-white/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-onpitch-mute transition hover:border-flood hover:text-chalk"
               >
                 📤 Share {shareName}&apos;s feed
               </button>
-              {shareCopied && <span className="font-mono text-[11px] text-grass-deep">Link copied ✓</span>}
+              {shareMsg && <span className="break-all font-mono text-[11px] text-chalk">{shareMsg}</span>}
             </div>
           )}
           {/* in-app "no games" note — mirrors the Telegram note so a run that found nothing reads
