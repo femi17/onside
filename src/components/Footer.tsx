@@ -10,6 +10,8 @@ export default function Footer({ className = "" }: { className?: string }) {
         {rc ? ` · RC ${rc}` : ""} · Onside
       </span>
       <span aria-hidden="true"> · </span>
+      <Link href="/record" className="hover:text-chalk">The record</Link>
+      <span aria-hidden="true"> · </span>
       <Link href="/terms" className="hover:text-chalk">Terms</Link>
       <span aria-hidden="true"> · </span>
       <Link href="/privacy" className="hover:text-chalk">Privacy</Link>

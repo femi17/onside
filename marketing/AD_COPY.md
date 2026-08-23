@@ -33,7 +33,7 @@ Compliance rules at the bottom — do not edit copy past them without re-checkin
 **Headline:** `Every pick graded. Even the misses.`
 **Description:** `The record stays up. 18+`
 **CTA button:** Learn More
-**Destination:** https://onside.com.ng/record (once built; until then /how-it-works)
+**Destination:** https://onside.com.ng/record (built 2026-08-23 — the live public record)
 
 ## Concept C — "Stop losing track" (pain point)
 
