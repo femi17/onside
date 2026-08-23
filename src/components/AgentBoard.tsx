@@ -624,7 +624,15 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   }
 
   const agents = useMemo(() => Array.from(new Set(picks.map((p) => p.agent_name))), [picks]);
-  const filtered = agent ? picks.filter((p) => p.agent_name === agent) : picks;
+  // minimum model-% filter — composes with the agent chip. Picks without a stored model %
+  // (older deliveries) have nothing to compare, so they hide while a threshold is active.
+  const [minPct, setMinPct] = useState<number | null>(null);
+  const hasPct = useMemo(() => picks.some((p) => p.model_prob != null), [picks]);
+  const filtered = picks.filter(
+    (p) =>
+      (!agent || p.agent_name === agent) &&
+      (minPct == null || (p.model_prob != null && p.model_prob * 100 >= minPct)),
+  );
 
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
   // same growth loop as slip sharing: mint token → /a/[token] landing + OG card. Hidden on
@@ -735,6 +743,19 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               ))}
             </div>
           )}
+          {/* model-% filter — thresholds, not exact bands: "80%+" reads as "only the agent's
+              most confident calls". Tapping the active chip again clears it. */}
+          {hasPct && (
+            <div className={`flex flex-wrap items-center gap-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
+              <Chip on={minPct === null} onClick={() => setMinPct(null)}>Any</Chip>
+              {[60, 70, 80, 90].map((t) => (
+                <Chip key={t} on={minPct === t} onClick={() => setMinPct(minPct === t ? null : t)}>
+                  {t}%+
+                </Chip>
+              ))}
+            </div>
+          )}
           {shareSid && shareName && (
             <div className="mt-3 flex flex-wrap items-center gap-2.5">
               <button
@@ -765,6 +786,21 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {/* the threshold hid everything — say so, don't leave a silent blank feed */}
+          {minPct != null && filtered.length === 0 && (
+            <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-ink/15 bg-chalk px-4 py-3 text-ink shadow-lg">
+              <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[9px] bg-ink/[0.06] font-mono text-[13px] text-ink-mute">%</span>
+              <span className="min-w-0 flex-1 text-[13px] text-ink-mute">
+                No picks at {minPct}%+ {agent ? `from ${agent}` : ""} this week.
+              </span>
+              <button
+                onClick={() => setMinPct(null)}
+                className="flex-none rounded-lg border border-ink/20 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-ink transition-colors hover:border-ink/40"
+              >
+                Clear
+              </button>
             </div>
           )}
           {/* bulk action — add every still-trackable pick in view at once */}
