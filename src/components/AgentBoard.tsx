@@ -245,6 +245,13 @@ function XIcon() {
     </svg>
   );
 }
+function ShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" /><polyline points="16 6 12 2 8 6" /><line x1="12" y1="2" x2="12" y2="15" />
+    </svg>
+  );
+}
 
 // ---- model-band colour coding (owner-ruled 2026-08-20) ----
 // The feed % wears its own track record so choosing a game never needs a trip to /performance.
@@ -751,11 +758,14 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
         </div>
       ) : (
         <>
+          {/* agent switcher — broadcast-style underline tabs on a hairline baseline (not pills):
+              the active agent gets a flood beam under it. Full-bleed sideways scroll on mobile
+              so long agent names never wrap the strip. */}
           {agents.length > 1 && (
-            <div className="mt-6 flex flex-wrap gap-2">
-              <Chip on={agent === null} onClick={() => setAgent(null)}>All agents</Chip>
+            <div className="no-scrollbar -mx-5 mt-6 flex items-end gap-5 overflow-x-auto border-b border-white/10 px-5 md:mx-0 md:px-0">
+              <Tab on={agent === null} onClick={() => setAgent(null)}>All agents</Tab>
               {agents.map((a) => (
-                <Chip key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Chip>
+                <Tab key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Tab>
               ))}
             </div>
           )}
@@ -767,12 +777,16 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
             <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
               {shareSid && shareName && (
                 <>
+                  {/* SVG share glyph, never emoji; icon-only on mobile (repo convention), full text on desktop */}
                   <button
                     type="button"
                     onClick={() => shareAgent(shareSid, shareName)}
-                    className="rounded-md border border-white/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-onpitch-mute transition hover:border-flood hover:text-chalk"
+                    aria-label={`Share ${shareName}'s feed`}
+                    title={`Share ${shareName}'s feed`}
+                    className="flex h-9 w-9 flex-none cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-white/15 text-onpitch-mute transition-colors duration-200 hover:border-flood hover:text-chalk md:h-auto md:w-auto md:px-3 md:py-2"
                   >
-                    📤 Share {shareName}&apos;s feed
+                    <ShareIcon />
+                    <span className="hidden font-mono text-[10.5px] font-bold uppercase tracking-wide md:inline">Share {shareName}&apos;s feed</span>
                   </button>
                   {shareNote && <span className="font-mono text-[11px] text-chalk">{shareNote}</span>}
                   {shareUrl && (
@@ -783,14 +797,14 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                 </>
               )}
               {pctChoices.length > 0 && (
-                <div className="ml-auto flex min-w-0 max-w-full items-center gap-1.5">
-                  <span className="flex-none font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
-                  <div className="no-scrollbar flex min-w-0 items-center gap-1.5 overflow-x-auto">
-                    <Chip sm on={pct === null} onClick={() => setPct(null)}>Any</Chip>
+                <div className="ml-auto flex min-w-0 max-w-full items-center gap-2">
+                  <span className="flex-none font-mono text-[10px] uppercase tracking-[0.2em] text-onpitch-mute">Model&nbsp;%</span>
+                  <div className="no-scrollbar flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
+                    <PctTag on={pct === null} onClick={() => setPct(null)}>Any</PctTag>
                     {pctChoices.map((v) => (
-                      <Chip key={v} sm on={pct === v} onClick={() => setPct(pct === v ? null : v)}>
+                      <PctTag key={v} on={pct === v} onClick={() => setPct(pct === v ? null : v)}>
                         {v}%
-                      </Chip>
+                      </PctTag>
                     ))}
                   </div>
                 </div>
@@ -926,12 +940,30 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   );
 }
 
-function Chip({ on, onClick, children, sm = false }: { on: boolean; onClick: () => void; children: React.ReactNode; sm?: boolean }) {
+// broadcast-tab: mono uppercase label sitting on the strip's hairline, active = flood beam
+function Tab({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-full border font-mono tracking-wide transition-colors ${sm ? "px-2.5 py-1.5 text-[10.5px]" : "px-3.5 py-2 text-[11.5px]"} ${
-        on ? "border-flood bg-flood text-ink" : "border-white/15 text-onpitch-mute hover:border-white/30"
+      aria-pressed={on}
+      className={`relative flex-none cursor-pointer whitespace-nowrap pb-3 pt-2 font-mono text-[11px] font-bold uppercase tracking-[0.15em] transition-colors duration-200 ${
+        on ? "text-chalk" : "text-onpitch-mute hover:text-chalk/80"
+      }`}
+    >
+      {children}
+      <span aria-hidden className={`absolute inset-x-0 bottom-0 h-[2.5px] rounded-full bg-flood transition-opacity duration-200 ${on ? "opacity-100" : "opacity-0"}`} />
+    </button>
+  );
+}
+
+// odds-tag: squared ticket-stub chip in tabular mono — reads like a price board, not a pill
+function PctTag({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      className={`h-9 flex-none cursor-pointer rounded-md border px-3 font-mono text-[11.5px] font-bold tabular-nums transition-colors duration-200 ${
+        on ? "border-flood bg-flood text-ink" : "border-white/15 text-onpitch-mute hover:border-white/35 hover:text-chalk"
       }`}
     >
       {children}
