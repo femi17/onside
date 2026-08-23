@@ -1,0 +1,156 @@
+<!doctype html>
+<!-- Concept A — "Snap your slip": the slip-upload wedge. Betslip photo → live tracked legs.
+     Renders at three ad sizes; pick via URL hash: #square (1080x1080), #story (1080x1920),
+     #landscape (1200x628). Screenshot with marketing/creatives/render.mjs -->
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Hanken+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --pitch:#0E1A1B; --pitch2:#152523; --pitch3:#1E312D;
+    --chalk:#ECE7DA; --chalk2:#F6F2E9;
+    --ink:#13201D; --inkmute:#5E6E68;
+    --flood:#FFB43C; --flood-deep:#E7952A;
+    --grass:#57A773; --onpitch-mute:#8DA19B;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--pitch);color:var(--chalk);overflow:hidden}
+  .canvas{position:relative;overflow:hidden;background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(87,167,115,.10), transparent 60%),
+    radial-gradient(900px 700px at -10% 110%, rgba(255,180,60,.07), transparent 60%),
+    var(--pitch)}
+  /* faint chalk pitch marking */
+  .mark{position:absolute;border:3px solid rgba(236,231,218,.05);border-radius:50%}
+
+  .head{display:flex;align-items:center;gap:14px;position:absolute;z-index:5}
+  .glyph{width:44px;height:44px;border-radius:12px;background:var(--flood);box-shadow:0 0 0 5px rgba(255,180,60,.12);position:relative;flex:none}
+  .glyph::after{content:"";position:absolute;inset:0;border-radius:12px;background:
+    linear-gradient(90deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%),
+    linear-gradient(0deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%)}
+  .word{font-family:"Bricolage Grotesque";font-weight:800;font-size:34px;letter-spacing:-.5px}
+  .word b{color:var(--flood);font-weight:800}
+  .chip18{margin-left:auto;font-family:"JetBrains Mono";font-size:20px;font-weight:700;color:var(--onpitch-mute);border:2px solid rgba(141,161,155,.4);border-radius:10px;padding:4px 12px}
+
+  /* the paper slip */
+  .slipwrap{position:absolute;z-index:3}
+  .paper{transform:rotate(-4deg)}
+  .slip{background:var(--chalk2);color:var(--ink);border-radius:18px 18px 0 0;box-shadow:0 30px 60px rgba(0,0,0,.5)}
+  .slip .sh{display:flex;justify-content:space-between;align-items:center;padding:20px 24px 12px;border-bottom:2px dashed rgba(19,32,29,.15)}
+  .slip .sh b{font-family:"JetBrains Mono";font-size:19px;letter-spacing:2px}
+  .slip .sh span{font-family:"JetBrains Mono";font-size:15px;color:var(--inkmute)}
+  .leg{padding:14px 24px;border-bottom:1px solid rgba(19,32,29,.08)}
+  .leg .t{font-weight:700;font-size:20px}
+  .leg .m{font-size:16px;color:var(--inkmute);margin-top:2px}
+  .perf{height:16px;background:radial-gradient(circle at 10px 0px, transparent 7px, var(--chalk2) 7.5px);background-size:24px 16px;filter:drop-shadow(0 18px 24px rgba(0,0,0,.35))}
+  /* camera brackets */
+  .cam{position:absolute;inset:-26px;pointer-events:none}
+  .cam i{position:absolute;width:52px;height:52px;border:5px solid var(--flood);border-radius:6px}
+  .cam i:nth-child(1){top:0;left:0;border-right:none;border-bottom:none}
+  .cam i:nth-child(2){top:0;right:0;border-left:none;border-bottom:none}
+  .cam i:nth-child(3){bottom:0;left:0;border-right:none;border-top:none}
+  .cam i:nth-child(4){bottom:0;right:0;border-left:none;border-top:none}
+
+  /* live tracked rows */
+  .live{position:absolute;z-index:4;display:flex;flex-direction:column;gap:14px}
+  .row{display:flex;align-items:center;gap:14px;background:var(--pitch2);border:1px solid rgba(236,231,218,.08);border-radius:16px;padding:16px 20px;box-shadow:0 16px 40px rgba(0,0,0,.35)}
+  .dot{width:14px;height:14px;border-radius:50%;background:var(--grass);box-shadow:0 0 0 5px rgba(87,167,115,.18);flex:none}
+  .dot.a{background:var(--flood);box-shadow:0 0 0 5px rgba(255,180,60,.16)}
+  .row .fx{font-weight:600;font-size:19px;white-space:nowrap}
+  .row .mkt{font-size:15px;color:var(--onpitch-mute);white-space:nowrap}
+  .row .min{margin-left:auto;font-family:"JetBrains Mono";font-weight:700;font-size:17px;color:var(--grass);white-space:nowrap}
+  .row .min.amber{color:var(--flood)}
+  .arrow{position:absolute;z-index:4;font-family:"Bricolage Grotesque";color:var(--flood);font-weight:800}
+
+  .h1{position:absolute;z-index:5;font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-1.5px;line-height:1.02}
+  .h1 em{font-style:normal;color:var(--flood)}
+  .sub{position:absolute;z-index:5;color:var(--onpitch-mute);font-size:26px;font-weight:600}
+  .cta{position:absolute;z-index:5;display:inline-flex;align-items:center;gap:12px;background:var(--flood);color:var(--ink);font-weight:700;border-radius:999px;box-shadow:0 14px 34px rgba(255,180,60,.25)}
+  .cta b{font-family:"Bricolage Grotesque";font-weight:800}
+  .foot{position:absolute;z-index:5;color:rgba(141,161,155,.75);font-size:17px;font-weight:600;letter-spacing:.3px}
+
+  /* ---------- SQUARE 1080x1080 ---------- */
+  body[data-s="square"] .canvas{width:1080px;height:1080px}
+  body[data-s="square"] .mark{width:900px;height:900px;left:-450px;top:-450px}
+  body[data-s="square"] .head{top:56px;left:56px;right:56px}
+  body[data-s="square"] .slipwrap{top:210px;left:64px;width:400px}
+  body[data-s="square"] .arrow{top:400px;left:495px;font-size:64px}
+  body[data-s="square"] .live{top:250px;right:56px;width:430px}
+  body[data-s="square"] .h1{left:56px;right:56px;bottom:240px;font-size:88px}
+  body[data-s="square"] .sub{left:56px;bottom:186px}
+  body[data-s="square"] .cta{left:56px;bottom:76px;font-size:30px;padding:20px 36px}
+  body[data-s="square"] .foot{right:56px;bottom:96px}
+
+  /* ---------- STORY 1080x1920 ---------- */
+  body[data-s="story"] .canvas{width:1080px;height:1920px}
+  body[data-s="story"] .mark{width:1100px;height:1100px;left:-550px;top:-550px}
+  body[data-s="story"] .head{top:300px;left:64px;right:64px}
+  body[data-s="story"] .slipwrap{top:430px;left:150px;width:440px}
+  body[data-s="story"] .arrow{top:830px;left:520px;font-size:72px;transform:rotate(90deg)}
+  body[data-s="story"] .live{top:960px;left:120px;right:120px}
+  body[data-s="story"] .h1{left:64px;right:64px;bottom:400px;font-size:96px}
+  body[data-s="story"] .sub{left:64px;bottom:340px;font-size:30px}
+  body[data-s="story"] .cta{left:64px;bottom:210px;font-size:32px;padding:22px 40px}
+  body[data-s="story"] .foot{right:64px;bottom:232px}
+
+  /* ---------- LANDSCAPE 1200x628 ---------- */
+  body[data-s="landscape"] .canvas{width:1200px;height:628px}
+  body[data-s="landscape"] .mark{width:700px;height:700px;right:-350px;bottom:-350px;left:auto;top:auto}
+  body[data-s="landscape"] .head{top:44px;left:52px;width:520px}
+  body[data-s="landscape"] .head .chip18{display:none}
+  body[data-s="landscape"] .slipwrap{top:130px;right:390px;width:320px}
+  body[data-s="landscape"] .slipwrap .leg:nth-child(4){display:none}
+  body[data-s="landscape"] .arrow{top:270px;right:352px;font-size:48px}
+  body[data-s="landscape"] .live{top:150px;right:44px;width:300px}
+  body[data-s="landscape"] .live .row{padding:12px 16px}
+  body[data-s="landscape"] .live .fx{font-size:16px}
+  body[data-s="landscape"] .live .mkt{display:none}
+  body[data-s="landscape"] .live .min{font-size:14px}
+  body[data-s="landscape"] .h1{left:52px;top:160px;width:440px;font-size:54px}
+  body[data-s="landscape"] .sub{left:52px;top:360px;font-size:22px;width:440px}
+  body[data-s="landscape"] .cta{left:52px;bottom:52px;font-size:24px;padding:16px 30px}
+  body[data-s="landscape"] .foot{right:52px;bottom:60px;font-size:14px}
+</style>
+</head>
+<body data-s="square">
+<div class="canvas">
+  <div class="mark"></div>
+
+  <div class="head">
+    <span class="glyph"></span>
+    <span class="word">ON<b>SIDE</b></span>
+    <span class="chip18">18+</span>
+  </div>
+
+  <div class="slipwrap">
+    <div class="paper">
+      <div class="slip">
+        <div class="sh"><b>BET SLIP</b><span>3 legs</span></div>
+        <div class="leg"><div class="t">Arsenal v Chelsea</div><div class="m">Over 1.5 goals</div></div>
+        <div class="leg"><div class="t">Rangers v Celtic</div><div class="m">Both teams to score</div></div>
+        <div class="leg"><div class="t">Pillars v Enyimba</div><div class="m">Home to win</div></div>
+      </div>
+      <div class="perf"></div>
+    </div>
+    <div class="cam"><i></i><i></i><i></i><i></i></div>
+  </div>
+
+  <div class="arrow">→</div>
+
+  <div class="live">
+    <div class="row"><span class="dot"></span><div><div class="fx">Arsenal v Chelsea</div><div class="mkt">Over 1.5 goals · 2 in</div></div><span class="min">LANDED ✓</span></div>
+    <div class="row"><span class="dot a"></span><div><div class="fx">Rangers v Celtic</div><div class="mkt">BTTS · 1 of 2</div></div><span class="min amber">61' ●</span></div>
+    <div class="row"><span class="dot"></span><div><div class="fx">Pillars v Enyimba</div><div class="mkt">Home to win · 1–0</div></div><span class="min">74' ●</span></div>
+  </div>
+
+  <div class="h1">Snap your slip.<br><em>Every leg tracked, live.</em></div>
+  <div class="sub">Screenshot in. Minute-by-minute out.</div>
+  <div class="cta"><b>Start free</b> · onside.com.ng</div>
+  <div class="foot">18+ · Track responsibly</div>
+</div>
+<script>
+  const s = (location.hash || "#square").slice(1);
+  document.body.dataset.s = ["square","story","landscape"].includes(s) ? s : "square";
+</script>
+</body>
+</html>

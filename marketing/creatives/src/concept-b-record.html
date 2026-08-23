@@ -1,0 +1,133 @@
+<!doctype html>
+<!-- Concept B — "The honest record": an agent's day, every pick graded, misses included.
+     The anti-tipster angle. Hash picks size: #square / #story / #landscape. -->
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Hanken+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --pitch:#0E1A1B; --pitch2:#152523; --pitch3:#1E312D;
+    --chalk:#ECE7DA; --chalk2:#F6F2E9;
+    --ink:#13201D; --inkmute:#5E6E68;
+    --flood:#FFB43C; --flood-deep:#E7952A;
+    --grass:#57A773; --brick:#C2604A; --onpitch-mute:#8DA19B;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--pitch);color:var(--chalk);overflow:hidden}
+  .canvas{position:relative;overflow:hidden;background:
+    radial-gradient(1000px 700px at 110% 0%, rgba(87,167,115,.10), transparent 55%),
+    radial-gradient(800px 600px at -10% 100%, rgba(255,180,60,.06), transparent 60%),
+    var(--pitch)}
+  .mark{position:absolute;border:3px solid rgba(236,231,218,.05);border-radius:50%}
+
+  .head{display:flex;align-items:center;gap:14px;position:absolute;z-index:5}
+  .glyph{width:44px;height:44px;border-radius:12px;background:var(--flood);box-shadow:0 0 0 5px rgba(255,180,60,.12);position:relative;flex:none}
+  .glyph::after{content:"";position:absolute;inset:0;border-radius:12px;background:
+    linear-gradient(90deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%),
+    linear-gradient(0deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%)}
+  .word{font-family:"Bricolage Grotesque";font-weight:800;font-size:34px;letter-spacing:-.5px}
+  .word b{color:var(--flood)}
+  .chip18{margin-left:auto;font-family:"JetBrains Mono";font-size:20px;font-weight:700;color:var(--onpitch-mute);border:2px solid rgba(141,161,155,.4);border-radius:10px;padding:4px 12px}
+
+  .h1{position:absolute;z-index:5;font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-1.5px;line-height:1.04}
+  .h1 s{text-decoration-color:var(--brick);text-decoration-thickness:6px}
+  .h1 em{font-style:normal;color:var(--flood)}
+  .sub{position:absolute;z-index:5;color:var(--onpitch-mute);font-weight:600}
+
+  /* the agent day card */
+  .card{position:absolute;z-index:4;background:var(--pitch2);border:1px solid rgba(236,231,218,.09);border-radius:22px;box-shadow:0 30px 70px rgba(0,0,0,.5);overflow:hidden}
+  .ch{display:flex;align-items:center;gap:14px;padding:22px 26px;border-bottom:1px solid rgba(236,231,218,.08)}
+  .av{width:46px;height:46px;border-radius:14px;background:var(--pitch3);display:flex;align-items:center;justify-content:center;font-size:24px;flex:none}
+  .ch .nm{font-family:"Bricolage Grotesque";font-weight:800;font-size:24px}
+  .ch .dy{font-size:16px;color:var(--onpitch-mute)}
+  .tally{margin-left:auto;font-family:"JetBrains Mono";font-weight:700;font-size:22px;color:var(--grass);background:rgba(87,167,115,.12);border-radius:12px;padding:8px 16px}
+  .p{display:flex;align-items:center;gap:14px;padding:16px 26px;border-bottom:1px solid rgba(236,231,218,.05)}
+  .p:last-child{border-bottom:none}
+  .dot{width:13px;height:13px;border-radius:50%;flex:none}
+  .dot.g{background:var(--grass);box-shadow:0 0 0 4px rgba(87,167,115,.16)}
+  .dot.a{background:var(--flood);box-shadow:0 0 0 4px rgba(255,180,60,.15)}
+  .dot.o{background:var(--flood-deep);box-shadow:0 0 0 4px rgba(231,149,42,.15)}
+  .p .fx{font-weight:600;font-size:19px;white-space:nowrap}
+  .p .mkt{font-size:15px;color:var(--onpitch-mute);white-space:nowrap}
+  .res{margin-left:auto;font-family:"JetBrains Mono";font-weight:700;font-size:17px;white-space:nowrap}
+  .res.w{color:var(--grass)} .res.l{color:var(--brick)}
+
+  .stamp{position:absolute;z-index:6;font-family:"JetBrains Mono";font-weight:700;color:var(--flood);border:4px solid var(--flood);border-radius:14px;padding:10px 22px;transform:rotate(-7deg);background:rgba(14,26,27,.85);box-shadow:0 14px 34px rgba(0,0,0,.4)}
+
+  .cta{position:absolute;z-index:5;display:inline-flex;align-items:center;gap:12px;background:var(--flood);color:var(--ink);font-weight:700;border-radius:999px;box-shadow:0 14px 34px rgba(255,180,60,.25)}
+  .cta b{font-family:"Bricolage Grotesque";font-weight:800}
+  .foot{position:absolute;z-index:5;color:rgba(141,161,155,.75);font-size:17px;font-weight:600}
+
+  /* ---------- SQUARE ---------- */
+  body[data-s="square"] .canvas{width:1080px;height:1080px}
+  body[data-s="square"] .mark{width:900px;height:900px;right:-450px;top:-450px}
+  body[data-s="square"] .head{top:56px;left:56px;right:56px}
+  body[data-s="square"] .h1{top:170px;left:56px;right:56px;font-size:76px}
+  body[data-s="square"] .card{top:420px;left:80px;right:80px}
+  body[data-s="square"] .card .p:nth-child(7){display:none}
+  body[data-s="square"] .stamp{top:390px;right:56px;font-size:26px}
+  body[data-s="square"] .cta{left:56px;bottom:76px;font-size:30px;padding:20px 36px}
+  body[data-s="square"] .foot{right:56px;bottom:96px}
+
+  /* ---------- STORY ---------- */
+  body[data-s="story"] .canvas{width:1080px;height:1920px}
+  body[data-s="story"] .mark{width:1100px;height:1100px;right:-550px;top:-550px}
+  body[data-s="story"] .head{top:300px;left:64px;right:64px}
+  body[data-s="story"] .h1{top:420px;left:64px;right:64px;font-size:84px}
+  body[data-s="story"] .card{top:880px;left:80px;right:80px}
+  body[data-s="story"] .stamp{top:842px;right:64px;font-size:28px}
+  body[data-s="story"] .sub{display:none}
+  body[data-s="story"] .cta{left:64px;bottom:210px;font-size:32px;padding:22px 40px}
+  body[data-s="story"] .foot{right:64px;bottom:232px}
+
+  /* ---------- LANDSCAPE ---------- */
+  body[data-s="landscape"] .canvas{width:1200px;height:628px}
+  body[data-s="landscape"] .mark{width:700px;height:700px;left:-350px;bottom:-350px}
+  body[data-s="landscape"] .head{top:44px;left:52px;width:520px}
+  body[data-s="landscape"] .head .chip18{display:none}
+  body[data-s="landscape"] .h1{top:150px;left:52px;width:520px;font-size:54px}
+  body[data-s="landscape"] .card{top:80px;right:44px;width:540px}
+  body[data-s="landscape"] .card .p:nth-child(5),body[data-s="landscape"] .card .p:nth-child(6){display:none}
+  body[data-s="landscape"] .stamp{top:52px;right:520px;font-size:18px;padding:8px 14px}
+  body[data-s="landscape"] .cta{left:52px;bottom:52px;font-size:24px;padding:16px 30px}
+  body[data-s="landscape"] .foot{left:52px;bottom:130px;font-size:15px}
+</style>
+</head>
+<body data-s="square">
+<div class="canvas">
+  <div class="mark"></div>
+
+  <div class="head">
+    <span class="glyph"></span>
+    <span class="word">ON<b>SIDE</b></span>
+    <span class="chip18">18+</span>
+  </div>
+
+  <div class="h1">Tipsters delete losses.<br><em>Onside grades everything.</em></div>
+
+  <div class="card">
+    <div class="ch">
+      <span class="av">🎯</span>
+      <div><div class="nm">Corner agent</div><div class="dy">Saturday · every pick, graded</div></div>
+      <span class="tally">6/8</span>
+    </div>
+    <div class="p"><span class="dot g"></span><div><div class="fx">Yokohama v Vissel Kobe</div><div class="mkt">Under 9.5 corners</div></div><span class="res w">LANDED ✓</span></div>
+    <div class="p"><span class="dot g"></span><div><div class="fx">CSKA v Lokomotiv</div><div class="mkt">Under 9.5 corners</div></div><span class="res w">LANDED ✓</span></div>
+    <div class="p"><span class="dot a"></span><div><div class="fx">Kashima v Avispa</div><div class="mkt">Under 9.5 corners</div></div><span class="res l">MISSED ✗</span></div>
+    <div class="p"><span class="dot g"></span><div><div class="fx">Charleroi v Mechelen</div><div class="mkt">Under 9.5 corners</div></div><span class="res w">LANDED ✓</span></div>
+    <div class="p"><span class="dot o"></span><div><div class="fx">Dinamo v U. Cluj</div><div class="mkt">Under 9.5 corners</div></div><span class="res w">LANDED ✓</span></div>
+    <div class="p"><span class="dot a"></span><div><div class="fx">Uta Arad v Corvinul</div><div class="mkt">Under 9.5 corners</div></div><span class="res w">LANDED ✓</span></div>
+  </div>
+
+  <div class="stamp">MISSES INCLUDED</div>
+
+  <div class="cta"><b>See the record</b> · onside.com.ng</div>
+  <div class="foot">18+ · Track responsibly</div>
+</div>
+<script>
+  const s = (location.hash || "#square").slice(1);
+  document.body.dataset.s = ["square","story","landscape"].includes(s) ? s : "square";
+</script>
+</body>
+</html>

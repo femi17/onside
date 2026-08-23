@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- Concept C — "Stop losing track of your accas": pain-point. Messy pile of paper slips
+     vs one clean live tracker. Hash picks size: #square / #story / #landscape. -->
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Hanken+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --pitch:#0E1A1B; --pitch2:#152523; --pitch3:#1E312D;
+    --chalk:#ECE7DA; --chalk2:#F6F2E9;
+    --ink:#13201D; --inkmute:#5E6E68;
+    --flood:#FFB43C; --flood-deep:#E7952A;
+    --grass:#57A773; --brick:#C2604A; --onpitch-mute:#8DA19B;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Hanken Grotesk",sans-serif;background:var(--pitch);color:var(--chalk);overflow:hidden}
+  .canvas{position:relative;overflow:hidden;background:
+    radial-gradient(1000px 800px at 50% -20%, rgba(194,96,74,.08), transparent 55%),
+    radial-gradient(900px 700px at 50% 120%, rgba(87,167,115,.10), transparent 60%),
+    var(--pitch)}
+  .head{display:flex;align-items:center;gap:14px;position:absolute;z-index:6}
+  .glyph{width:44px;height:44px;border-radius:12px;background:var(--flood);box-shadow:0 0 0 5px rgba(255,180,60,.12);position:relative;flex:none}
+  .glyph::after{content:"";position:absolute;inset:0;border-radius:12px;background:
+    linear-gradient(90deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%),
+    linear-gradient(0deg,transparent 46%,rgba(19,32,29,.9) 46%,rgba(19,32,29,.9) 54%,transparent 54%)}
+  .word{font-family:"Bricolage Grotesque";font-weight:800;font-size:34px;letter-spacing:-.5px}
+  .word b{color:var(--flood)}
+  .chip18{margin-left:auto;font-family:"JetBrains Mono";font-size:20px;font-weight:700;color:var(--onpitch-mute);border:2px solid rgba(141,161,155,.4);border-radius:10px;padding:4px 12px}
+
+  /* messy pile */
+  .pile{position:absolute;z-index:2}
+  .scrap{position:absolute;background:var(--chalk2);color:var(--inkmute);border-radius:10px;padding:14px 18px;font-family:"JetBrains Mono";font-weight:600;font-size:15px;box-shadow:0 14px 30px rgba(0,0,0,.45);opacity:.9}
+  .scrap b{display:block;color:var(--ink);font-family:"Hanken Grotesk";font-size:17px;margin-bottom:2px}
+  .scrap.dim{opacity:.55}
+  .q{position:absolute;font-family:"Bricolage Grotesque";font-weight:800;color:var(--brick);z-index:3}
+
+  /* clean tracker */
+  .clean{position:absolute;z-index:4;background:var(--pitch2);border:1px solid rgba(236,231,218,.09);border-radius:22px;box-shadow:0 30px 70px rgba(0,0,0,.55);overflow:hidden}
+  .clh{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid rgba(236,231,218,.08)}
+  .clh b{font-family:"Bricolage Grotesque";font-size:22px;font-weight:800}
+  .clh span{font-family:"JetBrains Mono";font-size:16px;color:var(--grass);font-weight:700}
+  .r{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid rgba(236,231,218,.05)}
+  .r:last-child{border-bottom:none}
+  .dot{width:13px;height:13px;border-radius:50%;background:var(--grass);box-shadow:0 0 0 4px rgba(87,167,115,.16);flex:none}
+  .dot.a{background:var(--flood);box-shadow:0 0 0 4px rgba(255,180,60,.15)}
+  .r .fx{font-weight:600;font-size:18px;white-space:nowrap}
+  .r .lg{font-size:14px;color:var(--onpitch-mute);white-space:nowrap}
+  .r .st{margin-left:auto;font-family:"JetBrains Mono";font-weight:700;font-size:16px;color:var(--grass);white-space:nowrap}
+  .r .st.amber{color:var(--flood)}
+
+  .h1{position:absolute;z-index:6;font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-1.5px;line-height:1.03}
+  .h1 em{font-style:normal;color:var(--flood)}
+  .sub{position:absolute;z-index:6;color:var(--onpitch-mute);font-weight:600}
+  .cta{position:absolute;z-index:6;display:inline-flex;align-items:center;gap:12px;background:var(--flood);color:var(--ink);font-weight:700;border-radius:999px;box-shadow:0 14px 34px rgba(255,180,60,.25)}
+  .cta b{font-family:"Bricolage Grotesque";font-weight:800}
+  .foot{position:absolute;z-index:6;color:rgba(141,161,155,.75);font-size:17px;font-weight:600}
+
+  /* ---------- SQUARE ---------- */
+  body[data-s="square"] .canvas{width:1080px;height:1080px}
+  body[data-s="square"] .head{top:56px;left:56px;right:56px}
+  body[data-s="square"] .h1{top:170px;left:56px;right:56px;font-size:82px}
+  body[data-s="square"] .pile{top:400px;left:40px;width:460px;height:420px}
+  body[data-s="square"] .scrap:nth-child(1){top:10px;left:16px;transform:rotate(-8deg)}
+  body[data-s="square"] .scrap:nth-child(2){top:120px;left:140px;transform:rotate(5deg)}
+  body[data-s="square"] .scrap:nth-child(3){top:230px;left:40px;transform:rotate(-3deg)}
+  body[data-s="square"] .scrap:nth-child(4){top:320px;left:170px;transform:rotate(9deg)}
+  body[data-s="square"] .q{top:60px;left:340px;font-size:70px;transform:rotate(12deg)}
+  body[data-s="square"] .clean{top:420px;right:56px;width:460px}
+  body[data-s="square"] .sub{bottom:186px;left:56px;font-size:26px}
+  body[data-s="square"] .cta{left:56px;bottom:76px;font-size:30px;padding:20px 36px}
+  body[data-s="square"] .foot{right:56px;bottom:96px}
+
+  /* ---------- STORY ---------- */
+  body[data-s="story"] .canvas{width:1080px;height:1920px}
+  body[data-s="story"] .head{top:300px;left:64px;right:64px}
+  body[data-s="story"] .h1{top:420px;left:64px;right:64px;font-size:94px}
+  body[data-s="story"] .pile{top:700px;left:60px;right:60px;height:380px}
+  body[data-s="story"] .scrap:nth-child(1){top:0;left:30px;transform:rotate(-8deg)}
+  body[data-s="story"] .scrap:nth-child(2){top:90px;left:330px;transform:rotate(6deg)}
+  body[data-s="story"] .scrap:nth-child(3){top:190px;left:120px;transform:rotate(-4deg)}
+  body[data-s="story"] .scrap:nth-child(4){top:260px;left:430px;transform:rotate(10deg)}
+  body[data-s="story"] .q{top:30px;left:700px;font-size:84px;transform:rotate(12deg)}
+  body[data-s="story"] .clean{top:1120px;left:80px;right:80px}
+  body[data-s="story"] .sub{display:none}
+  body[data-s="story"] .cta{left:64px;bottom:210px;font-size:32px;padding:22px 40px}
+  body[data-s="story"] .foot{right:64px;bottom:232px}
+
+  /* ---------- LANDSCAPE ---------- */
+  body[data-s="landscape"] .canvas{width:1200px;height:628px}
+  body[data-s="landscape"] .head{top:44px;left:52px;width:520px}
+  body[data-s="landscape"] .head .chip18{display:none}
+  body[data-s="landscape"] .h1{top:150px;left:52px;width:500px;font-size:56px}
+  body[data-s="landscape"] .pile{display:none}
+  body[data-s="landscape"] .q{display:none}
+  body[data-s="landscape"] .clean{top:70px;right:44px;width:520px}
+  body[data-s="landscape"] .clean .r:nth-child(6){display:none}
+  body[data-s="landscape"] .sub{top:330px;left:52px;font-size:22px;width:460px}
+  body[data-s="landscape"] .cta{left:52px;bottom:52px;font-size:24px;padding:16px 30px}
+  body[data-s="landscape"] .foot{right:52px;bottom:60px;font-size:14px}
+</style>
+</head>
+<body data-s="square">
+<div class="canvas">
+  <div class="head">
+    <span class="glyph"></span>
+    <span class="word">ON<b>SIDE</b></span>
+    <span class="chip18">18+</span>
+  </div>
+
+  <div class="h1">Stop losing track<br>of <em>your accas.</em></div>
+
+  <div class="pile">
+    <div class="scrap"><b>Saturday acca</b>7 legs · where is it?</div>
+    <div class="scrap dim"><b>Midweek slip</b>screenshot… somewhere</div>
+    <div class="scrap"><b>Guy's sure banker</b>which game was it?</div>
+    <div class="scrap dim"><b>Old slip</b>did this even land?</div>
+    <div class="q">?</div>
+  </div>
+
+  <div class="clean">
+    <div class="clh"><b>Your tracker</b><span>ALL LIVE</span></div>
+    <div class="r"><span class="dot"></span><div><div class="fx">Saturday acca</div><div class="lg">7 legs · 5 landed</div></div><span class="st">ON TRACK</span></div>
+    <div class="r"><span class="dot a"></span><div><div class="fx">Midweek slip</div><div class="lg">3 legs · 1 playing</div></div><span class="st amber">58' ●</span></div>
+    <div class="r"><span class="dot"></span><div><div class="fx">Banker double</div><div class="lg">2 legs · both in</div></div><span class="st">LANDED ✓</span></div>
+    <div class="r"><span class="dot"></span><div><div class="fx">Weekend specials</div><div class="lg">4 legs · 2 landed</div></div><span class="st">ON TRACK</span></div>
+    <div class="r"><span class="dot a"></span><div><div class="fx">Late kickoffs</div><div class="lg">3 legs · starts 8pm</div></div><span class="st amber">UPCOMING</span></div>
+  </div>
+
+  <div class="sub">Every slip. Every leg. One place, live.</div>
+  <div class="cta"><b>Track yours free</b> · onside.com.ng</div>
+  <div class="foot">18+ · Track responsibly</div>
+</div>
+<script>
+  const s = (location.hash || "#square").slice(1);
+  document.body.dataset.s = ["square","story","landscape"].includes(s) ? s : "square";
+</script>
+</body>
+</html>
