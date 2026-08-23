@@ -743,33 +743,38 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               ))}
             </div>
           )}
-          {/* model-% filter — thresholds, not exact bands: "80%+" reads as "only the agent's
-              most confident calls". Tapping the active chip again clears it. */}
-          {hasPct && (
-            <div className={`flex flex-wrap items-center gap-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
-              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
-              <Chip on={minPct === null} onClick={() => setMinPct(null)}>Any</Chip>
-              {[60, 70, 80, 90].map((t) => (
-                <Chip key={t} on={minPct === t} onClick={() => setMinPct(minPct === t ? null : t)}>
-                  {t}%+
-                </Chip>
-              ))}
-            </div>
-          )}
-          {shareSid && shareName && (
-            <div className="mt-3 flex flex-wrap items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => shareAgent(shareSid, shareName)}
-                className="rounded-md border border-white/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-onpitch-mute transition hover:border-flood hover:text-chalk"
-              >
-                📤 Share {shareName}&apos;s feed
-              </button>
-              {shareNote && <span className="font-mono text-[11px] text-chalk">{shareNote}</span>}
-              {shareUrl && (
-                <a href={shareUrl} target="_blank" rel="noopener" className="break-all font-mono text-[11px] text-flood underline decoration-flood/50 underline-offset-2 hover:text-chalk">
-                  {shareUrl.replace(/^https?:\/\//, "")}
-                </a>
+          {/* one control row: share on the left, model-% filter pushed right. On phones the
+              filter wraps to its own line (still right-aligned); the compact chips keep the
+              whole set of thresholds on one 375px line. Tapping the active chip clears it. */}
+          {(hasPct || (shareSid && shareName)) && (
+            <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
+              {shareSid && shareName && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => shareAgent(shareSid, shareName)}
+                    className="rounded-md border border-white/20 px-2.5 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide text-onpitch-mute transition hover:border-flood hover:text-chalk"
+                  >
+                    📤 Share {shareName}&apos;s feed
+                  </button>
+                  {shareNote && <span className="font-mono text-[11px] text-chalk">{shareNote}</span>}
+                  {shareUrl && (
+                    <a href={shareUrl} target="_blank" rel="noopener" className="break-all font-mono text-[11px] text-flood underline decoration-flood/50 underline-offset-2 hover:text-chalk">
+                      {shareUrl.replace(/^https?:\/\//, "")}
+                    </a>
+                  )}
+                </>
+              )}
+              {hasPct && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="mr-0.5 font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
+                  <Chip sm on={minPct === null} onClick={() => setMinPct(null)}>Any</Chip>
+                  {[60, 70, 80, 90].map((t) => (
+                    <Chip key={t} sm on={minPct === t} onClick={() => setMinPct(minPct === t ? null : t)}>
+                      {t}%+
+                    </Chip>
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -917,11 +922,11 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   );
 }
 
-function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+function Chip({ on, onClick, children, sm = false }: { on: boolean; onClick: () => void; children: React.ReactNode; sm?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-full border px-3.5 py-2 font-mono text-[11.5px] tracking-wide transition-colors ${
+      className={`rounded-full border font-mono tracking-wide transition-colors ${sm ? "px-2.5 py-1.5 text-[10.5px]" : "px-3.5 py-2 text-[11.5px]"} ${
         on ? "border-flood bg-flood text-ink" : "border-white/15 text-onpitch-mute hover:border-white/30"
       }`}
     >
