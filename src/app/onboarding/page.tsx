@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import ConnectTelegram from "@/components/ConnectTelegram";
 import StickyHeader from "@/components/StickyHeader";
 import { PLAN_PRICING, isPaidPlan } from "@/lib/plans";
+import { pixelTrack } from "@/lib/metaPixel";
 
 // 3-step first-run setup: choose a plan -> connect Telegram (optional) -> build first agent.
 // New sign-ups land here (profiles.onboarded=false); leaving via any exit marks them onboarded.
@@ -38,10 +39,17 @@ export default function OnboardingPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.replace("/login"); return; }
       setUid(user.id);
-      const { data: p } = await supabase.from("profiles").select("plan, telegram_linked_at").eq("id", user.id).maybeSingle();
+      const { data: p } = await supabase.from("profiles").select("plan, telegram_linked_at, onboarded").eq("id", user.id).maybeSingle();
       if (p?.plan) setPlan(p.plan);
       setLinked(!!p?.telegram_linked_at);
       setLoading(false);
+      // Meta ads conversion: every new account (email or Google) lands here exactly once
+      // with onboarded=false — that makes this the registration signal for BOTH auth
+      // flows. The localStorage flag stops a re-render/revisit double-firing it.
+      if (p?.onboarded === false && !localStorage.getItem("onside_px_reg")) {
+        localStorage.setItem("onside_px_reg", "1");
+        pixelTrack("CompleteRegistration");
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { recognizeBet, recognizedFromClassification, canonicalMarket } from "@/lib/betCatalog";
 import { settleFixtureByScore } from "@/lib/settle";
+import { pixelTrackCustom } from "@/lib/metaPixel";
 
 // same normalisation parse-slip uses, so the alias we teach here matches next time
 const norm = (s: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
@@ -680,8 +681,26 @@ export default function ImportSlip({
     }
     // tracked = the draft did its job; only now does it clear
     clearDraft();
-    // show a clear success, then take them to what they just created
     const trackedN = accumulatorId ? attached : chosen.length;
+    // Meta ads activation signal: this account's FIRST tracked slip. The localStorage flag
+    // means we check the DB at most once per browser; the count check catches an account
+    // that already tracked a slip elsewhere. Tracking must never block the slip flow.
+    try {
+      if (!localStorage.getItem("onside_px_slip")) {
+        localStorage.setItem("onside_px_slip", "1");
+        const { count } = await supabase
+          .from("tickets")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("source", "screenshot");
+        if ((count ?? 0) <= Math.max(toInsert.length, 1)) {
+          pixelTrackCustom("FirstSlipUpload", { legs: trackedN });
+        }
+      }
+    } catch {
+      /* never let analytics break tracking */
+    }
+    // show a clear success, then take them to what they just created
     setOk(`✓ Tracked ${trackedN} game${trackedN === 1 ? "" : "s"}${accumulatorId ? " as an accumulator" : ""}.`);
     setTimeout(() => {
       setOpen(false);

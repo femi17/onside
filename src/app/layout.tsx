@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import ChunkReload from "@/components/ChunkReload";
+import MetaPixel from "@/components/MetaPixel";
 
 export const metadata: Metadata = {
   title: "Onside — track only the bet you made",
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body>
         <ServiceWorkerRegister />
         <ChunkReload />
+        <MetaPixel />
         {children}
       </body>
     </html>
