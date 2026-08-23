@@ -624,14 +624,30 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
   }
 
   const agents = useMemo(() => Array.from(new Set(picks.map((p) => p.agent_name))), [picks]);
-  // minimum model-% filter — composes with the agent chip. Picks without a stored model %
-  // (older deliveries) have nothing to compare, so they hide while a threshold is active.
-  const [minPct, setMinPct] = useState<number | null>(null);
-  const hasPct = useMemo(() => picks.some((p) => p.model_prob != null), [picks]);
+  // exact model-% filter (owner-ruled: no grouped bands) — the chips are the DISTINCT
+  // percentages actually deployed in the current agent view, lowest → highest, and picking
+  // one shows only picks at exactly that %. Mirrors the model-band ruling that every exact %
+  // keeps its own ledger. Picks without a stored model % (older deliveries) hide while a %
+  // is selected.
+  const [pct, setPct] = useState<number | null>(null);
+  const pctOf = (p: AgentPick) => (p.model_prob != null ? Math.round(p.model_prob * 100) : null);
+  const pctChoices = useMemo(() => {
+    const set = new Set<number>();
+    for (const p of picks) {
+      if (agent && p.agent_name !== agent) continue;
+      const v = pctOf(p);
+      if (v != null) set.add(v);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [picks, agent]);
+  // switching agents can drop the selected % out of the deployed set — clear it, don't strand
+  // the user on a silently empty feed
+  useEffect(() => {
+    if (pct != null && !pctChoices.includes(pct)) setPct(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pctChoices]);
   const filtered = picks.filter(
-    (p) =>
-      (!agent || p.agent_name === agent) &&
-      (minPct == null || (p.model_prob != null && p.model_prob * 100 >= minPct)),
+    (p) => (!agent || p.agent_name === agent) && (pct == null || pctOf(p) === pct),
   );
 
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
@@ -743,10 +759,11 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               ))}
             </div>
           )}
-          {/* one control row: share on the left, model-% filter pushed right. On phones the
-              filter wraps to its own line (still right-aligned); the compact chips keep the
-              whole set of thresholds on one 375px line. Tapping the active chip clears it. */}
-          {(hasPct || (shareSid && shareName)) && (
+          {/* one control row: share on the left, model-% filter pushed right. The chips are
+              this view's real deployed percentages (lowest → highest); the list can be long,
+              so it scrolls sideways instead of wrapping into a wall. Tapping the active %
+              clears it. On phones the filter wraps under the share button, still right-aligned. */}
+          {(pctChoices.length > 0 || (shareSid && shareName)) && (
             <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
               {shareSid && shareName && (
                 <>
@@ -765,15 +782,17 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                   )}
                 </>
               )}
-              {hasPct && (
-                <div className="ml-auto flex items-center gap-1.5">
-                  <span className="mr-0.5 font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
-                  <Chip sm on={minPct === null} onClick={() => setMinPct(null)}>Any</Chip>
-                  {[60, 70, 80, 90].map((t) => (
-                    <Chip key={t} sm on={minPct === t} onClick={() => setMinPct(minPct === t ? null : t)}>
-                      {t}%+
-                    </Chip>
-                  ))}
+              {pctChoices.length > 0 && (
+                <div className="ml-auto flex min-w-0 max-w-full items-center gap-1.5">
+                  <span className="flex-none font-mono text-[10px] uppercase tracking-[0.15em] text-onpitch-mute">Model %</span>
+                  <div className="no-scrollbar flex min-w-0 items-center gap-1.5 overflow-x-auto">
+                    <Chip sm on={pct === null} onClick={() => setPct(null)}>Any</Chip>
+                    {pctChoices.map((v) => (
+                      <Chip key={v} sm on={pct === v} onClick={() => setPct(pct === v ? null : v)}>
+                        {v}%
+                      </Chip>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -791,21 +810,6 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-          {/* the threshold hid everything — say so, don't leave a silent blank feed */}
-          {minPct != null && filtered.length === 0 && (
-            <div className="mt-5 flex items-center gap-3 rounded-xl border border-dashed border-ink/15 bg-chalk px-4 py-3 text-ink shadow-lg">
-              <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[9px] bg-ink/[0.06] font-mono text-[13px] text-ink-mute">%</span>
-              <span className="min-w-0 flex-1 text-[13px] text-ink-mute">
-                No picks at {minPct}%+ {agent ? `from ${agent}` : ""} this week.
-              </span>
-              <button
-                onClick={() => setMinPct(null)}
-                className="flex-none rounded-lg border border-ink/20 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase text-ink transition-colors hover:border-ink/40"
-              >
-                Clear
-              </button>
             </div>
           )}
           {/* bulk action — add every still-trackable pick in view at once */}
