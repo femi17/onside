@@ -19,6 +19,7 @@ const NAV = [
   { label: "Strategies", href: "/strategies" },
   { label: "Agent", href: "/agent" },
   { label: "Performance", href: "/performance" },
+  { label: "My record", href: "/my-record" },
   { label: "Community", href: "/community" },
 ];
 
