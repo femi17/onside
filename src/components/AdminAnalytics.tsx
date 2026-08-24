@@ -4,6 +4,8 @@
 
 export type AdminStats = {
   users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; telegram_linked: number };
+  // may be absent while an older RPC is cached — render guards on it
+  funnel?: { onboarded: number; with_bet: number; with_agent: number; push_enabled: number };
   revenue: { free: number; pro: number; pro_max: number; active_subs: number; mrr_naira: number; collected_naira: number };
   agents: {
     total: number; running: number; learning: number; new_7d: number;
@@ -16,6 +18,7 @@ export type AdminStats = {
     open_reports: number; channel_posts: number; channel_posted: number; channel_failed: number; api_today: number;
   };
   signups_daily: { day: string; n: number }[];
+  agents_daily?: { day: string; n: number }[];
   revenue_weekly: { w: string; amount: number; cum: number }[];
   agents_weekly: { w: string; n: number; cum: number }[];
   deliveries_weekly: { w: string; n: number }[];
@@ -68,6 +71,15 @@ export default function AdminAnalytics({ s }: { s: AdminStats }) {
           <Kpi k="Active · 7 days" v={n(s.users.active_7d)} d={`${pct(s.users.active_7d, s.users.total)} of users`} />
           <Kpi k="Telegram linked" v={n(s.users.telegram_linked)} d={`${pct(s.users.telegram_linked, s.users.total)} of users`} />
         </div>
+        {/* the activation ladder the launch phase is driving — each step as share of all users */}
+        {s.funnel && (
+          <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
+            <Kpi k="Onboarded" v={n(s.funnel.onboarded)} d={`${pct(s.funnel.onboarded, s.users.total)} of users`} />
+            <Kpi k="Placed a bet" v={n(s.funnel.with_bet)} d={`${pct(s.funnel.with_bet, s.users.total)} · the activation bar`} tone="amber" />
+            <Kpi k="Built an agent" v={n(s.funnel.with_agent)} d={`${pct(s.funnel.with_agent, s.users.total)} of users`} tone="amber" />
+            <Kpi k="Push enabled" v={n(s.funnel.push_enabled)} d={`${pct(s.funnel.push_enabled, s.users.total)} reachable by push`} />
+          </div>
+        )}
         <Panel title="Signups · last 30 days" sub="New accounts per day">
           {s.signups_daily.length ? (
             <DayBars data={s.signups_daily.map((d) => ({ label: dayLabel(d.day), value: d.n }))} max={maxSignup} color="bg-flood-deep" />
@@ -132,6 +144,17 @@ export default function AdminAnalytics({ s }: { s: AdminStats }) {
             ) : <Empty>No picks delivered yet.</Empty>}
           </Panel>
         </div>
+        {s.agents_daily && (
+          <Panel title="Agents created · last 30 days" sub="New agents per day — the builder's daily pulse">
+            {s.agents_daily.length ? (
+              <DayBars
+                data={s.agents_daily.map((d) => ({ label: dayLabel(d.day), value: d.n }))}
+                max={Math.max(1, ...s.agents_daily.map((d) => d.n))}
+                color="bg-grass-deep"
+              />
+            ) : <Empty>No agents created in the last 30 days.</Empty>}
+          </Panel>
+        )}
         <div className="grid gap-5 lg:grid-cols-2">
           <Panel title="Agents deployed" sub="Cumulative, by week">
             {s.agents_weekly.length ? (
