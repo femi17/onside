@@ -79,7 +79,7 @@ export default function LoginPage() {
       <p className="mt-2 text-sm text-onpitch-mute">
         {mode === "signin"
           ? "Sign in to your agents and tracked bets."
-          : "Free forever for tracking. One agent run a month."}
+          : "Free forever for tracking. One agent, hunting daily."}
       </p>
 
       <button

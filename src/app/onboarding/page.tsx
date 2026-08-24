@@ -14,11 +14,11 @@ import { pixelTrack } from "@/lib/metaPixel";
 const PLANS = [
   {
     key: "free", name: "Free", price: "₦0",
-    feats: ["5 leagues for your AI agent", "Track all your bets", "1 accumulator / day", "1 agent · 1 run / month", "Agent picks up to 8 games", "3 slips of history"],
+    feats: ["5 leagues for your AI agent", "Track all your bets", "1 accumulator / day", "1 agent · hunts every day (locked once built)", "Agent picks up to 8 games", "3 slips of history"],
   },
   {
     key: "pro", name: "Pro", price: "₦500/mo",
-    feats: ["15 leagues for your AI agent", "Track all your bets", "3 accumulators / day", "Up to 3 agents · unlimited runs", "Up to 15 games per pick", "10 slips of history"],
+    feats: ["15 leagues for your AI agent", "Track all your bets", "3 accumulators / day", "Up to 3 agents · tune & retire anytime", "Up to 15 games per pick", "10 slips of history"],
   },
   {
     key: "pro_max", name: "Pro Max", price: "₦1,000/mo",
@@ -92,7 +92,7 @@ export default function OnboardingPage() {
       <section className="mb-4 rounded-2xl bg-chalk p-6 text-ink shadow-xl">
         <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-flood-deep">Step 1 &middot; Choose a plan</p>
         <h2 className="mt-2 font-disp text-[23px] font-bold tracking-tight">Start where it makes sense.</h2>
-        <p className="mt-1.5 text-[14px] text-ink-mute">You can change this anytime. Free covers tracking and one agent run a month.</p>
+        <p className="mt-1.5 text-[14px] text-ink-mute">You can change this anytime. Free covers tracking and one daily-hunting agent — locked as built.</p>
         <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
           {PLANS.map((pl) => (
             <button

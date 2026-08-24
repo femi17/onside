@@ -104,14 +104,14 @@ function emailFor(t: Target, link: string, f: RunFacts): { subject: string; html
   };
   const mine = f.agentStats.get(t.userId);
   const personal = mine && mine.graded > 0
-    ? `Your agent <b style="color:#f3f6f4;">${mine.name}</b> has landed <b style="color:#f3f6f4;">${mine.won} of ${mine.graded}</b> graded picks — and on Free it only hunts <b style="color:#f3f6f4;">once a month</b>.`
-    : `Your agent is built — but on Free it only hunts <b style="color:#f3f6f4;">once a month</b>.`;
+    ? `Your agent <b style="color:#f3f6f4;">${mine.name}</b> has landed <b style="color:#f3f6f4;">${mine.won} of ${mine.graded}</b> graded picks — hunting daily, exactly as you built it. On Free that's the catch: it can <b style="color:#f3f6f4;">never be tuned</b>.`
+    : `Your agent hunts every day, exactly as you built it — on Free it can <b style="color:#f3f6f4;">never be tuned</b>.`;
   return {
-    subject: mine && mine.graded > 0 ? `${mine.name} landed ${mine.won} of ${mine.graded} — imagine it hunting daily` : "Your agent hunts once a month. It could hunt every day.",
+    subject: mine && mine.graded > 0 ? `${mine.name} landed ${mine.won} of ${mine.graded} — want to tune it?` : "Your agent is locked as built. Pro hands you the keys.",
     html: shell(
       para(personal) +
       para(`This week, Onside agents landed <b style="color:#f3f6f4;">${f.week.won} of ${f.week.graded}</b> graded picks — all in the open on <a href="${SITE}/record" style="color:#f0a828;">the record</a>.`) +
-      para(`<b style="color:#f3f6f4;">Pro (₦500/mo)</b> sends up to 3 agents hunting every day. <b style="color:#f3f6f4;">Pro Max (₦1,000/mo)</b> runs 7 across all 300+ leagues, with learning on.`) +
+      para(`<b style="color:#f3f6f4;">Pro (₦500/mo)</b> unlocks tuning — change the rule, market and leagues — and runs up to 3 agents at once. <b style="color:#f3f6f4;">Pro Max (₦1,000/mo)</b> runs 7 across all 300+ leagues, with learning on.`) +
       button(link, "Upgrade my plan →")
     ),
   };
@@ -125,8 +125,8 @@ function pushFor(t: Target, f: RunFacts): { title: string; body: string; url: st
   };
   const mine = f.agentStats.get(t.userId);
   return {
-    title: mine && mine.graded > 0 ? `${mine.name}: ${mine.won}/${mine.graded} landed` : "Your agent hunts once a month",
-    body: "Pro sends up to 3 agents hunting every day — from ₦500/mo.",
+    title: mine && mine.graded > 0 ? `${mine.name}: ${mine.won}/${mine.graded} landed` : "Your agent is locked as built",
+    body: "Pro unlocks tuning and runs up to 3 agents — from ₦500/mo.",
     url: "/profile",
   };
 }

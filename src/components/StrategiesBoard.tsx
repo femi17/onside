@@ -40,7 +40,10 @@ const TARGET_TAG: Record<string, string> = {
   weekend: " · weekend", future: " · 3 days",
 };
 
-export default function StrategiesBoard({ cards, maxAgents, recipes }: { cards: StrategyCard[]; maxAgents: number; recipes?: RecipeStats | null }) {
+export default function StrategiesBoard({ cards, maxAgents, recipes, plan = "free" }: { cards: StrategyCard[]; maxAgents: number; recipes?: RecipeStats | null; plan?: string }) {
+  // owner-ruled: free agents hunt daily but are LOCKED as built — editing/retiring is Pro
+  // (enforced by a DB trigger; these buttons are honest about it rather than failing)
+  const locked = plan === "free";
   const supabase = createClient();
   const router = useRouter();
   const confirm = useConfirm();
@@ -150,14 +153,22 @@ export default function StrategiesBoard({ cards, maxAgents, recipes }: { cards: 
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2.5">
-                <Link href={`/strategies/${c.id}/edit`} className="rounded-lg border border-ink/20 px-3.5 py-2 text-[13px] font-bold text-ink hover:border-ink/40">Edit</Link>
+                {locked ? (
+                  <Link href="/checkout?plan=pro" title="Tuning your agent is a Pro feature" className="rounded-lg border border-ink/20 px-3.5 py-2 text-[13px] font-bold text-ink-mute hover:border-ink/40">🔒 Edit · Pro</Link>
+                ) : (
+                  <Link href={`/strategies/${c.id}/edit`} className="rounded-lg border border-ink/20 px-3.5 py-2 text-[13px] font-bold text-ink hover:border-ink/40">Edit</Link>
+                )}
                 {c.status === "running" ? (
                   <button disabled={busy === c.id} onClick={() => setStatus(c.id, "paused")} className="rounded-lg border border-ink/20 px-3.5 py-2 text-[13px] font-bold text-ink hover:border-ink/40 disabled:opacity-50">Pause</button>
                 ) : (
                   <button disabled={busy === c.id} onClick={() => setStatus(c.id, "running")} className="rounded-lg bg-flood px-3.5 py-2 text-[13px] font-bold text-ink disabled:opacity-50">Resume</button>
                 )}
                 <Link href="/agent" className="rounded-lg border border-ink/20 px-3.5 py-2 text-[13px] font-bold text-ink hover:border-ink/40">Feed</Link>
-                <button disabled={busy === c.id} onClick={() => remove(c.id, c.name)} className="ml-auto rounded-lg px-2.5 py-2 text-[13px] font-bold text-brick hover:bg-brick/10 disabled:opacity-50">Delete</button>
+                {locked ? (
+                  <Link href="/checkout?plan=pro" title="Retiring an agent is a Pro feature" className="ml-auto rounded-lg px-2.5 py-2 text-[13px] font-bold text-ink-mute hover:bg-ink/5">🔒 Delete · Pro</Link>
+                ) : (
+                  <button disabled={busy === c.id} onClick={() => remove(c.id, c.name)} className="ml-auto rounded-lg px-2.5 py-2 text-[13px] font-bold text-brick hover:bg-brick/10 disabled:opacity-50">Delete</button>
+                )}
               </div>
             </div>
           ))}

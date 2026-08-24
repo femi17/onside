@@ -56,7 +56,7 @@ export default function Landing() {
             </Link>
           </div>
           <p className="mt-4 font-mono text-xs text-onpitch-mute">
-            Free forever for tracking · 1 free agent run a month
+            Free forever for tracking · your AI agent hunts every day
           </p>
         </div>
 

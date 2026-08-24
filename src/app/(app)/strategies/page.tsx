@@ -71,5 +71,5 @@ export default async function StrategiesPage() {
   const plan = profile?.plan ?? "free";
   const { data: limits } = await supabase.from("plan_limits").select("max_agents").eq("plan", plan).maybeSingle();
 
-  return <StrategiesBoard cards={cards} maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3} recipes={recipes} />;
+  return <StrategiesBoard cards={cards} maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3} recipes={recipes} plan={profile?.is_admin ? "pro_max" : profile?.plan ?? "free"} />;
 }
