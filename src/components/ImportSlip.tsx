@@ -47,6 +47,16 @@ function nameSources(s: MergeLeg): { homes: string[]; aways: string[] } {
 // when both matched, else by subset-compatible team names (raw read OR resolved fixture name). This
 // lets a fuller later read UPGRADE an earlier partial one in place instead of duplicating or being
 // skipped as "already read".
+// O/U signature: direction + line + stat family from the row's whole text — two reads of one leg
+// can disagree on market_key and wording, but not on the printed direction+line. Family keeps
+// "over 2.5 goals" and "over 2.5 corners" apart. Mirrors parse-slip's ouSig.
+function ouSig(r: MergeLeg): string | null {
+  const txt = norm(`${r.market_key ?? ""} ${r.market_label ?? ""} ${r.value ?? ""}`.replace(/_/g, " "));
+  const m = txt.match(/\b(over|under|o|u)\b[^0-9]{0,3}(\d+(?: \d)?)/);
+  if (!m) return null;
+  const fam = /corner/.test(txt) ? "corners" : /card|book/.test(txt) ? "cards" : /shot|foul|offside/.test(txt) ? "stats" : "goals";
+  return `${m[1][0]}|${m[2].replace(/ /g, "")}|${fam}`;
+}
 function sameBet(a: MergeLeg, b: MergeLeg): boolean {
   // SAME FIXTURE + SAME PRINTED PICK TEXT = the same slip leg, even when two overlapping reads
   // worded the label differently and classified different market keys (custom vs away_win) —
@@ -54,6 +64,10 @@ function sameBet(a: MergeLeg, b: MergeLeg): boolean {
   if (a.fixture_id && b.fixture_id && a.fixture_id === b.fixture_id) {
     const av = norm(String(a.value ?? a.market_label ?? "")), bv = norm(String(b.value ?? b.market_label ?? ""));
     if (av && bv && (av === bv || av.includes(bv) || bv.includes(av))) return true;
+    // same game, same printed O/U direction+line+family — one leg in two wordings (mirrors
+    // the server-side ouSig fold in parse-slip), whatever keys the two reads landed on
+    const as = ouSig(a), bs = ouSig(b);
+    if (as && bs && as === bs) return true;
   }
   if (a.market_key !== b.market_key) return false;
   if ((a.line ?? "") !== (b.line ?? "")) return false;
@@ -83,8 +97,13 @@ function collapseDupes<T extends MergeLeg & { on?: boolean }>(list: T[]): T[] {
   }
   return out;
 }
-// prefer a matched leg, then a properly classified (gradeable, non-custom) read, then high confidence
-const legRank = (s: MergeLeg) => (s.fixture_id ? 4 : 0) + (s.market_key && s.market_key !== "custom" ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+// prefer a matched leg, then a properly classified (non-custom) read, then a TEAM-total
+// classification (only exists when the market text named the team — more information than the
+// generic match-total read it competes with), then high confidence. Mirrors parse-slip.
+const legRank = (s: MergeLeg) =>
+  (s.fixture_id ? 8 : 0) + (s.market_key && s.market_key !== "custom" ? 4 : 0) +
+  (s.market_key === "home_goals_ou" || s.market_key === "away_goals_ou" ? 2 : 0) +
+  (s.confidence === "high" ? 1 : 0);
 
 // The vision API downscales any single image to ~1.15MP, so a tall stacked accumulator
 // loses per-leg resolution and the lower legs go unread. Slice a tall screenshot into

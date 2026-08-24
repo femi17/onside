@@ -136,6 +136,17 @@ const subsetOf = (part: string, full: string) => {
 const subsetEither = (x: string, y: string) => subsetOf(x, y) || subsetOf(y, x);
 // two built rows are the same bet on the same game: same market/line/side (custom keyed on its
 // value/label), then same fixture when both matched, else subset-compatible names with a real overlap.
+// O/U signature: direction + line + stat family, extracted from a row's whole text. Two reads
+// of ONE leg can disagree on market_key AND wording ("Over 2.5" keyed over_2_5 vs a custom
+// "Total Goals — O 2.5") — but they can't disagree on the printed direction+line. The family
+// keeps "over 2.5 goals" and "over 2.5 corners" (genuinely different bets) apart.
+function ouSig(r: any): string | null {
+  const txt = norm(`${r.market_key ?? ""} ${r.market_label ?? ""} ${r.value ?? ""}`.replace(/_/g, " "));
+  const m = txt.match(/\b(over|under|o|u)\b[^0-9]{0,3}(\d+(?: \d)?)/);
+  if (!m) return null;
+  const fam = /corner/.test(txt) ? "corners" : /card|book/.test(txt) ? "cards" : /shot|foul|offside/.test(txt) ? "stats" : "goals";
+  return `${m[1][0]}|${m[2].replace(/ /g, "")}|${fam}`;
+}
 function sameBet(a: any, b: any): boolean {
   // SAME FIXTURE + SAME PRINTED PICK TEXT = the same slip leg, even when two vision passes worded
   // the label differently and the recognizer classified different keys ("Handicap 0:2 — Away (0:2)"
@@ -144,6 +155,9 @@ function sameBet(a: any, b: any): boolean {
   if (a.fixture_id && b.fixture_id && a.fixture_id === b.fixture_id) {
     const av = norm(String(a.value ?? a.market_label ?? "")), bv = norm(String(b.value ?? b.market_label ?? ""));
     if (av && bv && (av === bv || av.includes(bv) || bv.includes(av))) return true;
+    // same game, same printed direction+line+family — one leg in two wordings, whatever the keys
+    const as = ouSig(a), bs = ouSig(b);
+    if (as && bs && as === bs) return true;
   }
   if (a.market_key !== b.market_key) return false;
   if ((a.line ?? "") !== (b.line ?? "")) return false;
@@ -152,8 +166,13 @@ function sameBet(a: any, b: any): boolean {
   if (a.fixture_id && b.fixture_id) return a.fixture_id === b.fixture_id;
   return subsetEither(a.home, b.home) && subsetEither(a.away, b.away) && (tokOverlap(a.home, b.home) || tokOverlap(a.away, b.away));
 }
-// prefer a matched leg, then a properly classified (gradeable, non-custom) read, then high confidence
-const legRank = (s: any) => (s.fixture_id ? 4 : 0) + (s.market_key && s.market_key !== "custom" ? 2 : 0) + (s.confidence === "high" ? 1 : 0);
+// prefer a matched leg, then a properly classified (gradeable, non-custom) read, then a TEAM-total
+// classification (it only exists when the raw market text named the team — more information than the
+// generic match-total read it competes with), then high confidence
+const legRank = (s: any) =>
+  (s.fixture_id ? 8 : 0) + (s.market_key && s.market_key !== "custom" ? 4 : 0) +
+  (s.market_key === "home_goals_ou" || s.market_key === "away_goals_ou" ? 2 : 0) +
+  (s.confidence === "high" ? 1 : 0);
 
 // total Over/Under key -> {side, line}; null for anything else (incl. corners). Used to remap a
 // total O/U to a TEAM total when the printed market text names one of the two teams.
@@ -290,6 +309,10 @@ Deno.serve(async (req) => {
         addedThis++;
       }
       if (pass >= 1 && addedThis === 0) break; // converged — nothing new this pass
+      // the slip's printed count is met — a further pass can only re-word legs we already have
+      // (every wording variant is a duplicate to catch later AND vision tokens spent for nothing)
+      const expNow = Math.round(Number(rawSlip.leg_count)) || 0;
+      if (expNow > 0 && selections.length >= expNow) break;
     }
     const expected = Math.round(Number(rawSlip.leg_count)) || 0;
     const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
@@ -393,6 +416,22 @@ Deno.serve(async (req) => {
       const dup = out.findIndex((e) => sameBet(e, row));
       if (dup === -1) out.push(row);
       else if (legRank(row) > legRank(out[dup])) out[dup] = row;
+    }
+
+    // FINAL ARBITER — the slip's own printed count: when we still hold MORE rows than the slip
+    // says it has legs, any fixture appearing twice is a mis-read surviving the folds above
+    // (a real slip ~never repeats a game). Collapse each doubled fixture to its best-ranked
+    // read. Never touches distinct fixtures, never runs when the count fits or is unknown.
+    if (expected > 0 && out.length > expected) {
+      const byFx = new Map<number, number>();
+      const collapsed: any[] = [];
+      for (const r of out) {
+        if (!r.fixture_id) { collapsed.push(r); continue; }
+        const at = byFx.get(r.fixture_id);
+        if (at == null) { byFx.set(r.fixture_id, collapsed.length); collapsed.push(r); }
+        else if (legRank(r) > legRank(collapsed[at])) collapsed[at] = r;
+      }
+      if (collapsed.length < out.length) out.splice(0, out.length, ...collapsed);
     }
 
     // record the successful vision call so it counts against the daily cap (one read per slip).
