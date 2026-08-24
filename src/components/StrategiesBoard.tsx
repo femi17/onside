@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 import { useConfirm } from "@/components/ConfirmDialog";
+import RecipeRail, { type RecipeStats } from "@/components/RecipeRail";
 
 export type StrategyCard = {
   id: string;
@@ -39,7 +40,7 @@ const TARGET_TAG: Record<string, string> = {
   weekend: " · weekend", future: " · 3 days",
 };
 
-export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyCard[]; maxAgents: number }) {
+export default function StrategiesBoard({ cards, maxAgents, recipes }: { cards: StrategyCard[]; maxAgents: number; recipes?: RecipeStats | null }) {
   const supabase = createClient();
   const router = useRouter();
   const confirm = useConfirm();
@@ -97,6 +98,9 @@ export default function StrategiesBoard({ cards, maxAgents }: { cards: StrategyC
             An agent hunts a market across your leagues, applies your rule, and delivers the games that clear your bar — on your schedule.
           </p>
           <Link href="/strategies/new" className="mt-5 inline-block rounded-xl bg-flood px-5 py-3 font-bold text-ink">Build your first agent</Link>
+          <div className="mx-auto mt-7 max-w-md border-t border-ink/10 pt-5 empty:hidden">
+            <RecipeRail recipes={recipes} tone="light" />
+          </div>
         </div>
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2">

@@ -32,6 +32,13 @@ export default async function StrategiesPage() {
     byStrategy.set(d.strategy_id as string, arr);
   }
 
+  // no agents yet → the empty state shows the starter-recipe rail with live receipts
+  let recipes = null;
+  if ((strategies ?? []).length === 0) {
+    const { data: rec } = await supabase.rpc("starter_recipes");
+    recipes = rec ?? null;
+  }
+
   const cards: StrategyCard[] = (strategies ?? []).map((s: Record<string, unknown>) => {
     const ds = byStrategy.get(s.id as string) ?? [];
     const last14 = ds.filter((d) => (d.result === "won" || d.result === "lost") && d.delivered_at && new Date(d.delivered_at).getTime() >= cutoff);
@@ -64,5 +71,5 @@ export default async function StrategiesPage() {
   const plan = profile?.plan ?? "free";
   const { data: limits } = await supabase.from("plan_limits").select("max_agents").eq("plan", plan).maybeSingle();
 
-  return <StrategiesBoard cards={cards} maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3} />;
+  return <StrategiesBoard cards={cards} maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3} recipes={recipes} />;
 }
