@@ -1,7 +1,11 @@
-// community-broadcast: Claude-authored posts to the public @onsideai Telegram channel, 6x/day.
+// community-broadcast: Claude-authored posts to the public @onsideai Telegram channel — 2x/day
+// since 2026-08-24 (morning_slate + results_recap; the other slots remain manually invocable).
 // Fired by pg_cron via invoke_community_broadcast(slot). Each slot builds a data brief, Claude drafts
 // the copy under strict guardrails, a banned-phrase filter runs, a responsible-gambling footer is
 // appended, then it auto-posts. Every attempt is logged to channel_posts.
+// The BODY is written to be cross-platform: the owner copy-pastes it verbatim to X, Facebook and
+// Instagram, so it must carry no Telegram references and no links (the X domain flag also makes
+// link-free bodies the safe default there). The Telegram-only footer is appended at send time.
 // Voice is Naija (Nigerian Pidgin, pidgin-forward) — see SYSTEM. The BANNED filter covers both
 // English AND pidgin "certainty" phrasing so the no-guaranteed-win rule holds in either register.
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -39,6 +43,11 @@ VOICE — Naija all the way:
 - Punchy and football-savvy. Light, tasteful emoji (⚽📈🔥👀) — no hashtag spam, no long epistle.
 - Give it room to breathe: break the post into short chunks of 1-2 sentences, with a BLANK LINE between each beat (open with a hook line, then the point, then the nudge). Never one dense block of text — it must be easy to scan on a phone.
 - Naija flavour is welcome: "oya", "sabi", "wetin", "no be small thing", "make we", "steady", "with sense", "gbam" (as slang, never as a promise). Keep it clean and inclusive — NO tribal, political, religious or vulgar talk.
+
+CROSS-PLATFORM (the same text is reposted verbatim to X, Facebook and Instagram):
+- Never mention Telegram, "this channel", any bot, or platform features — the words must read naturally anywhere.
+- Open with a hook line that STANDS ALONE as a tweet (under 200 characters): someone who reads only that first beat gets the full point. The beats after it deepen, never rescue, the hook.
+- Say "Onside" by name when nudging — never a handle, never a URL (links and handles are appended per-platform).
 
 HARD RULES (compliance — never break these):
 - ONLY use the facts in the brief. Never invent teams, stats, prices or results. If the brief is thin, stay general and educational.
