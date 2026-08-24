@@ -10,6 +10,15 @@ Poll deploys are batched per cluster. See [[glossary-market-coverage]], [[onside
 Legend: ✓ done · → todo (this pass) · ✗ manual-only (data not available to auto-grade)
 
 ## Frontier
+**✓ sub_to_score — NEW (2026-08-24, poll v59).** "Substitute to score" yes/no (owner request).
+All 4 touchpoints: recogniser ("sub(stitute)s to score" + no-variants, matched BEFORE the player
+patterns), catalog row (Player group), markets row (kind=player), poll grade case. Grading: subst
+events collected fresh at settlement keeping BOTH names per pair (provider in/out mapping
+untrusted) — scorer matching either name at goal-min >= sub-min = the entering player; own goals
+excluded. Zero subst events on a finished game -> null (pending/manual, thin feeds omit subs);
+fromStore sweep passes subs=null (stored timeline has no subs, can never mis-grade). NOT on the
+agent shelf — engine can't price player markets.
+
 **✓ 1st/2nd-HALF TWIN sweep — DONE (2026-08-03).** Verified end-to-end, no meaningful gaps:
 - RECOGNITION: `pullPeriod` (betCatalog.ts:265) strips "1st half"/"first half"/"1h" → period 1h,
   "2nd half"/"second half"/"2h" → 2h. `const wp = withPeriod(r, period)` (l.464) prepends a
