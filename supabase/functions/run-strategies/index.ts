@@ -2159,11 +2159,17 @@ Deno.serve(async (req) => {
     }
     if (!strategies.length) return json({ strategies: 0, inserted: 0, shard, shards });
 
-    const needParse = strategies.some((s) => s.rule_text && !s.rule_parsed);
+    // An EMPTY parse ({filters:[],select:[]}) is a FAILED parse, not a rule with no conditions —
+    // caching it forever left the rule silently unenforced (the "1st Half Over0.5" agent's
+    // ">= 86%" rule gated nothing for 10 days). Empty parses now re-qualify for parsing; the
+    // retry cost is bounded because only DUE strategies reach this block (≈one delivery run
+    // per agent per day).
+    const emptyParse = (rp: any) => !!rp && Array.isArray(rp.filters) && Array.isArray(rp.select) && !rp.filters.length && !rp.select.length;
+    const needParse = strategies.some((s) => s.rule_text && (!s.rule_parsed || emptyParse(s.rule_parsed)));
     if (needParse) {
       const akey = await anthropicKey();
       if (akey) for (const s of strategies) {
-        if (s.rule_text && !s.rule_parsed) {
+        if (s.rule_text && (!s.rule_parsed || emptyParse(s.rule_parsed))) {
           const { parsed: rp } = await parseRuleFull(s.rule_text, akey, { mk: s.market_key, side: s.side, label: s.market_label ?? s.market_key });
           if (rp) { s.rule_parsed = rp; await sb.from("strategies").update({ rule_parsed: rp }).eq("id", s.id); }
         }
