@@ -8,6 +8,7 @@ import LiveGamesFab from "@/components/LiveGamesFab";
 import AgentFab from "@/components/AgentFab";
 import PushChime from "@/components/PushChime";
 import InstallPushPrompt from "@/components/InstallPushPrompt";
+import InstallNudge from "@/components/InstallNudge";
 import UpdateWatcher from "@/components/UpdateWatcher";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
@@ -123,6 +124,9 @@ export default async function AppLayout({
       <PushChime />
       {/* app-like soft-ask for notification permission on first launch when installed */}
       <InstallPushPrompt userId={user.id} />
+      {/* install-the-PWA ask for browser users (mutually exclusive with the prompt above:
+          this renders only when NOT installed, that one only when installed) */}
+      <InstallNudge />
       {/* prompts a reload when an already-open app is behind a new deploy */}
       <UpdateWatcher />
     </div>
