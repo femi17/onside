@@ -3,6 +3,7 @@ import { lagosTodayStartISO } from "@/lib/ticket";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import TrackerBoard, { type Ticket } from "@/components/TrackerBoard";
 import ActivationNudge from "@/components/ActivationNudge";
+import CommunityNudge from "@/components/CommunityNudge";
 
 export default async function TrackerPage() {
   const supabase = await createClient();
@@ -31,10 +32,19 @@ export default async function TrackerPage() {
     showNudge = (agentCount ?? 0) === 0;
   }
 
+  // post-activation nudge: activated users graduate to the community/Telegram strip —
+  // ONE nudge per lifecycle stage, never both cards at once
+  let commFlags: { optedIn: boolean; telegramLinked: boolean } | null = null;
+  if (!showNudge) {
+    const { data: prof } = await supabase.from("profiles").select("community_opt_in, telegram_linked_at").maybeSingle();
+    commFlags = { optedIn: !!prof?.community_opt_in, telegramLinked: !!prof?.telegram_linked_at };
+  }
+
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
       {showNudge && <ActivationNudge />}
+      {commFlags && <CommunityNudge optedIn={commFlags.optedIn} telegramLinked={commFlags.telegramLinked} />}
       {/* only today's slate lives here; older settled games move to History */}
       <TrackerBoard tickets={list} since={lagosTodayStartISO()} />
     </>
