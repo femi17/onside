@@ -25,11 +25,17 @@ export default async function TrackerPage() {
   // steps instead of a bare empty state (RLS scopes both counts to this user). The card
   // vanishes the moment they track a bet or build an agent.
   let showNudge = false;
+  let recipes: import("@/components/ActivationNudge").RecipeStats | null = null;
   if (list.length === 0) {
     const { count: agentCount } = await supabase
       .from("strategies")
       .select("id", { count: "exact", head: true });
     showNudge = (agentCount ?? 0) === 0;
+    if (showNudge) {
+      // live receipts for the starter recipes — the card's proof line
+      const { data } = await supabase.rpc("starter_recipes");
+      recipes = (data as typeof recipes) ?? null;
+    }
   }
 
   // post-activation nudge: activated users graduate to the community/Telegram strip —
@@ -43,7 +49,7 @@ export default async function TrackerPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
-      {showNudge && <ActivationNudge />}
+      {showNudge && <ActivationNudge recipes={recipes} />}
       {commFlags && <CommunityNudge optedIn={commFlags.optedIn} telegramLinked={commFlags.telegramLinked} />}
       {/* only today's slate lives here; older settled games move to History */}
       <TrackerBoard tickets={list} since={lagosTodayStartISO()} />
