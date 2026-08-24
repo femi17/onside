@@ -1,13 +1,14 @@
-// Onside nudge mailer (Resend). Two audiences, computed server-side on every call:
-//   confirm — email-provider signups who never confirmed (never signed in): the blocker is the
-//             confirmation step, so the mail carries a fresh magic link (proves inbox ownership,
-//             confirms + signs them in, lands on onboarding).
-//   onboard — confirmed accounts with profiles.onboarded=false: "finish your setup" with a magic
-//             link straight to /onboarding.
-// Idempotent by design: api_cache row nudge:{kind}:{user_id} is written before sending — a user
-// is nudged ONCE per kind ever, so repeated invocations (or a stranger hitting the endpoint with
-// the anon key) cannot spam anyone. No request input is trusted; the audience is always derived
-// from the database.
+// Onside lifecycle nudger — the full ladder, one touch per (kind, user) EVER:
+//   confirm  — email signup stuck at confirmation → magic link (confirms + signs in)
+//   onboard  — confirmed, onboarding unfinished    → magic link to /onboarding
+//   activate — onboarded 24h+, no slip & no agent  → today's card count + upload CTA
+//   upsell   — free plan with an agent 24h+ old    → their agent's real record + Pro pitch
+// Audiences come from nudge_targets() (SQL over auth.users — service-role only). Channel:
+// web PUSH when the user has a subscription, EMAIL (Resend) otherwise — never both.
+// Idempotency: api_cache `nudge:{kind}:{user}` claimed BEFORE sending, released only on a
+// send failure — reruns and stray invocations can never double-touch anyone. The copy earns
+// its weight with real numbers (fixtures today, their own graded picks, the platform week),
+// never manufactured urgency.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -17,7 +18,8 @@ const RESEND_KEY = Deno.env.get("RESEND_API_KEY");
 const FROM = "Onside <support@onside.com.ng>";
 const SITE = "https://onside.com.ng";
 
-type Nudge = { kind: "confirm" | "onboard"; userId: string; email: string };
+type Kind = "confirm" | "onboard" | "activate" | "upsell";
+type Target = { kind: Kind; userId: string; email: string };
 
 function shell(inner: string): string {
   return `<!doctype html><html><body style="margin:0;padding:0;background:#0e1a1b;">
@@ -36,19 +38,53 @@ const button = (href: string, label: string) =>
   `<a href="${href}" style="display:inline-block;background:#f0a828;color:#101613;font-weight:700;font-size:15px;text-decoration:none;padding:13px 26px;border-radius:12px;margin-top:18px;">${label}</a>`;
 const para = (t: string) => `<p style="color:#c9d6d2;font-size:15px;line-height:1.65;margin:0 0 12px;">${t}</p>`;
 
-function emailFor(kind: Nudge["kind"], link: string): { subject: string; html: string } {
-  if (kind === "confirm") {
-    return {
-      subject: "Finish creating your Onside account",
-      html: shell(
-        para("You're one click from in.") +
-        para("You started an Onside account but never got through the door — the confirmation step is all that's left. This link confirms your email and signs you straight in:") +
-        button(link, "Confirm my account →") +
-        para(`<br>Then upload any betslip screenshot and watch every leg track itself, live.`)
-      ),
-    };
+// facts that make the copy carry weight — fetched once per run, shared by every recipient
+type RunFacts = {
+  gamesToday: number;
+  week: { graded: number; won: number };
+  agentStats: Map<string, { name: string; graded: number; won: number }>; // by user_id
+};
+async function gatherFacts(userIds: string[]): Promise<RunFacts> {
+  const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart); dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+  const { count: gamesToday } = await sb.from("fixtures")
+    .select("id", { count: "exact", head: true })
+    .gte("kickoff_utc", dayStart.toISOString()).lt("kickoff_utc", dayEnd.toISOString());
+  const { data: wk } = await sb.rpc("public_record");
+  const week = { graded: 0, won: 0 };
+  for (const d of (wk?.days ?? []) as { graded: number; won: number }[]) { week.graded += d.graded; week.won += d.won; }
+  const agentStats = new Map<string, { name: string; graded: number; won: number }>();
+  if (userIds.length) {
+    const { data: strat } = await sb.from("strategies").select("id, user_id, name").in("user_id", userIds);
+    const byStrat = new Map((strat ?? []).map((s: { id: string; user_id: string; name: string }) => [s.id, s]));
+    const ids = (strat ?? []).map((s: { id: string }) => s.id);
+    if (ids.length) {
+      const { data: dels } = await sb.from("deliveries").select("strategy_id, result").in("strategy_id", ids).in("result", ["won", "lost"]);
+      for (const d of dels ?? []) {
+        const s = byStrat.get(d.strategy_id as string);
+        if (!s) continue;
+        const cur = agentStats.get(s.user_id) ?? { name: s.name ?? "Your agent", graded: 0, won: 0 };
+        cur.graded++; if (d.result === "won") cur.won++;
+        agentStats.set(s.user_id, cur);
+      }
+      // users whose agent has no graded picks yet still get their agent's name
+      for (const s of strat ?? []) if (!agentStats.has(s.user_id)) agentStats.set(s.user_id, { name: s.name ?? "Your agent", graded: 0, won: 0 });
+    }
   }
-  return {
+  return { gamesToday: gamesToday ?? 0, week, agentStats };
+}
+
+function emailFor(t: Target, link: string, f: RunFacts): { subject: string; html: string } {
+  if (t.kind === "confirm") return {
+    subject: "Finish creating your Onside account",
+    html: shell(
+      para("You're one click from in.") +
+      para("You started an Onside account but never got through the door — the confirmation step is all that's left. This link confirms your email and signs you straight in:") +
+      button(link, "Confirm my account →") +
+      para(`<br>Then upload any betslip screenshot and watch every leg track itself, live.`)
+    ),
+  };
+  if (t.kind === "onboard") return {
     subject: "Your Onside setup is 2 minutes from done",
     html: shell(
       para("You're in — but your account isn't working for you yet.") +
@@ -57,49 +93,101 @@ function emailFor(kind: Nudge["kind"], link: string): { subject: string; html: s
       para(`<br>Every pick on Onside is graded in the open — misses included. See the live record at <a href="${SITE}/record" style="color:#f0a828;">onside.com.ng/record</a>.`)
     ),
   };
+  if (t.kind === "activate") return {
+    subject: `Your tracker is empty — today's card isn't (${f.gamesToday} games)`,
+    html: shell(
+      para("You set Onside up, then left it waiting.") +
+      para(`There are <b style="color:#f3f6f4;">${f.gamesToday} games</b> on today's card. Next time you place a bet, snap the slip — one screenshot and every leg tracks itself live, settled exactly like the bookie settles it.`) +
+      button(link, "Upload my first slip →") +
+      para(`<br>Rather have picks come to you? Build an AI agent in plain English — it hunts your leagues and gets graded in public: <a href="${SITE}/record" style="color:#f0a828;">the record so far</a>.`)
+    ),
+  };
+  const mine = f.agentStats.get(t.userId);
+  const personal = mine && mine.graded > 0
+    ? `Your agent <b style="color:#f3f6f4;">${mine.name}</b> has landed <b style="color:#f3f6f4;">${mine.won} of ${mine.graded}</b> graded picks — and on Free it only hunts <b style="color:#f3f6f4;">once a month</b>.`
+    : `Your agent is built — but on Free it only hunts <b style="color:#f3f6f4;">once a month</b>.`;
+  return {
+    subject: mine && mine.graded > 0 ? `${mine.name} landed ${mine.won} of ${mine.graded} — imagine it hunting daily` : "Your agent hunts once a month. It could hunt every day.",
+    html: shell(
+      para(personal) +
+      para(`This week, Onside agents landed <b style="color:#f3f6f4;">${f.week.won} of ${f.week.graded}</b> graded picks — all in the open on <a href="${SITE}/record" style="color:#f0a828;">the record</a>.`) +
+      para(`<b style="color:#f3f6f4;">Pro (₦500/mo)</b> sends up to 3 agents hunting every day. <b style="color:#f3f6f4;">Pro Max (₦1,000/mo)</b> runs 7 across all 300+ leagues, with learning on.`) +
+      button(link, "Upgrade my plan →")
+    ),
+  };
+}
+
+function pushFor(t: Target, f: RunFacts): { title: string; body: string; url: string } {
+  if (t.kind === "activate") return {
+    title: `Today's card: ${f.gamesToday} games`,
+    body: "Snap your betslip — one screenshot and every leg tracks itself live.",
+    url: "/tracker",
+  };
+  const mine = f.agentStats.get(t.userId);
+  return {
+    title: mine && mine.graded > 0 ? `${mine.name}: ${mine.won}/${mine.graded} landed` : "Your agent hunts once a month",
+    body: "Pro sends up to 3 agents hunting every day — from ₦500/mo.",
+    url: "/profile",
+  };
 }
 
 Deno.serve(async (_req) => {
   if (!RESEND_KEY) return Response.json({ error: "RESEND_API_KEY not set" }, { status: 500 });
 
-  // audiences computed in SQL against auth.users directly (nudge_targets(), service-role only):
-  // the admin listUsers API dropped unconfirmed users' fields in practice, so the DB is the truth
   const { data: rows, error: tgErr } = await sb.rpc("nudge_targets");
   if (tgErr) return Response.json({ error: tgErr.message }, { status: 500 });
-  const targets: Nudge[] = (rows ?? []).map((r: { kind: string; user_id: string; email: string }) => ({
-    kind: r.kind as Nudge["kind"], userId: r.user_id, email: r.email,
+  const targets: Target[] = (rows ?? []).map((r: { kind: string; user_id: string; email: string }) => ({
+    kind: r.kind as Kind, userId: r.user_id, email: r.email,
   }));
+
+  const facts = await gatherFacts(targets.filter((t) => t.kind === "upsell").map((t) => t.userId));
+  const { data: subs } = await sb.from("push_subscriptions").select("user_id");
+  const hasPush = new Set((subs ?? []).map((s: { user_id: string }) => s.user_id));
+  const { data: pushSecret } = await sb.rpc("get_secret", { secret_name: "push_internal_secret" });
 
   const sent: string[] = [], skipped: string[] = [], failed: string[] = [];
   for (const t of targets) {
-    // claim BEFORE sending: the insert failing (row exists) = already nudged = skip forever
+    const claimKey = `nudge:${t.kind}:${t.userId}`;
     const { error: dupe } = await sb.from("api_cache").insert({
-      cache_key: `nudge:${t.kind}:${t.userId}`,
-      payload: { email: t.email, at: new Date().toISOString() },
+      cache_key: claimKey, payload: { email: t.email, at: new Date().toISOString() },
     });
     if (dupe) { skipped.push(`${t.kind}:${t.email}`); continue; }
 
-    // magic link: confirms inbox ownership + signs in + lands on onboarding
-    let link = `${SITE}/login`;
-    try {
-      const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
-        type: "magiclink", email: t.email,
-        options: { redirectTo: `${SITE}/onboarding` },
+    let ok = false, channel = "email";
+    // push channel: only for in-product nudges (activate/upsell) and only if subscribed
+    if ((t.kind === "activate" || t.kind === "upsell") && hasPush.has(t.userId) && pushSecret) {
+      channel = "push";
+      const p = pushFor(t, facts);
+      const resp = await fetch(`${SB_URL}/functions/v1/send-push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": String(pushSecret) },
+        body: JSON.stringify({ user_id: t.userId, title: p.title, body: p.body, url: p.url, tag: `nudge-${t.kind}` }),
       });
-      if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
-    } catch { /* plain login link fallback stays */ }
-
-    const msg = emailFor(t.kind, link);
-    const resp = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
-      body: JSON.stringify({ from: FROM, to: t.email, subject: msg.subject, html: msg.html }),
-    });
-    if (resp.ok) sent.push(`${t.kind}:${t.email}`);
+      ok = resp.ok;
+    }
+    if (!ok) {
+      channel = "email";
+      // magic link signs them in and lands them where the nudge points
+      const dest = t.kind === "upsell" ? "/profile" : t.kind === "activate" ? "/tracker" : "/onboarding";
+      let link = `${SITE}/login`;
+      try {
+        const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
+          type: "magiclink", email: t.email, options: { redirectTo: `${SITE}${dest}` },
+        });
+        if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
+      } catch { /* plain login link fallback stays */ }
+      const msg = emailFor(t, link, facts);
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+        body: JSON.stringify({ from: FROM, to: t.email, subject: msg.subject, html: msg.html }),
+      });
+      ok = resp.ok;
+    }
+    if (ok) sent.push(`${t.kind}:${channel}:${t.email}`);
     else {
-      failed.push(`${t.kind}:${t.email}:${resp.status}`);
-      // release the claim so a rerun can retry a transient Resend failure
-      await sb.from("api_cache").delete().eq("cache_key", `nudge:${t.kind}:${t.userId}`);
+      failed.push(`${t.kind}:${t.email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey); // release for a retry run
     }
   }
 
