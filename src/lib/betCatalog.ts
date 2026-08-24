@@ -110,6 +110,7 @@ export const BET_CATALOG: CatalogMarket[] = [
   { id: "player_card", label: "Player to be carded", group: "Player", gradeableKey: "player_card", value: PLAYER, rule: "Player receives any card." },
   { id: "player_booked", label: "Player to be booked", group: "Player", gradeableKey: "player_booked", value: PLAYER, rule: "Player receives a yellow." },
   { id: "player_sent_off", label: "Player to be sent off", group: "Player", gradeableKey: "player_sent_off", value: PLAYER, rule: "Player receives a red." },
+  { id: "sub_to_score", label: "Substitute to score", group: "Player", gradeableKey: "sub_to_score", rule: "Any substitute (either team) scores; own goals don't count. Stays manual when the feed has no substitution data." },
   { id: "cards_ou", label: "Bookings over/under", group: "Bookings", gradeableKey: "cards_ou", value: LINE, rule: "Total bookings over/under (YC=1, RC=2)." },
   { id: "cards_1x2", label: "Bookings 1X2", group: "Bookings", gradeableKey: "cards_1x2", rule: "Which team gets more bookings." },
   { id: "first_booking", label: "1st booking", group: "Bookings", gradeableKey: "first_booking", rule: "Which team gets the first card (Home/None/Away)." },
@@ -389,6 +390,17 @@ export function recognizeBet(input: string): RecognizedBet | null {
       const label = side === "home" ? "Home 2UP" : side === "away" ? "Away 2UP" : "Draw 2UP";
       return { marketKey, label, line: null, side, period: "ft", gradeable: true, value: null };
     }
+  }
+
+  // Substitute to score (yes/no): ANY player who came on as a sub scores (own goals don't
+  // count). No named player — must match BEFORE the player-market patterns so "to score"
+  // can't route it there. "no substitute to score" / "substitute to score - no" = the No side.
+  if (/\bsub(stitute)?s?\s+(to\s+)?score\b/.test(raw)) {
+    const no = /\bno\b/.test(raw) || /\bnot\s+to\s+score\b/.test(raw);
+    return {
+      marketKey: "sub_to_score", label: no ? "Substitute to score — No" : "Substitute to score",
+      line: null, side: no ? "no" : "yes", period: "ft", gradeable: true, value: null,
+    };
   }
 
   // Never Down: win WITHOUT ever trailing — going a goal behind at any point loses it, even on

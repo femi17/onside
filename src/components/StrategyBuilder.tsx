@@ -1074,6 +1074,9 @@ export default function StrategyBuilder({
                 </button>
               ))}
             </div>
+            <p className="mt-1.5 text-[11.5px] leading-snug text-ink-mute">
+              These are the outcomes an agent can price and hunt. Player bets, correct score and the rest still work on your tracked slips.
+            </p>
             {catGroup && (
               <div className="no-scrollbar mt-2 flex max-h-[240px] flex-wrap content-start gap-1.5 overflow-y-auto rounded-xl border border-ink/10 bg-white p-2.5">
                 {CATALOG_GROUPS.find((g) => g.name === catGroup)?.items.map((l) => (

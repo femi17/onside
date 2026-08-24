@@ -91,11 +91,19 @@ function momentum(cur: any, prevMomentum: any, elapsed: number | null) {
 function isGoalDisallow(detail: string): boolean {
   return /disallow|cancel|overturn|no goal|goal removed/i.test(detail || "");
 }
-function parseEvents(evs: any[], fx: any): { goals: any[]; cards: any[]; penalty: boolean } {
+function parseEvents(evs: any[], fx: any): { goals: any[]; cards: any[]; penalty: boolean; subs: any[] } {
   const homeId = fx?.teams?.home?.id;
-  const goals: any[] = [], cards: any[] = [], disallows: any[] = [];
+  const goals: any[] = [], cards: any[] = [], disallows: any[] = [], subs: any[] = [];
   let penalty = false;
   for (const e of evs ?? []) {
+    if (e.type === "subst") {
+      // sub_to_score: keep BOTH names — the provider's player/assist in-vs-out mapping is not
+      // trusted (varies by league); a scorer matching either name at min >= the sub's minute is
+      // the entering player, because the leaver is off the pitch. Subs are NOT stored in
+      // fixtures.events (display timeline stays goals+cards); grading refetches fresh.
+      subs.push({ min: e.time?.elapsed ?? null, names: [e.player?.name, e.assist?.name].filter(Boolean) });
+      continue;
+    }
     if (e.type === "Goal") {
       if (e.detail === "Missed Penalty") { penalty = true; continue; }
       let side = e.team?.id === homeId ? "home" : "away";
@@ -124,7 +132,7 @@ function parseEvents(evs: any[], fx: any): { goals: any[]; cards: any[]; penalty
   }
   let h = 0, a = 0;
   for (const g of goals) { if (g.side === "home") h++; else a++; g.score = `${h}-${a}`; }
-  return { goals, cards, penalty };
+  return { goals, cards, penalty, subs };
 }
 function extractGoals(evs: any[], fx: any): any[] { return parseEvents(evs, fx).goals; }
 // The `live=all` goals count is the authoritative score. The events endpoint can lag or retain
@@ -354,7 +362,7 @@ async function updateCornerTickets(tickets: any[], corners: number, liveFx: any)
 // ---------- the grading dictionary ----------
 type Facts = {
   hg: number; ag: number; h1h: number; h1a: number; h2h: number; h2a: number;
-  goals: any[]; cards: any[]; penalty: boolean; winner: string | null;
+  goals: any[]; cards: any[]; penalty: boolean; subs: any[] | null; winner: string | null;
   corners: number | null; corners_home: number | null; corners_away: number | null;
   corners_home_ht: number | null; corners_away_ht: number | null;
   teamStats: Record<string, [number | null, number | null]>; hasEvents: boolean;
@@ -376,7 +384,7 @@ const STAT_MARKETS = new Set([
 ]);
 const EVENT_MARKETS = new Set([
   "anytime_goalscorer", "first_goalscorer", "last_goalscorer", "player_not_to_score",
-  "player_score_assist", "player_assist", "player_card", "player_booked", "player_sent_off",
+  "player_score_assist", "player_assist", "player_card", "player_booked", "player_sent_off", "sub_to_score",
   "first_team_to_score", "last_team_to_score", "penalty_match", "penalty_scored", "htft", "first_goal_interval", "result_by_minute", "goals_ou_by_minute",
   "cards_ou", "cards_1x2", "booking_points_ou", "home_cards_ou", "away_cards_ou", "exact_cards", "cards_handicap", "home_exact_cards", "away_exact_cards", "first_booking",
   "highest_scoring_half", "home_highest_scoring_half", "away_highest_scoring_half", "htft_cs", "both_halves_ou", "btts_both_halves",
@@ -570,6 +578,17 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
     case "player_card": return W(f.cards.some((c) => playerMatch(c.player, val)));
     case "player_booked": return W(f.cards.some((c) => c.kind === "yellow" && playerMatch(c.player, val)));
     case "player_sent_off": return W(f.cards.some((c) => c.kind === "red" && playerMatch(c.player, val)));
+    case "sub_to_score": {
+      // Any substitute scores (own goals excluded). A scorer matching EITHER name of a subst
+      // pair at goal-min >= sub-min is the entering player (the leaver is off the pitch) — this
+      // sidesteps the provider's unreliable in/out field mapping. Zero subst events recorded
+      // (thin feeds omit them even when goals are present) -> null = pending/manual, never a
+      // guessed "no".
+      if (!f.subs || f.subs.length === 0) return null;
+      const scored = f.goals.some((g) => g.kind !== "og" && g.player && f.subs!.some((s: any) =>
+        (s.min ?? 0) <= (g.min ?? 999) && s.names.some((n: string) => normName(n) === normName(g.player))));
+      return W(side === "no" ? !scored : scored);
+    }
     case "cards_ou": { if (line == null) return null; const n = cardCount(f.cards, null, period); return W(side === "over" ? n > line : n < line); }
     case "home_cards_ou": { if (line == null) return null; const n = cardCount(f.cards, "home", period); return W(side === "over" ? n > line : n < line); }
     case "away_cards_ou": { if (line == null) return null; const n = cardCount(f.cards, "away", period); return W(side === "over" ? n > line : n < line); }
@@ -667,6 +686,9 @@ async function buildFacts(fixtureId: number, rows: any[], fromStore = false): Pr
   let goals: any[] = Array.isArray(fx?.events) ? fx.events.filter((e: any) => !isCardEv(e)) : [];
   let cards: any[] = [];
   let penalty = false;
+  // null = substitution info UNAVAILABLE (stored timeline has no subs) — sub_to_score then
+  // stays pending rather than guessing "no sub scored" off incomplete data
+  let subs: any[] | null = null;
   let hasEvents = false;
   let teamStats: Record<string, [number | null, number | null]> = {};
   const needCorners = rows.some((t) => CORNER_MARKETS.has(t.market_key));
@@ -688,7 +710,7 @@ async function buildFacts(fixtureId: number, rows: any[], fromStore = false): Pr
       const one = raw[0];
       const parsed = parseEvents(one?.events ?? [], one);
       reconcileGoals(parsed.goals, hg, ag); // keep the goal timeline consistent with the final score
-      goals = parsed.goals; cards = parsed.cards; penalty = parsed.penalty; hasEvents = true;
+      goals = parsed.goals; cards = parsed.cards; penalty = parsed.penalty; subs = parsed.subs; hasEvents = true;
       await sb.from("fixtures").update({ events: timelineOf(parsed) }).eq("id", fixtureId);
       // corner + statistics markets grade from the FINAL per-team totals -- fetch fresh at settlement
       if (needCorners || needStats) {
@@ -707,7 +729,7 @@ async function buildFacts(fixtureId: number, rows: any[], fromStore = false): Pr
   // freshly finished: hold corner/stat grading until the provider's final totals have landed
   const cornerHold = FINISHED.includes(fx?.status ?? "") && fx?.updated_at != null &&
     Date.now() - new Date(fx.updated_at).getTime() < CORNER_GRACE_MS;
-  return { hg, ag, h1h, h1a, h2h: Math.max(0, hg - h1h), h2a: Math.max(0, ag - h1a), goals, cards, penalty, winner: fx?.winner ?? null, corners, corners_home: cornersHome, corners_away: cornersAway, corners_home_ht: st?.corners_home_ht ?? null, corners_away_ht: st?.corners_away_ht ?? null, teamStats, hasEvents, cornerHold };
+  return { hg, ag, h1h, h1a, h2h: Math.max(0, hg - h1h), h2a: Math.max(0, ag - h1a), goals, cards, penalty, subs, winner: fx?.winner ?? null, corners, corners_home: cornersHome, corners_away: cornersAway, corners_home_ht: st?.corners_home_ht ?? null, corners_away_ht: st?.corners_away_ht ?? null, teamStats, hasEvents, cornerHold };
 }
 
 async function settleRows(table: string, rows: any[], facts: Facts, statusCol = "status") {
