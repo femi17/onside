@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { recognizeBet } from "@/lib/betCatalog";
+import { recognizeBet, BET_CATALOG } from "@/lib/betCatalog";
 import { describeRule, type ParsedRule } from "@/lib/ruleReadback";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
@@ -64,6 +64,31 @@ const SURPRISE_POOL: { key: string; label: string; side: string | null; line: nu
   { key: "home_to_score", label: "Home team to score", side: "home", line: null },
   { key: "away_to_score", label: "Away team to score", side: "away", line: null },
 ];
+
+// The bookie-shelf browser: concrete selections grouped the way SportyBet lists them, so
+// finding an outcome is browsing, not guessing words for the free-text box below — every
+// tap lands on the ✓ path of that same flow (one pipeline, same engine mapping).
+// Curated to what run-strategies can PRICE: every label below was verified against the
+// recognizer AND the engine's modelProb vocabulary (2026-08-24). Tapping a chip TYPES its
+// label into the free-text flow — the labels stay editable (want Over 5.5? tap Over 4.5 and
+// change the number). Over-corner lines stay at 8.5 only: engine canon() folds
+// over_N_5_corners to 8.5 whatever the typed line (latent quirk, tracked separately).
+const SHELF: { name: string; items: string[] }[] = [
+  { name: "Result", items: ["Home win", "Draw", "Away win", "Double chance 1X", "Double chance X2", "Double chance 12", "Home draw no bet", "Away draw no bet", "Home 1UP", "Away 1UP", "Home or draw (1X) 1UP", "Draw or away (X2) 1UP", "Home 2UP", "Away 2UP", "Draw 2UP", "Home never down", "Away never down"] },
+  { name: "Handicap", items: ["Handicap home -1.5", "Handicap home +0.5", "Handicap away +1.5", "Handicap away -0.5"] },
+  { name: "Goals", items: ["Over 0.5 goals", "Over 1.5 goals", "Over 2.5 goals", "Over 3.5 goals", "Over 4.5 goals", "Under 1.5 goals", "Under 2.5 goals", "Under 3.5 goals", "Under 4.5 goals", "Odd goals", "Even goals", "Exactly 2 goals", "Exactly 3 goals", "1-2 goals", "2-3 goals", "2-4 goals"] },
+  { name: "Both teams", items: ["Both teams to score", "Both teams to score no"] },
+  { name: "Team", items: ["Home team to score", "Away team to score", "Home over 1.5 goals", "Away over 1.5 goals", "Home under 1.5 goals", "Away under 1.5 goals", "Home clean sheet", "Away clean sheet", "Home win to nil", "Away win to nil", "Home odd goals", "Away even goals"] },
+  { name: "Half", items: ["1st half over 0.5 goals", "1st half over 1.5 goals", "1st half under 1.5 goals", "2nd half over 0.5 goals", "2nd half over 1.5 goals", "1st half home win", "1st half both teams to score", "1st half over 4.5 corners", "2nd half over 4.5 corners"] },
+  { name: "Corners", items: ["Over 8.5 corners", "Under 8.5 corners", "Under 9.5 corners", "Under 10.5 corners", "Home over 4.5 corners", "Home under 5.5 corners", "Away over 3.5 corners", "Corners 1X2 home", "Corners 1X2 away"] },
+  { name: "Bookings", items: ["Over 2.5 cards", "Over 3.5 cards", "Over 4.5 cards", "Under 3.5 cards", "Under 4.5 cards", "Home over 1.5 cards", "Away over 1.5 cards"] },
+];
+const CATALOG_GROUPS = SHELF.map((g) => ({
+  name: g.name,
+  // runtime re-verification: if the recognizer ever changes, a chip that stopped parsing
+  // silently disappears instead of leading users to a dead selection
+  items: g.items.filter((l) => recognizeBet(l)?.gradeable),
+})).filter((g) => g.items.length > 0);
 
 const PICK_CAPS = [8, 24, 50]; // plan ceilings: free 8 · pro 24 · pro_max 50 (plan_limits.max_games_per_prediction)
 
@@ -222,6 +247,8 @@ export default function StrategyBuilder({
   const [mode, setMode] = useState<"preset" | "custom" | "family" | "surprise">(initMarket.mode);
   const [presetIdx, setPresetIdx] = useState(initMarket.presetIdx);
   const [familyIdx, setFamilyIdx] = useState(initMarket.familyIdx);
+  // catalog browser: which bookie-style group shelf is open (null = all shelves closed)
+  const [catGroup, setCatGroup] = useState<string | null>(null);
   const [surprisePick, setSurprisePick] = useState<{ key: string; label: string; side: string | null; line: number | null } | null>(null);
   const [customText, setCustomText] = useState(initMarket.customText);
   const [customValue, setCustomValue] = useState(existing?.bet_value ?? "");
@@ -1029,6 +1056,40 @@ export default function StrategyBuilder({
                 <div className="text-sm font-bold text-flood-deep">✎ Something else — describe it</div>
               </button>
             </div>
+
+            {/* the full shelf, grouped the way the bookie lists them — tap a group, tap an
+                outcome; the tap types the outcome's name into the flow below for you */}
+            <div className="mt-4 mb-2 font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Or browse every outcome</div>
+            <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+              {CATALOG_GROUPS.map((g) => (
+                <button
+                  key={g.name}
+                  type="button"
+                  onClick={() => setCatGroup(catGroup === g.name ? null : g.name)}
+                  className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wide transition ${
+                    catGroup === g.name ? "border-ink bg-ink text-chalk-2" : "border-ink/20 bg-white text-ink hover:border-ink/40"
+                  }`}
+                >
+                  {g.name} <span className={catGroup === g.name ? "text-chalk-2/60" : "text-ink-mute"}>{g.items.length}</span>
+                </button>
+              ))}
+            </div>
+            {catGroup && (
+              <div className="no-scrollbar mt-2 flex max-h-[240px] flex-wrap content-start gap-1.5 overflow-y-auto rounded-xl border border-ink/10 bg-white p-2.5">
+                {CATALOG_GROUPS.find((g) => g.name === catGroup)?.items.map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => { setMode("custom"); setCustomText(l); setCustomValue(""); }}
+                    className={`rounded-lg border px-2.5 py-1.5 text-left text-[12.5px] font-semibold text-ink transition ${
+                      mode === "custom" && customText === l ? "border-flood-deep bg-flood/10 shadow-[inset_0_0_0_1px_var(--flood-deep)]" : "border-ink/15 bg-chalk hover:border-ink/35"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            )}
             {mode === "family" && (
               <p className="mt-2.5 text-[12.5px] leading-snug text-ink-mute">
                 For each game your agent prices every {FAMILIES[familyIdx].label.toLowerCase()} option and sends the one selection that clears your bar — so you don&apos;t pin the line, it does.
@@ -1069,10 +1130,17 @@ export default function StrategyBuilder({
                       <p className="font-mono text-[10.5px] text-ink-mute">“Add to mix” below adds every ✓ in one go.</p>
                     </div>
                   ) : customParsed?.gradeable ? (
-                    <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">
-                      ✓ Recognised: {market ? outcomeLabel(market.label, market.side, market.line, market.period) : ""}
-                      {market?.needsValue ? " — fill the box below to complete it" : ""}
-                    </p>
+                    <>
+                      <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">
+                        ✓ Recognised: {market ? outcomeLabel(market.label, market.side, market.line, market.period) : ""}
+                        {market?.needsValue ? " — fill the box below to complete it" : ""}
+                      </p>
+                      {/* the catalog's own rule, so picking from the shelf teaches the bet */}
+                      {(() => {
+                        const rule = BET_CATALOG.find((m) => m.label.toLowerCase() === customText.trim().toLowerCase())?.rule;
+                        return rule ? <p className="mt-1 text-[12px] leading-snug text-ink-mute">{rule}</p> : null;
+                      })()}
+                    </>
                   ) : customParsed ? (
                     <p className="mt-2 font-mono text-[11px] font-bold text-brick">Recognised, but not auto-gradeable yet — pick another.</p>
                   ) : familyFromText(customText) ? (
