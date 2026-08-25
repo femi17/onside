@@ -3,6 +3,8 @@
 //   onboard  — confirmed, onboarding unfinished    → magic link to /onboarding
 //   activate — onboarded 24h+, no slip & no agent  → today's card count + upload CTA
 //   upsell   — free plan with an agent 24h+ old    → their agent's real record + Pro pitch
+// Plus the repeatable perfect-day congratulation: an agent whose whole delivered day (3+
+// picks) settled won → congrats + plan-matched upsell, at most once per (user, day).
 // Audiences come from nudge_targets() (SQL over auth.users — service-role only). Channel:
 // web PUSH when the user has a subscription, EMAIL (Resend) otherwise — never both.
 // Idempotency: api_cache `nudge:{kind}:{user}` claimed BEFORE sending, released only on a
@@ -131,6 +133,41 @@ function pushFor(t: Target, f: RunFacts): { title: string; body: string; url: st
   };
 }
 
+// ---- perfect-day congratulation + plan-matched upsell ----
+type PerfectRow = { user_id: string; email: string; plan: string; agent: string; day: string; n: number };
+
+function perfectEmail(r: PerfectRow, link: string): { subject: string; html: string } {
+  const score = `${r.n}/${r.n}`;
+  const head =
+    para(`<b style="color:#f3f6f4;">${r.agent}</b> delivered <b style="color:#f3f6f4;">${r.n} picks</b> and every single one landed. <b style="color:#f3f6f4;">${score}. A perfect day.</b>`) +
+    para("No cherry-picking — that's the whole day's card, graded in the open like everything on Onside.");
+  if (r.plan === "pro") return {
+    subject: `🎯 ${r.agent} went ${score} — a perfect day`,
+    html: shell(head +
+      para(`Imagine that across more of the map: <b style="color:#f3f6f4;">Pro Max (₦1,000/mo)</b> runs 7 agents over all 300+ leagues, with learning on so they self-tune.`) +
+      button(link, "See Pro Max →")),
+  };
+  if (r.plan === "pro_max") return {
+    subject: `🎯 ${r.agent} went ${score} — a perfect day`,
+    html: shell(head +
+      para("That's what a tuned agent looks like. Your record page makes the case for you — worth a share.") +
+      button(link, "See my record →")),
+  };
+  return {
+    subject: `🎯 ${r.agent} went ${score} — a perfect day`,
+    html: shell(head +
+      para(`And here's the thing: it did that <b style="color:#f3f6f4;">locked as built</b> — on Free it can never be tuned. <b style="color:#f3f6f4;">Pro (₦500/mo)</b> hands you the keys: change the rule, market and leagues, and run up to 3 agents at once.`) +
+      button(link, "Upgrade to Pro →")),
+  };
+}
+
+function perfectPush(r: PerfectRow): { title: string; body: string; url: string } {
+  const score = `${r.n}/${r.n}`;
+  if (r.plan === "pro") return { title: `🎯 ${r.agent}: ${score} — perfect day`, body: "Pro Max runs 7 agents across all 300+ leagues, learning on.", url: "/profile" };
+  if (r.plan === "pro_max") return { title: `🎯 ${r.agent}: ${score} — perfect day`, body: "The whole day's card landed. Your record makes the case — share it.", url: "/my-record" };
+  return { title: `🎯 ${r.agent}: ${score} — perfect day`, body: "It did that locked as built. Pro unlocks tuning — ₦500/mo.", url: "/profile" };
+}
+
 Deno.serve(async (_req) => {
   if (!RESEND_KEY) return Response.json({ error: "RESEND_API_KEY not set" }, { status: 500 });
 
@@ -191,5 +228,51 @@ Deno.serve(async (_req) => {
     }
   }
 
-  return Response.json({ candidates: targets.length, sent, skipped, failed });
+  // perfect days: repeatable (each new perfect day can fire), but the claim is per (user, day)
+  // so a user with several perfect agents on the same day hears about the biggest batch only
+  const { data: pdRows } = await sb.rpc("perfect_day_targets");
+  for (const r of (pdRows ?? []) as PerfectRow[]) {
+    const claimKey = `nudge:perfect:${r.user_id}:${r.day}`;
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { email: r.email, agent: r.agent, n: r.n, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`perfect:${r.email}`); continue; }
+
+    let ok = false, channel = "email";
+    if (hasPush.has(r.user_id) && pushSecret) {
+      channel = "push";
+      const p = perfectPush(r);
+      const resp = await fetch(`${SB_URL}/functions/v1/send-push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": String(pushSecret) },
+        body: JSON.stringify({ user_id: r.user_id, title: p.title, body: p.body, url: p.url, tag: "nudge-perfect" }),
+      });
+      ok = resp.ok;
+    }
+    if (!ok) {
+      channel = "email";
+      const dest = r.plan === "pro_max" ? "/my-record" : "/profile";
+      let link = `${SITE}/login`;
+      try {
+        const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
+          type: "magiclink", email: r.email, options: { redirectTo: `${SITE}${dest}` },
+        });
+        if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
+      } catch { /* plain login link fallback stays */ }
+      const msg = perfectEmail(r, link);
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+        body: JSON.stringify({ from: FROM, to: r.email, subject: msg.subject, html: msg.html }),
+      });
+      ok = resp.ok;
+    }
+    if (ok) sent.push(`perfect:${channel}:${r.email}`);
+    else {
+      failed.push(`perfect:${r.email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey);
+    }
+  }
+
+  return Response.json({ candidates: targets.length + (pdRows?.length ?? 0), sent, skipped, failed });
 });

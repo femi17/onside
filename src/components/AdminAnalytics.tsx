@@ -159,24 +159,39 @@ export default function AdminAnalytics({ s, daily, picks }: { s: AdminStats; dai
           </Panel>
         </div>
         {picks && picks.length > 0 && (
-          <Panel title="Latest picks" sub="What agents actually delivered to real users — newest first">
+          <Panel title="Latest picks" sub="What agents actually delivered to real users — one batch per user · agent · day">
             <div className="mt-4 flex flex-col divide-y divide-ink/[0.06]">
-              {picks.map((p, i) => (
-                <div key={i} className="flex items-start gap-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="truncate text-[13px] font-bold text-ink">{p.home} <span className="font-normal text-ink-mute">v</span> {p.away}</span>
-                      {p.score && <span className="flex-none font-mono text-[12px] font-bold text-ink">{p.score}</span>}
-                    </div>
-                    <div className="mt-0.5 truncate font-mono text-[11px] text-ink-mute">
-                      {p.market}{p.prob != null ? ` · ${Math.round(p.prob * 100)}%` : ""} · {p.league}
-                    </div>
-                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-mute/80">
-                      {p.who} · {p.agent} · {dayLabel(p.at)}
-                    </div>
+              {groupPicks(picks).map((g, gi) => (
+                <details key={gi} open={gi === 0} className="group py-1">
+                  <summary className="flex cursor-pointer list-none items-center gap-2.5 py-2 [&::-webkit-details-marker]:hidden">
+                    <span className="flex-none font-mono text-[10px] text-ink-mute transition-transform group-open:rotate-90">▶</span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
+                      <b>{g.who}</b> <span className="text-ink-mute">·</span> {g.agent}
+                      <span className="ml-2 font-mono text-[11px] text-ink-mute">{dayLabel(g.day)}</span>
+                    </span>
+                    {g.perfect && <span className="flex-none font-mono text-[11px]" title="Perfect day — every pick landed">🎯</span>}
+                    <span className="flex-none font-mono text-[11px] text-ink-mute">
+                      {g.rows.length} pick{g.rows.length > 1 ? "s" : ""} ·{" "}
+                      <b className="text-grass-deep">{g.won}W</b>{g.lost > 0 && <> <b className="text-brick">{g.lost}L</b></>}{g.open > 0 && <> {g.open}P</>}
+                    </span>
+                  </summary>
+                  <div className="flex flex-col divide-y divide-ink/[0.04] pb-2 pl-5">
+                    {g.rows.map((p, i) => (
+                      <div key={i} className="flex items-start gap-3 py-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="truncate text-[13px] font-bold text-ink">{p.home} <span className="font-normal text-ink-mute">v</span> {p.away}</span>
+                            {p.score && <span className="flex-none font-mono text-[12px] font-bold text-ink">{p.score}</span>}
+                          </div>
+                          <div className="mt-0.5 truncate font-mono text-[11px] text-ink-mute">
+                            {p.market}{p.prob != null ? ` · ${Math.round(p.prob * 100)}%` : ""} · {p.league}
+                          </div>
+                        </div>
+                        <ResultBadge r={p.result} />
+                      </div>
+                    ))}
                   </div>
-                  <ResultBadge r={p.result} />
-                </div>
+                </details>
               ))}
             </div>
           </Panel>
@@ -292,6 +307,26 @@ function Panel({ title, sub, children }: { title: string; sub: string; children:
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="mt-6 font-mono text-[12px] text-ink-mute">{children}</p>;
+}
+
+// batch the flat pick list into (user, agent, day) delivery groups, newest day first;
+// 🎯 marks a perfect day — the same 3+/all-won bar the congratulation email uses
+type PickGroup = { who: string; agent: string; day: string; rows: RecentPick[]; won: number; lost: number; open: number; perfect: boolean };
+function groupPicks(picks: RecentPick[]): PickGroup[] {
+  const byKey = new Map<string, PickGroup>();
+  for (const p of picks) {
+    const day = p.at.slice(0, 10);
+    const key = `${p.who}|${p.agent}|${day}`;
+    let g = byKey.get(key);
+    if (!g) { g = { who: p.who, agent: p.agent, day, rows: [], won: 0, lost: 0, open: 0, perfect: false }; byKey.set(key, g); }
+    g.rows.push(p);
+    if (p.result === "won") g.won++;
+    else if (p.result === "lost") g.lost++;
+    else if (p.result !== "void") g.open++;
+  }
+  const groups = [...byKey.values()];
+  for (const g of groups) g.perfect = g.rows.length >= 3 && g.won === g.rows.length;
+  return groups; // picks arrive newest-first, so insertion order already is too
 }
 
 // settlement outcome chip for the pick-detail rows (result colours, not confidence dots)
