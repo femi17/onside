@@ -24,6 +24,13 @@ export type AdminStats = {
   deliveries_weekly: { w: string; n: number }[];
 };
 
+// admin_daily_activity() — the three per-day activity counts (real users only)
+export type DailyActivity = {
+  uploads_daily: { day: string; n: number }[];
+  deliveries_daily: { day: string; n: number }[];
+  tickets_daily: { day: string; n: number }[];
+};
+
 const wkLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 
@@ -36,7 +43,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s }: { s: AdminStats }) {
+export default function AdminAnalytics({ s, daily }: { s: AdminStats; daily?: DailyActivity | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -168,6 +175,29 @@ export default function AdminAnalytics({ s }: { s: AdminStats }) {
           </Panel>
         </div>
       </Section>
+
+      {/* Daily activity — the three counts that ARE the product being used (real users only) */}
+      {daily && (
+        <Section label="Daily activity · last 30 days">
+          <div className="grid gap-5 lg:grid-cols-3">
+            <Panel title="Slip uploads" sub="Betslip screenshots read per day">
+              {daily.uploads_daily.length ? (
+                <DayBars data={daily.uploads_daily.map((d) => ({ label: dayLabel(d.day), value: d.n }))} max={Math.max(1, ...daily.uploads_daily.map((d) => d.n))} color="bg-flood-deep" />
+              ) : <Empty>No slip uploads yet.</Empty>}
+            </Panel>
+            <Panel title="Predictions delivered" sub="Agent picks delivered per day">
+              {daily.deliveries_daily.length ? (
+                <DayBars data={daily.deliveries_daily.map((d) => ({ label: dayLabel(d.day), value: d.n }))} max={Math.max(1, ...daily.deliveries_daily.map((d) => d.n))} color="bg-flood" />
+              ) : <Empty>No predictions delivered yet.</Empty>}
+            </Panel>
+            <Panel title="Games on tracker" sub="Bets tracked per day">
+              {daily.tickets_daily.length ? (
+                <DayBars data={daily.tickets_daily.map((d) => ({ label: dayLabel(d.day), value: d.n }))} max={Math.max(1, ...daily.tickets_daily.map((d) => d.n))} color="bg-grass-deep" />
+              ) : <Empty>No tracked games yet.</Empty>}
+            </Panel>
+          </div>
+        </Section>
+      )}
 
       {/* Engagement & ops */}
       <Section label="Engagement & ops">
