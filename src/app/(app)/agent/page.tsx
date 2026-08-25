@@ -303,6 +303,17 @@ export default async function AgentPage() {
     }
   }
 
+  // 🎯 The 24 — admin-only ranked shortlist of today's pending picks (admin_top24 is
+  // evidence-ranked: exact-cell history → family×band → model, big-edge penalized).
+  // Non-admins get null and never see the tab.
+  let admin24: string[] | null = null;
+  const { data: adminProf } = await supabase.from("profiles").select("is_admin").eq("id", user.id).maybeSingle();
+  if (adminProf?.is_admin) {
+    const { data: t24 } = await supabase.rpc("admin_top24");
+    const ids = ((t24 ?? []) as { id: string }[]).map((r) => r.id);
+    if (ids.length) admin24 = ids;
+  }
+
   // realtime covers the feed's still-changeable games AND the double's legs (past-day legs may be off-feed)
   const liveFixtureIds = Array.from(
     new Set([
@@ -316,7 +327,7 @@ export default async function AgentPage() {
   return (
     <>
       <RealtimeRefresh fixtureIds={liveFixtureIds} />
-      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} />
+      <AgentBoard picks={picks} userId={user.id} initialTracked={initialTracked} emptyRuns={emptyRuns} doubles={doubles} doubleDeliveries={doubleDeliveries} noGamesToday={noGamesToday} admin24={admin24} />
     </>
   );
 }
