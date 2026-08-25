@@ -2,7 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
-import AdminAnalytics, { type AdminStats, type DailyActivity } from "@/components/AdminAnalytics";
+import AdminAnalytics, { type AdminStats, type DailyActivity, type RecentPick } from "@/components/AdminAnalytics";
 
 // Platform analytics — admin-only. Gated on profiles.is_admin here and again inside the
 // admin_analytics RPC (defence in depth). Non-admins get a 404, not a redirect.
@@ -16,9 +16,10 @@ export default async function AnalyticsPage() {
   const { data: prof } = await supabase.from("profiles").select("is_admin").eq("id", user.id).maybeSingle();
   if (!prof?.is_admin) notFound();
 
-  const [{ data }, { data: daily }] = await Promise.all([
+  const [{ data }, { data: daily }, { data: picks }] = await Promise.all([
     supabase.rpc("admin_analytics"),
     supabase.rpc("admin_daily_activity"),
+    supabase.rpc("admin_recent_picks"),
   ]);
   const stats = data as AdminStats | null;
 
@@ -34,7 +35,7 @@ export default async function AnalyticsPage() {
 
       <div className="mx-auto max-w-5xl px-5 pt-2 md:px-8">
         {stats ? (
-          <AdminAnalytics s={stats} daily={daily as DailyActivity | null} />
+          <AdminAnalytics s={stats} daily={daily as DailyActivity | null} picks={picks as RecentPick[] | null} />
         ) : (
           <p className="mt-6 rounded-2xl border border-white/10 bg-pitch-2 p-6 text-center text-[13.5px] text-onpitch-mute">
             Couldn&apos;t load analytics.

@@ -31,6 +31,13 @@ export type DailyActivity = {
   tickets_daily: { day: string; n: number }[];
 };
 
+// admin_recent_picks() — the last deliveries to real users, pick by pick
+export type RecentPick = {
+  at: string; who: string; agent: string; home: string; away: string;
+  league: string; kickoff: string; market: string; prob: number | null;
+  result: string; score: string | null;
+};
+
 const wkLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 
@@ -43,7 +50,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s, daily }: { s: AdminStats; daily?: DailyActivity | null }) {
+export default function AdminAnalytics({ s, daily, picks }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -151,6 +158,29 @@ export default function AdminAnalytics({ s, daily }: { s: AdminStats; daily?: Da
             ) : <Empty>No picks delivered yet.</Empty>}
           </Panel>
         </div>
+        {picks && picks.length > 0 && (
+          <Panel title="Latest picks" sub="What agents actually delivered to real users — newest first">
+            <div className="mt-4 flex flex-col divide-y divide-ink/[0.06]">
+              {picks.map((p, i) => (
+                <div key={i} className="flex items-start gap-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="truncate text-[13px] font-bold text-ink">{p.home} <span className="font-normal text-ink-mute">v</span> {p.away}</span>
+                      {p.score && <span className="flex-none font-mono text-[12px] font-bold text-ink">{p.score}</span>}
+                    </div>
+                    <div className="mt-0.5 truncate font-mono text-[11px] text-ink-mute">
+                      {p.market}{p.prob != null ? ` · ${Math.round(p.prob * 100)}%` : ""} · {p.league}
+                    </div>
+                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-ink-mute/80">
+                      {p.who} · {p.agent} · {dayLabel(p.at)}
+                    </div>
+                  </div>
+                  <ResultBadge r={p.result} />
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
         {s.agents_daily && (
           <Panel title="Agents created · last 30 days" sub="New agents per day — the builder's daily pulse">
             {s.agents_daily.length ? (
@@ -262,6 +292,16 @@ function Panel({ title, sub, children }: { title: string; sub: string; children:
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="mt-6 font-mono text-[12px] text-ink-mute">{children}</p>;
+}
+
+// settlement outcome chip for the pick-detail rows (result colours, not confidence dots)
+function ResultBadge({ r }: { r: string }) {
+  const tone =
+    r === "won" ? "bg-grass/15 text-grass-deep" :
+    r === "lost" ? "bg-brick/15 text-brick" :
+    r === "void" ? "bg-ink/[0.08] text-ink-mute" :
+    "bg-flood/15 text-flood-deep";
+  return <span className={`mt-0.5 flex-none rounded-full px-2.5 py-1 font-mono text-[10.5px] font-bold uppercase tracking-wide ${tone}`}>{r}</span>;
 }
 
 // Shared chart frame: a taller plot with light gridlines and a max-value marker on the y-axis.
