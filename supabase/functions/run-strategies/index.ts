@@ -1288,9 +1288,14 @@ async function maybeRecalibrate(): Promise<void> {
   if (mp?.temp != null && Number.isFinite(Number(mp.temp))) TEMP = Number(mp.temp) || 1;
   if (mp?.last_calib_at && Date.now() - Date.parse(mp.last_calib_at) < 24 * 3600 * 1000) return;
   // housekeeping riding the daily gate: day-keyed shared API cache rows and old odds snapshots
-  // are dead weight after a few days — prune so the tables stay index-sized
+  // are dead weight after a few days — prune so the tables stay index-sized. Lifecycle send
+  // claims (nudge:/recap:) also live in api_cache and are once-EVER guards — never prune them.
   const stale = new Date(Date.now() - 3 * 86400000).toISOString();
-  try { await sb.from("api_cache").delete().lt("fetched_at", stale); } catch { /* non-fatal */ }
+  try {
+    await sb.from("api_cache").delete().lt("fetched_at", stale)
+      .not("cache_key", "like", "nudge:%")
+      .not("cache_key", "like", "recap:%");
+  } catch { /* non-fatal */ }
   try { await sb.from("odds_cache").delete().lt("fetched_at", stale); } catch { /* non-fatal */ }
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: rows } = await sb.from("deliveries").select("model_prob,result")
