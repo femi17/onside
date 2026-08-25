@@ -5,6 +5,8 @@
 //   upsell   — free plan with an agent 24h+ old    → their agent's real record + Pro pitch
 // Plus the repeatable perfect-day congratulation: an agent whose whole delivered day (3+
 // picks) settled won → congrats + plan-matched upsell, at most once per (user, day).
+// Plus a one-time bot DM inviting Telegram-linked users into the @onsideai channel
+// (skipped-but-claimed when getChatMember says they're already in).
 // Audiences come from nudge_targets() (SQL over auth.users — service-role only). Channel:
 // web PUSH when the user has a subscription, EMAIL (Resend) otherwise — never both.
 // Idempotency: api_cache `nudge:{kind}:{user}` claimed BEFORE sending, released only on a
@@ -274,5 +276,43 @@ Deno.serve(async (_req) => {
     }
   }
 
-  return Response.json({ candidates: targets.length + (pdRows?.length ?? 0), sent, skipped, failed });
+  // Telegram-channel invite: linked users get ONE bot DM pointing at @onsideai — ever.
+  // Already-members are claimed without a send so they're never checked again.
+  const { data: tgRows } = await sb.rpc("telegram_nudge_targets");
+  const { data: tgToken } = tgRows?.length ? await sb.rpc("get_secret", { secret_name: "telegram_bot_token" }) : { data: null };
+  for (const r of (tgRows ?? []) as { user_id: string; chat_id: number }[]) {
+    if (!tgToken) break;
+    const claimKey = `nudge:tg-channel:${r.user_id}`;
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { chat_id: r.chat_id, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`tg-channel:${r.chat_id}`); continue; }
+
+    let isMember = false;
+    try {
+      const chk = await fetch(`https://api.telegram.org/bot${tgToken}/getChatMember`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: "@onsideai", user_id: r.chat_id }),
+      });
+      const j = await chk.json();
+      isMember = chk.ok && ["member", "administrator", "creator"].includes(j?.result?.status);
+    } catch { /* treat as not-a-member; the invite is harmless either way */ }
+    if (isMember) { skipped.push(`tg-channel:member:${r.chat_id}`); continue; }
+
+    const resp = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: r.chat_id,
+        text: "You get your agent's picks here — but the day's best line-up, results and the running record land on the Onside channel.\n\nJoin: t.me/onsideai\n\nEvery pick graded in the open, misses included.",
+        disable_web_page_preview: true,
+      }),
+    });
+    if (resp.ok) sent.push(`tg-channel:${r.chat_id}`);
+    else {
+      failed.push(`tg-channel:${r.chat_id}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey);
+    }
+  }
+
+  return Response.json({ candidates: targets.length + (pdRows?.length ?? 0) + (tgRows?.length ?? 0), sent, skipped, failed });
 });

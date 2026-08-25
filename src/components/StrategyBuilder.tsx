@@ -259,11 +259,10 @@ export default function StrategyBuilder({
   const [leagueSurprise, setLeagueSurprise] = useState<boolean>(existing?.league_mode === "surprise");
   const [lgSearch, setLgSearch] = useState("");
   const [selIdx, setSelIdx] = useState(initSelIdx);
-  // snap a stored cap (e.g. legacy 15) to the largest offered pill it covers, within the plan
-  const [cap, setCap] = useState(() => {
-    const want = Math.min(existing?.max_per_prediction ?? 8, maxPicks);
-    return PICK_CAPS.filter((c) => c <= want).pop() ?? PICK_CAPS[0];
-  });
+  // the cap is any number the user wants (e.g. a typed 16), clamped to the plan ceiling —
+  // the pills are just shortcuts, so a stored in-between value survives editing exactly
+  const [cap, setCap] = useState(() => Math.max(1, Math.min(existing?.max_per_prediction ?? 8, maxPicks)));
+  const [capText, setCapText] = useState(() => String(Math.max(1, Math.min(existing?.max_per_prediction ?? 8, maxPicks))));
   const [time, setTime] = useState(existing?.deliver_at ? existing.deliver_at.slice(0, 5) : "06:00");
   const [target, setTarget] = useState(existing?.target_day ?? "same_day");
   // optional kickoff pin: only games starting at this local time ("" = any time). With an
@@ -1493,14 +1492,14 @@ export default function StrategyBuilder({
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
             <Step n="06" t="Cap & delivery" />
             <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-ink-mute">Max games per prediction</div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {PICK_CAPS.map((c) => {
                 const locked = c > maxPicks;
                 return (
                   <button
                     key={c}
                     disabled={locked}
-                    onClick={() => setCap(c)}
+                    onClick={() => { setCap(c); setCapText(String(c)); }}
                     className={`rounded-lg border px-4 py-2 font-mono text-[13px] font-bold transition ${
                       cap === c ? "border-ink bg-ink text-chalk-2" : locked ? "cursor-not-allowed border-ink/15 text-ink-mute opacity-50" : "border-ink/15 bg-white text-ink hover:border-ink/30"
                     }`}
@@ -1510,6 +1509,23 @@ export default function StrategyBuilder({
                   </button>
                 );
               })}
+              {/* or any number in between — typed values clamp to the plan ceiling on entry */}
+              <label className="ml-1 flex items-center gap-2 font-mono text-[11px] text-ink-mute">
+                or type
+                <input
+                  type="number" min={1} max={maxPicks} inputMode="numeric" value={capText}
+                  onChange={(e) => {
+                    setCapText(e.target.value);
+                    const v = parseInt(e.target.value, 10);
+                    if (Number.isFinite(v) && v >= 1) setCap(Math.min(v, maxPicks));
+                  }}
+                  onBlur={() => setCapText(String(cap))}
+                  className={`w-16 rounded-lg border px-2 py-2 text-center font-mono text-[13px] font-bold text-ink ${
+                    !PICK_CAPS.includes(cap) ? "border-ink bg-ink/[0.04]" : "border-ink/15 bg-white"
+                  }`}
+                />
+                <span>max {maxPicks} on your plan</span>
+              </label>
             </div>
             <div className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-wide text-ink-mute">Deliver at · where</div>
             <div className="flex flex-wrap items-center gap-4">
