@@ -10,9 +10,12 @@
 // Audiences come from nudge_targets() (SQL over auth.users — service-role only). Channel:
 // web PUSH when the user has a subscription, EMAIL (Resend) otherwise — never both.
 // Idempotency: api_cache `nudge:{kind}:{user}` claimed BEFORE sending, released only on a
-// send failure — reruns and stray invocations can never double-touch anyone. The copy earns
-// its weight with real numbers (fixtures today, their own graded picks, the platform week),
-// never manufactured urgency.
+// send failure — reruns and stray invocations can never double-touch anyone. On top of that,
+// a GLOBAL weekly cooldown (owner-ruled): at most ONE nudge touch per user per 7 days across
+// every kind and channel (`nudge:last:{user}`). A cooldown-blocked nudge is NOT claimed — it
+// simply waits and fires on the first tick after the week passes. The copy earns its weight
+// with real numbers (fixtures today, their own graded picks, the platform week), never
+// manufactured urgency.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -184,8 +187,22 @@ Deno.serve(async (_req) => {
   const hasPush = new Set((subs ?? []).map((s: { user_id: string }) => s.user_id));
   const { data: pushSecret } = await sb.rpc("get_secret", { secret_name: "push_internal_secret" });
 
+  // weekly cooldown ledger: one row per user, refreshed after every successful touch
+  const COOLDOWN_MS = 7 * 86400000;
+  const { data: lastRows } = await sb.from("api_cache").select("cache_key, payload").like("cache_key", "nudge:last:%");
+  const lastTouch = new Map<string, number>(
+    (lastRows ?? []).map((r: { cache_key: string; payload: { at?: string } }) =>
+      [r.cache_key.slice("nudge:last:".length), Date.parse(r.payload?.at ?? "") || 0]),
+  );
+  const canTouch = (uid: string) => Date.now() - (lastTouch.get(uid) ?? 0) > COOLDOWN_MS;
+  const touched = async (uid: string) => {
+    lastTouch.set(uid, Date.now());
+    await sb.from("api_cache").upsert({ cache_key: `nudge:last:${uid}`, payload: { at: new Date().toISOString() } });
+  };
+
   const sent: string[] = [], skipped: string[] = [], failed: string[] = [];
   for (const t of targets) {
+    if (!canTouch(t.userId)) { skipped.push(`cooldown:${t.kind}:${t.email}`); continue; }
     const claimKey = `nudge:${t.kind}:${t.userId}`;
     const { error: dupe } = await sb.from("api_cache").insert({
       cache_key: claimKey, payload: { email: t.email, at: new Date().toISOString() },
@@ -223,7 +240,7 @@ Deno.serve(async (_req) => {
       });
       ok = resp.ok;
     }
-    if (ok) sent.push(`${t.kind}:${channel}:${t.email}`);
+    if (ok) { sent.push(`${t.kind}:${channel}:${t.email}`); await touched(t.userId); }
     else {
       failed.push(`${t.kind}:${t.email}`);
       await sb.from("api_cache").delete().eq("cache_key", claimKey); // release for a retry run
@@ -234,6 +251,7 @@ Deno.serve(async (_req) => {
   // so a user with several perfect agents on the same day hears about the biggest batch only
   const { data: pdRows } = await sb.rpc("perfect_day_targets");
   for (const r of (pdRows ?? []) as PerfectRow[]) {
+    if (!canTouch(r.user_id)) { skipped.push(`cooldown:perfect:${r.email}`); continue; }
     const claimKey = `nudge:perfect:${r.user_id}:${r.day}`;
     const { error: dupe } = await sb.from("api_cache").insert({
       cache_key: claimKey, payload: { email: r.email, agent: r.agent, n: r.n, at: new Date().toISOString() },
@@ -269,7 +287,7 @@ Deno.serve(async (_req) => {
       });
       ok = resp.ok;
     }
-    if (ok) sent.push(`perfect:${channel}:${r.email}`);
+    if (ok) { sent.push(`perfect:${channel}:${r.email}`); await touched(r.user_id); }
     else {
       failed.push(`perfect:${r.email}`);
       await sb.from("api_cache").delete().eq("cache_key", claimKey);
@@ -282,6 +300,7 @@ Deno.serve(async (_req) => {
   const { data: tgToken } = tgRows?.length ? await sb.rpc("get_secret", { secret_name: "telegram_bot_token" }) : { data: null };
   for (const r of (tgRows ?? []) as { user_id: string; chat_id: number }[]) {
     if (!tgToken) break;
+    if (!canTouch(r.user_id)) { skipped.push(`cooldown:tg-channel:${r.chat_id}`); continue; }
     const claimKey = `nudge:tg-channel:${r.user_id}`;
     const { error: dupe } = await sb.from("api_cache").insert({
       cache_key: claimKey, payload: { chat_id: r.chat_id, at: new Date().toISOString() },
@@ -307,7 +326,7 @@ Deno.serve(async (_req) => {
         disable_web_page_preview: true,
       }),
     });
-    if (resp.ok) sent.push(`tg-channel:${r.chat_id}`);
+    if (resp.ok) { sent.push(`tg-channel:${r.chat_id}`); await touched(r.user_id); }
     else if (resp.status === 403) {
       // the user blocked the bot — permanent; keep the claim so we never retry them
       skipped.push(`tg-channel:blocked:${r.chat_id}`);
