@@ -308,7 +308,10 @@ Deno.serve(async (_req) => {
       }),
     });
     if (resp.ok) sent.push(`tg-channel:${r.chat_id}`);
-    else {
+    else if (resp.status === 403) {
+      // the user blocked the bot — permanent; keep the claim so we never retry them
+      skipped.push(`tg-channel:blocked:${r.chat_id}`);
+    } else {
       failed.push(`tg-channel:${r.chat_id}`);
       await sb.from("api_cache").delete().eq("cache_key", claimKey);
     }
