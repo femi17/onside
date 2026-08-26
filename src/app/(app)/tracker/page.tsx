@@ -4,6 +4,7 @@ import RealtimeRefresh from "@/components/RealtimeRefresh";
 import TrackerBoard, { type Ticket } from "@/components/TrackerBoard";
 import ActivationNudge from "@/components/ActivationNudge";
 import CommunityNudge from "@/components/CommunityNudge";
+import PushNudge from "@/components/PushNudge";
 
 export default async function TrackerPage() {
   const supabase = await createClient();
@@ -38,19 +39,36 @@ export default async function TrackerPage() {
     }
   }
 
-  // post-activation nudge: activated users graduate to the community/Telegram strip —
-  // ONE nudge per lifecycle stage, never both cards at once
+  // post-activation nudges: push first (a tracking user with no push is watching blind),
+  // then the community/Telegram strip — ONE nudge per lifecycle stage, never stacked.
+  // PushNudge decides client-side (support/permission/dismissal) and falls back to the
+  // community card itself, so the ladder still shows exactly one card.
   let commFlags: { optedIn: boolean; telegramLinked: boolean } | null = null;
+  let userId: string | null = null;
+  let hasPush = true; // assume covered until we know otherwise — avoids a flash for admins etc.
   if (!showNudge) {
-    const { data: prof } = await supabase.from("profiles").select("community_opt_in, telegram_linked_at").maybeSingle();
+    const [{ data: prof }, { data: auth }, { count: pushCount }] = await Promise.all([
+      supabase.from("profiles").select("community_opt_in, telegram_linked_at").maybeSingle(),
+      supabase.auth.getUser(),
+      supabase.from("push_subscriptions").select("endpoint", { count: "exact", head: true }),
+    ]);
     commFlags = { optedIn: !!prof?.community_opt_in, telegramLinked: !!prof?.telegram_linked_at };
+    userId = auth?.user?.id ?? null;
+    hasPush = (pushCount ?? 0) > 0;
   }
 
   return (
     <>
       <RealtimeRefresh fixtureIds={fixtureIds} />
       {showNudge && <ActivationNudge recipes={recipes} />}
-      {commFlags && <CommunityNudge optedIn={commFlags.optedIn} telegramLinked={commFlags.telegramLinked} />}
+      {commFlags && userId && (
+        <PushNudge
+          userId={userId}
+          hasPush={hasPush}
+          fallback={<CommunityNudge optedIn={commFlags.optedIn} telegramLinked={commFlags.telegramLinked} />}
+        />
+      )}
+      {commFlags && !userId && <CommunityNudge optedIn={commFlags.optedIn} telegramLinked={commFlags.telegramLinked} />}
       {/* only today's slate lives here; older settled games move to History */}
       <TrackerBoard tickets={list} since={lagosTodayStartISO()} />
     </>
