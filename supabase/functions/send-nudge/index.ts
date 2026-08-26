@@ -5,6 +5,10 @@
 //   upsell   — free plan with an agent 24h+ old    → their agent's real record + Pro pitch
 // Plus the repeatable perfect-day congratulation: an agent whose whole delivered day (3+
 // picks) settled won → congrats + plan-matched upsell, at most once per (user, day).
+// Plus the once-EVER first-win congratulation (owner-ruled, Bobby's 1/1 case): the first
+// graded win of a user's agent — any card size — earns one celebration; a perfect-day
+// already celebrated covers it (the bigger honour wins). Bypasses the weekly cap like
+// perfect days (earned + time-sensitive), stamps the cooldown after.
 // Plus a one-time bot DM inviting Telegram-linked users into the @onsideai channel
 // (skipped-but-claimed when getChatMember says they're already in).
 // Audiences come from nudge_targets() (SQL over auth.users — service-role only). Channel:
@@ -293,6 +297,71 @@ Deno.serve(async (_req) => {
     if (ok) { sent.push(`perfect:${channel}:${r.email}`); await touched(r.user_id); }
     else {
       failed.push(`perfect:${r.email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey);
+    }
+  }
+
+  // first wins: once EVER per user; skip anyone a perfect-day already celebrated
+  const { data: fwRows } = await sb.rpc("first_win_targets");
+  const { data: perfectClaims } = (fwRows?.length)
+    ? await sb.from("api_cache").select("cache_key").like("cache_key", "nudge:perfect:%")
+    : { data: [] };
+  const celebrated = new Set((perfectClaims ?? []).map((r: { cache_key: string }) => r.cache_key.split(":")[2]));
+  for (const r of (fwRows ?? []) as { user_id: string; email: string; plan: string; agent: string; game: string; market: string; score: string }[]) {
+    if (celebrated.has(r.user_id)) { skipped.push(`first-win:perfect-covered:${r.email}`); continue; }
+    const claimKey = `nudge:first-win:${r.user_id}`;
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { email: r.email, game: r.game, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`first-win:${r.email}`); continue; }
+
+    let ok = false, channel = "email";
+    if (hasPush.has(r.user_id) && pushSecret) {
+      channel = "push";
+      const resp = await fetch(`${SB_URL}/functions/v1/send-push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": String(pushSecret) },
+        body: JSON.stringify({
+          user_id: r.user_id,
+          title: `🎉 First win: ${r.agent}`,
+          body: `${r.game} — ${r.market} ✓ ${r.score}. On the record forever.`,
+          url: "/my-record", tag: "nudge-first-win",
+        }),
+      });
+      ok = resp.ok;
+    }
+    if (!ok) {
+      channel = "email";
+      let link = `${SITE}/login`;
+      try {
+        const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
+          type: "magiclink", email: r.email, options: { redirectTo: `${SITE}/my-record` },
+        });
+        if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
+      } catch { /* plain login link stays */ }
+      const upsell = r.plan === "free"
+        ? para(`And remember — it did that <b style="color:#f3f6f4;">locked as built</b>. <b style="color:#f3f6f4;">Pro (₦500/mo)</b> lets you tune the rule, market and leagues, and run 3 agents at once.`)
+        : "";
+      const resp = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+        body: JSON.stringify({
+          from: FROM, to: r.email,
+          subject: `🎉 ${r.agent} just landed its first pick`,
+          html: shell(
+            para(`<b style="color:#f3f6f4;">${r.agent}</b> just landed its very first graded pick:`) +
+            para(`<b style="color:#f3f6f4;">${r.game}</b> — ${r.market} ✓ <b style="color:#f3f6f4;">${r.score}</b>`) +
+            para(`That win is on your record now — graded in the open like every Onside pick, and nobody can edit it away.`) +
+            upsell +
+            button(link, "See my record →")
+          ),
+        }),
+      });
+      ok = resp.ok;
+    }
+    if (ok) { sent.push(`first-win:${channel}:${r.email}`); await touched(r.user_id); }
+    else {
+      failed.push(`first-win:${r.email}`);
       await sb.from("api_cache").delete().eq("cache_key", claimKey);
     }
   }
