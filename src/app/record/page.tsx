@@ -8,8 +8,8 @@ import BackButton from "@/components/BackButton";
 // comes from public_record(), an aggregates-only RPC (no user, agent, or pick identities),
 // read straight from the same deliveries table the settlement engine grades. The page's
 // whole pitch is that the numbers can't be curated: misses included, history immutable.
-// Visually the record IS a betslip: the brand's chalk card with a perforated stub — the
-// all-time totals ride the stub, each day sits below as a graded leg, losses in brick.
+// Layout: small chalk cards — three all-time tiles, a perfect-day spotlight, then every
+// day as its own tiny card so single-day feats (an agent's 4/4) don't drown in totals.
 
 export const metadata: Metadata = {
   title: "The Onside record — every pick graded in public",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 type RecordData = {
   all_time: { graded: number; won: number; since: string | null };
   today_delivered: number;
-  days: { day: string; graded: number; won: number }[];
+  days: { day: string; graded: number; won: number; perfect?: number; perfect_n?: number | null }[];
   bands: { band: number; n: number; won: number; claimed: number }[];
 };
 
@@ -35,25 +35,13 @@ async function loadRecord(): Promise<RecordData | null> {
 }
 
 const pct = (won: number, graded: number) => (graded > 0 ? Math.round((won / graded) * 100) : 0);
-
-// the perforated tear line between a slip's stub and its legs (matches the app betslip)
-function Perforation() {
-  return (
-    <div
-      aria-hidden
-      className="h-6"
-      style={{
-        backgroundImage: "radial-gradient(circle at 12px 12px, #0E1A1B 8px, #F6F2E9 9px)",
-        backgroundSize: "40px 24px",
-        backgroundPosition: "8px 0",
-      }}
-    />
-  );
-}
+const dayLabel = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+  new Date(iso + "T12:00:00").toLocaleDateString("en-GB", opts);
 
 export default async function RecordPage() {
   const r = await loadRecord();
-  const maxGraded = Math.max(1, ...(r?.days ?? []).map((d) => d.graded));
+  // the perfect-day spotlight: most recent days where an individual agent swept its card
+  const perfectDays = (r?.days ?? []).filter((d) => (d.perfect ?? 0) > 0).slice(0, 3);
 
   return (
     <>
@@ -82,121 +70,116 @@ export default async function RecordPage() {
           <p className="mt-10 text-[14px] text-onpitch-mute">The record is loading slowly — refresh in a moment.</p>
         ) : (
           <>
-            {/* the record slip: all-time on the stub, each day a graded leg below */}
-            <div className="mt-10" style={{ filter: "drop-shadow(0 18px 36px rgba(0,0,0,0.4))" }}>
-              {/* stub */}
-              <div className="rounded-t-3xl bg-chalk-2 px-6 pb-5 pt-6 sm:px-8">
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <div className="font-disp text-3xl font-extrabold tracking-tight text-ink sm:text-4xl">
-                      {r.all_time.graded.toLocaleString()}
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">picks graded</div>
-                  </div>
-                  <div>
-                    <div className="font-disp text-3xl font-extrabold tracking-tight text-grass-deep sm:text-4xl">
-                      {r.all_time.won.toLocaleString()}
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">landed</div>
-                  </div>
-                  <div>
-                    <div className="font-disp text-3xl font-extrabold tracking-tight text-ink sm:text-4xl">
-                      {pct(r.all_time.won, r.all_time.graded)}%
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">hit rate</div>
-                  </div>
-                </div>
-                <p className="mt-4 font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
-                  {r.all_time.since && (
-                    <>Since {new Date(r.all_time.since).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · </>
-                  )}
-                  {r.today_delivered > 0 && <>{r.today_delivered} delivered today · </>}
-                  voids excluded
-                </p>
+            {/* all-time tiles */}
+            <div className="mt-8 grid grid-cols-3 gap-3">
+              <div className="rounded-2xl bg-chalk-2 p-4 shadow-xl">
+                <div className="font-disp text-2xl font-extrabold text-ink sm:text-3xl">{r.all_time.graded.toLocaleString()}</div>
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">picks graded</div>
               </div>
-
-              <Perforation />
-
-              {/* day-by-day legs */}
-              <div className="rounded-b-3xl bg-chalk-2 px-6 pb-6 pt-1 sm:px-8">
-                <div className="flex items-baseline justify-between pb-1 pt-3">
-                  <h2 className="font-disp text-lg font-bold text-ink">Day by day</h2>
-                  <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">last 30 · newest first</span>
-                </div>
-                <p className="pb-2 text-[13px] leading-relaxed text-ink-mute">
-                  Wins in green, misses in brick — bad days stay on the board. 🎯 marks a perfect day.
-                </p>
-                <div className="flex flex-col divide-y divide-ink/[0.07]">
-                  {r.days.map((d) => {
-                    const lost = d.graded - d.won;
-                    const p = pct(d.won, d.graded);
-                    const perfect = d.graded >= 3 && lost === 0;
-                    return (
-                      <div key={d.day} className="flex items-center gap-3 py-2.5 sm:gap-4">
-                        <span className="w-16 flex-none font-mono text-[11px] font-bold uppercase text-ink sm:w-20">
-                          {new Date(d.day + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" }).replace(",", "")}
-                        </span>
-                        {/* bar width tracks the day's volume; the split tracks its outcome */}
-                        <div className="h-3.5 flex-1">
-                          <div
-                            className="flex h-full min-w-[6px] overflow-hidden rounded-full"
-                            style={{ width: `${Math.max(6, (d.graded / maxGraded) * 100)}%` }}
-                          >
-                            <div className="h-full bg-grass-deep" style={{ width: `${p}%` }} />
-                            <div className="h-full bg-brick/80" style={{ width: `${100 - p}%` }} />
-                          </div>
-                        </div>
-                        <span className="flex-none text-right font-mono text-[12px] font-bold text-ink">
-                          <span className="text-grass-deep">{d.won}W</span>
-                          {lost > 0 && <span className="text-brick"> {lost}L</span>}
-                        </span>
-                        <span className="w-12 flex-none text-right font-mono text-[11.5px] text-ink-mute">
-                          {perfect ? "🎯" : `${p}%`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="rounded-2xl bg-chalk-2 p-4 shadow-xl">
+                <div className="font-disp text-2xl font-extrabold text-grass-deep sm:text-3xl">{r.all_time.won.toLocaleString()}</div>
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">landed</div>
               </div>
+              <div className="rounded-2xl bg-chalk-2 p-4 shadow-xl">
+                <div className="font-disp text-2xl font-extrabold text-ink sm:text-3xl">{pct(r.all_time.won, r.all_time.graded)}%</div>
+                <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">hit rate</div>
+              </div>
+            </div>
+            <p className="mt-2 font-mono text-[11px] text-onpitch-mute">
+              {r.all_time.since && (
+                <>Counting since {new Date(r.all_time.since).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · </>
+              )}
+              {r.today_delivered > 0 && <>{r.today_delivered} picks delivered today · </>}
+              voids excluded
+            </p>
+
+            {/* perfect-day spotlight — an individual agent swept its whole card */}
+            {perfectDays.length > 0 && (
+              <div className="mt-8 flex flex-col gap-2">
+                {perfectDays.map((d) => (
+                  <div key={d.day} className="flex items-center gap-3 rounded-2xl bg-chalk-2 p-4 shadow-xl ring-2 ring-inset ring-flood/60">
+                    <span className="text-2xl">🎯</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-disp text-[15px] font-extrabold text-ink">
+                        {(d.perfect ?? 0) > 1 ? `${d.perfect} agents went perfect` : `An agent went ${d.perfect_n}/${d.perfect_n}`}
+                        {" — "}{dayLabel(d.day, { weekday: "long", day: "numeric", month: "short" })}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[11px] text-ink-mute">
+                        {(d.perfect ?? 0) > 1
+                          ? `biggest sweep ${d.perfect_n}/${d.perfect_n} · every pick delivered, every pick landed`
+                          : "its whole delivered card, every pick landed"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* day by day — each day its own tiny card */}
+            <h2 className="mt-12 font-disp text-xl font-bold text-chalk">Day by day — the last 30 days</h2>
+            <p className="mt-1 text-[13.5px] text-onpitch-mute">
+              Wins and misses for every day, newest first. Bad days stay on the board. 🎯 = an agent swept its card.
+            </p>
+            <div className="mt-4 grid grid-cols-3 gap-2.5 sm:grid-cols-5">
+              {r.days.map((d) => {
+                const lost = d.graded - d.won;
+                const hasPerfect = (d.perfect ?? 0) > 0;
+                return (
+                  <div key={d.day} className={`relative rounded-xl bg-chalk-2 p-3 shadow-xl ${hasPerfect ? "ring-2 ring-inset ring-flood/60" : ""}`}>
+                    {hasPerfect && <span className="absolute right-2 top-2 text-[13px]" title="An agent swept its card">🎯</span>}
+                    <div className="font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
+                      {dayLabel(d.day, { weekday: "short", day: "2-digit", month: "short" })}
+                    </div>
+                    <div className="mt-1.5 font-disp text-lg font-extrabold leading-none text-ink">
+                      <span className="text-grass-deep">{d.won}</span>
+                      <span className="text-ink-mute">–</span>
+                      <span className={lost > 0 ? "text-brick" : "text-ink-mute"}>{lost}</span>
+                    </div>
+                    <div className="mt-1 font-mono text-[10px] text-ink-mute">{pct(d.won, d.graded)}% of {d.graded}</div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* claimed vs landed */}
             {r.bands.length > 0 && (
-              <div className="mt-10 rounded-3xl bg-chalk-2 p-6 shadow-xl sm:p-8">
-                <h2 className="font-disp text-lg font-bold text-ink">Claimed confidence vs what landed</h2>
-                <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-ink-mute">
+              <>
+                <h2 className="mt-12 font-disp text-xl font-bold text-chalk">Claimed confidence vs what landed</h2>
+                <p className="mt-1 max-w-[52ch] text-[13.5px] leading-relaxed text-onpitch-mute">
                   Each pick is delivered with the model&apos;s own probability. Here is what every
                   confidence band claimed on average — and what it actually delivered. When a band
                   runs under its claim, it says so, and the engine stops delivering the bet types
                   responsible.
                 </p>
-                <table className="mt-4 w-full text-left">
-                  <thead>
-                    <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-wide text-ink-mute">
-                      <th className="py-2.5 font-medium">Band</th>
-                      <th className="py-2.5 text-right font-medium">Claimed</th>
-                      <th className="py-2.5 text-right font-medium">Landed</th>
-                      <th className="py-2.5 text-right font-medium">Picks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.bands.map((b) => {
-                      const actual = pct(b.won, b.n);
-                      const delta = actual - b.claimed;
-                      return (
-                        <tr key={b.band} className="border-t border-ink/[0.06] font-mono text-[12.5px] text-ink">
-                          <td className="py-2.5">{b.band}–{b.band + 9}%</td>
-                          <td className="py-2.5 text-right text-ink-mute">{b.claimed}%</td>
-                          <td className={`py-2.5 text-right font-bold ${delta >= 0 ? "text-grass-deep" : "text-flood-deep"}`}>
-                            {actual}%
-                          </td>
-                          <td className="py-2.5 text-right text-ink-mute">{b.n}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                <div className="mt-4 overflow-hidden rounded-2xl bg-chalk-2 shadow-xl">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-ink/10 font-mono text-[10px] uppercase tracking-wide text-ink-mute">
+                        <th className="px-4 py-2.5 font-medium">Band</th>
+                        <th className="px-2 py-2.5 text-right font-medium">Claimed</th>
+                        <th className="px-2 py-2.5 text-right font-medium">Landed</th>
+                        <th className="px-4 py-2.5 text-right font-medium">Picks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.bands.map((b) => {
+                        const actual = pct(b.won, b.n);
+                        const delta = actual - b.claimed;
+                        return (
+                          <tr key={b.band} className="border-t border-ink/[0.06] font-mono text-[12.5px] text-ink">
+                            <td className="px-4 py-2.5">{b.band}–{b.band + 9}%</td>
+                            <td className="px-2 py-2.5 text-right text-ink-mute">{b.claimed}%</td>
+                            <td className={`px-2 py-2.5 text-right font-bold ${delta >= 0 ? "text-grass-deep" : "text-flood-deep"}`}>
+                              {actual}%
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-ink-mute">{b.n}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </>
         )}
