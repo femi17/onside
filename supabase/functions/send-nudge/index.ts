@@ -13,7 +13,9 @@
 // send failure — reruns and stray invocations can never double-touch anyone. On top of that,
 // a GLOBAL weekly cooldown (owner-ruled): at most ONE nudge touch per user per 7 days across
 // every kind and channel (`nudge:last:{user}`). A cooldown-blocked nudge is NOT claimed — it
-// simply waits and fires on the first tick after the week passes. The copy earns its weight
+// simply waits and fires on the first tick after the week passes. EXCEPTION (owner-ruled
+// 2026-08-26): perfect-day congratulations BYPASS the cap — an earned, time-sensitive reward
+// always sends — but still stamp the cooldown so other marketing waits behind it. The copy earns its weight
 // with real numbers (fixtures today, their own graded picks, the platform week), never
 // manufactured urgency.
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -251,7 +253,8 @@ Deno.serve(async (_req) => {
   // so a user with several perfect agents on the same day hears about the biggest batch only
   const { data: pdRows } = await sb.rpc("perfect_day_targets");
   for (const r of (pdRows ?? []) as PerfectRow[]) {
-    if (!canTouch(r.user_id)) { skipped.push(`cooldown:perfect:${r.email}`); continue; }
+    // no canTouch gate here — congrats are earned and time-sensitive (owner-ruled bypass);
+    // the touched() stamp after sending still delays other marketing by a week
     const claimKey = `nudge:perfect:${r.user_id}:${r.day}`;
     const { error: dupe } = await sb.from("api_cache").insert({
       cache_key: claimKey, payload: { email: r.email, agent: r.agent, n: r.n, at: new Date().toISOString() },
