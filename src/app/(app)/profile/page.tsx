@@ -8,6 +8,7 @@ import CancelSubscription from "@/components/CancelSubscription";
 import ChangePassword from "@/components/ChangePassword";
 import NotificationSettings from "@/components/NotificationSettings";
 import AppVersionStatus from "@/components/AppVersionStatus";
+import DeleteAccount from "@/components/DeleteAccount";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 
@@ -138,6 +139,9 @@ async function ProfileData() {
         <div className="mb-2 font-disp text-[17px] font-bold">App</div>
         <AppVersionStatus />
       </section>
+
+      {/* danger zone — permanent account deletion, last on purpose */}
+      <DeleteAccount />
 
       <div className="mt-5 md:hidden">
         <SignOutButton />
