@@ -7,22 +7,19 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const SB_KEY = Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, SB_KEY);
 const SITE = "https://onside.com.ng";
-const OWNER_EMAIL = "tyewoduola@gmail.com";
 
 Deno.serve(async (_req) => {
   const { data: token } = await sb.rpc("get_secret", { secret_name: "telegram_bot_token" });
   if (!token) return Response.json({ error: "no telegram token" }, { status: 500 });
 
-  // the owner's DM chat — profiles.telegram_chat_id via the admin listUsers-free path
-  const { data: owner } = await sb
-    .from("profiles").select("telegram_chat_id, id")
+  // the pack goes to every ADMIN with a linked Telegram — the account(s) the owner actually
+  // uses day to day, not a hardcoded email (the first send went to the test account's chat)
+  const { data: admins } = await sb
+    .from("profiles").select("telegram_chat_id")
+    .eq("is_admin", true)
     .not("telegram_chat_id", "is", null);
-  let chatId: number | null = null;
-  for (const p of owner ?? []) {
-    const { data: u } = await sb.auth.admin.getUserById(p.id as string);
-    if (u?.user?.email === OWNER_EMAIL) { chatId = Number(p.telegram_chat_id); break; }
-  }
-  if (!chatId) return Response.json({ error: "owner has no telegram link" }, { status: 500 });
+  const chatIds = (admins ?? []).map((p: { telegram_chat_id: number }) => Number(p.telegram_chat_id));
+  if (!chatIds.length) return Response.json({ error: "no admin has a telegram link" }, { status: 500 });
 
   // yesterday's headline for the caption (same source the flyer renders from)
   let head = "";
@@ -34,20 +31,22 @@ Deno.serve(async (_req) => {
 
   const bust = new Date().toISOString().slice(0, 10);
   const sent: string[] = [];
-  for (const [name, size] of [["story", "story"], ["feed", "feed"]] as const) {
-    const resp = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        photo: `${SITE}/flyer/results?size=${size}&d=${bust}`,
-        caption: name === "story"
-          ? `🗞 Daily flyer pack — yesterday${head ? `: ${head}` : ""}.\nStory size (WhatsApp status / IG story / reel). Feed size follows.`
-          : "Feed size (IG post / X).",
-      }),
-    });
-    const j = await resp.json();
-    sent.push(`${name}:${j?.ok === true ? "ok" : JSON.stringify(j?.description ?? j)}`);
+  for (const chatId of chatIds) {
+    for (const [name, size] of [["story", "story"], ["feed", "feed"]] as const) {
+      const resp = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          photo: `${SITE}/flyer/results?size=${size}&d=${bust}`,
+          caption: name === "story"
+            ? `🗞 Daily flyer pack — yesterday${head ? `: ${head}` : ""}.\nStory size (WhatsApp status / IG story / reel). Feed size follows.`
+            : "Feed size (IG post / X).",
+        }),
+      });
+      const j = await resp.json();
+      sent.push(`${chatId}:${name}:${j?.ok === true ? "ok" : JSON.stringify(j?.description ?? j)}`);
+    }
   }
   return Response.json({ sent });
 });
