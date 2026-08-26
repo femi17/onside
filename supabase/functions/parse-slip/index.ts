@@ -79,6 +79,8 @@ Mapping guide for the engine markets: "1X"/home or draw -> double_chance_1x; "X2
 WHOLE-NUMBER goal lines (CRITICAL): "Over 1", "Over 2", "Under 3" — any goal line WITHOUT .5 — is a DIFFERENT bet from the .5 line: it PUSHES (voids) when the total lands exactly on the number. NEVER round or convert it to a .5 line. Use market_key "custom" with market_label exactly "Over N goals"/"Under N goals" keeping the printed number (e.g. "Over 1 goals"), value "", line = the printed whole number. Copy the printed line digit-for-digit into raw_market too.
 HALF SCOPE (CRITICAL, applies to EVERY market): if a selection is scoped to a half ("1st Half", "2nd Half", "First Half", "HT"), the market_label MUST start with that scope — e.g. "1st half - Under 1.5", "2nd half - Over 0.5" — even when the printed layout shows the half only in the grey market header. A half bet whose label loses the half becomes a WHOLE-MATCH bet in the tracker and settles wrongly. This includes lines with no engine key (e.g. Under 1.5 → custom, label "1st half - Under 1.5").
 TEAM TOTALS (read carefully — this is common and easy to miss): a plain Over/Under with NO team attached counts BOTH teams' goals (use over_x_5/under_x_5). But an Over/Under is a SINGLE-TEAM total whenever a team's name is attached to it — INCLUDING when the bold line shows only "Over N"/"Under N" and a nearby subtitle or market description reads "<Team> Over/Under", "<Team> Total", or "<Team> Goals". This is exactly how SportyBet and many bookmakers label a team total: e.g. a subtitle "Kuopion Palloseura Over/Under" with a bold "Over 0.5" means Kuopion Palloseura's goals over 0.5 — NOT the match total. Inline forms count too ("Barcelona Over 1.5", "Man City Total Over 2.5"). For ANY single-team total, do NOT use the total over_x_5/under_x_5 keys — use market_key "custom" with market_label "Home over N" / "Home under N" when the named team is the fixture's HOME team, or "Away over N" / "Away under N" when it is the AWAY team (N = the printed line, keep over/under exactly as shown). Decide home vs away by matching the named team to the home/away teams you read for that fixture. Only treat an Over/Under as the match total when NO team name is attached to it.
+COMBO selections (CRITICAL): a selection that joins a result and a second condition — "Draw or Over 2.5", "Home Team or GG", "1X & Over 2.5", "Draw/Away & Under 4.5" — must use market_key "custom" with market_label copying the printed selection EXACTLY. NEVER flatten a combo onto the single market key: "Draw or Over 2.5" is NOT over_2_5 (it also wins on a 0-0 draw), "Draw or GG" is NOT draw.
+ASSISTS markets (team or player assists) can never be graded here: market_key "custom", market_label as printed — never home_to_score/away_to_score.
 EVERYTHING ELSE uses market_key "custom": set market_label to a short human name for the market and use the "value" field for the specific detail:
 - Player markets (anytime/first/last goalscorer, player to be carded/booked/sent off, to score a header/free-kick, player shots/shots on target/saves/assists/fouls/offsides/passes, to score or assist, most goals/shots/assists): market_label = the market name (e.g. "Anytime goalscorer", "Player to be carded"), value = the PLAYER NAME exactly as printed (include an N+ line if shown, e.g. "Osorio, Jonathan 2+").
 - Correct score / HT-FT / handicap / multigoals / goal range / winning margin: market_label = the market name, value = the exact selection (e.g. "2-1", "1/2", "-1.5", "2-3").
@@ -383,6 +385,28 @@ Deno.serve(async (req) => {
             label = `${isHome ? match.home_team : match.away_team} ${sd} ${ln}`;
           }
         }
+      }
+      // COMBO re-key, deterministically: the model keeps flattening "result OR/AND condition"
+      // prints onto a single-leg key ("Draw or Over 2.5" → over_2_5), which grades the WRONG bet —
+      // a 0-0 wins the combo but loses the flattened key. Detect the combo shape in the printed
+      // text and send the leg down as "custom" with the combo label intact: the tracker's
+      // recognizer (betCatalog) owns combo parsing and maps it to the real gradeable key
+      // (result_or_ou / result_or_btts / dc_ou / dc_btts / result_ou / result_btts).
+      const comboSrc = `${s.market_label ?? ""} ${s.raw_market ?? ""} ${value}`;
+      const comboRe = /\b(1x|x2|12|(?:home|draw|away)(?:\s*team)?(?:\s*[\/,]\s*(?:home|draw|away))?)\s*(?:or|&|and)\s*((?:over|under)\s*\d+(?:[.,]\d)?|gg|ng|btts|both\s*teams?\s*to\s*score|no\s*goal|clean\s*sheet)/i;
+      if (mk !== "custom" && comboRe.test(comboSrc)) {
+        mk = "custom";
+        label = s.market_label || s.raw_market || label;
+        side = null;
+        outLine = null;
+      }
+      // Assists guard: no assists data exists, so an assists market can never auto-grade — the
+      // model shoehorns "Team Assists" into home_to_score, which would settle as "to score".
+      if (mk !== "custom" && /assist/i.test(comboSrc)) {
+        mk = "custom";
+        label = s.market_label || s.raw_market || label;
+        side = null;
+        outLine = null;
       }
       // A label with no words lost its market text entirely ("Excluded number of Goals - Home 0"
       // came back as just "0"). raw_market keeps the verbatim print — rebuild the label from it

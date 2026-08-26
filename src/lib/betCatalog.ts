@@ -540,7 +540,11 @@ export function recognizeBet(input: string): RecognizedBet | null {
     const hasBtts = /\bgg\b|\bng\b|both\s*(?:teams?\s*)?to\s*score|btts/.test(raw);
     const bttsNo = /\bng\b/.test(raw) || (/\bno\b/.test(raw) && !/\bng\b/.test(raw));
     const ouM = raw.match(/\b(over|under)\s*([0-9]+(?:\.5)?)/);
-    const dc = /\b1x\b|home\s*or\s*draw/.test(raw) ? "1x" : /\bx2\b|draw\s*or\s*away/.test(raw) ? "x2" : /\b12\b|home\s*or\s*away/.test(raw) ? "12" : null;
+    // slash/comma prints count too — SportyBet writes "Draw/Away & Under 4.5" for X2 & U4.5;
+    // missing them made the r1 fallback read only the first word and grade a stricter bet
+    const dc = /\b1x\b|home\s*(?:or|\/|,)\s*draw|draw\s*(?:\/|,)\s*home/.test(raw) ? "1x"
+      : /\bx2\b|draw\s*(?:or|\/|,)\s*away|away\s*(?:\/|,)\s*draw/.test(raw) ? "x2"
+      : /\b12\b|home\s*(?:or|\/|,)\s*away|away\s*(?:\/|,)\s*home/.test(raw) ? "12" : null;
     const r1 = !dc ? (/\bhome\b/.test(raw) ? "home" : /\bdraw\b/.test(raw) ? "draw" : /\baway\b/.test(raw) ? "away" : null) : null;
     const gg = bttsNo ? "no" : "yes";
     if (r1 && hasBtts) return wp({ marketKey: "result_btts", label: `${cap(r1)} & ${bttsNo ? "NG" : "GG"}`, line: null, side: r1, gradeable: true, period, value: gg });
@@ -553,14 +557,18 @@ export function recognizeBet(input: string): RecognizedBet | null {
   // ---- "result OR condition" combos: Yes wins if EITHER leg happens. Only fires when a result token
   //      is paired with a CONDITION via "or", so plain "home or draw" stays Double Chance. FT only. ----
   if (/\bor\b|\|/.test(raw)) {
-    const resTok = /\bhome\b/.test(raw) ? "home" : /\bdraw\b/.test(raw) ? "draw" : /\baway\b/.test(raw) ? "away" : null;
+    // a double-chance code can be the result leg too ("1X or Over 2.5") — the grader's
+    // resultLeg accepts 1x/x2/12 alongside home/draw/away
+    const dcTok = /\b1x\b/.test(raw) ? "1x" : /\bx2\b/.test(raw) ? "x2" : /\b12\b/.test(raw) ? "12" : null;
+    const resTok = dcTok ?? (/\bhome\b/.test(raw) ? "home" : /\bdraw\b/.test(raw) ? "draw" : /\baway\b/.test(raw) ? "away" : null);
+    const resLbl = dcTok ? dcTok.toUpperCase() : resTok ? cap(resTok) : "";
     const ouM = raw.match(/\b(over|under)\s*([0-9]+(?:\.5)?)/);
     const hasNG = /\bng\b/.test(raw);
     const hasGG = /\bgg\b|both\s*(?:teams?\s*)?to\s*score|\bbtts\b/.test(raw);
     const hasCS = /clean\s*sheet/.test(raw);
-    if (resTok && hasCS) return { marketKey: "result_or_cs", label: `${cap(resTok)} or clean sheet`, line: null, side: resTok, period: "ft", gradeable: true, value: null };
-    if (resTok && (hasGG || hasNG)) return { marketKey: "result_or_btts", label: `${cap(resTok)} or ${hasNG ? "NG" : "GG"}`, line: null, side: resTok, period: "ft", gradeable: true, value: hasNG ? "no" : "yes" };
-    if (resTok && ouM) return { marketKey: "result_or_ou", label: `${cap(resTok)} or ${cap(ouM[1])} ${ouM[2]}`, line: Number(ouM[2]), side: resTok, period: "ft", gradeable: true, value: ouM[1] };
+    if (resTok && hasCS) return { marketKey: "result_or_cs", label: `${resLbl} or clean sheet`, line: null, side: resTok, period: "ft", gradeable: true, value: null };
+    if (resTok && (hasGG || hasNG)) return { marketKey: "result_or_btts", label: `${resLbl} or ${hasNG ? "NG" : "GG"}`, line: null, side: resTok, period: "ft", gradeable: true, value: hasNG ? "no" : "yes" };
+    if (resTok && ouM) return { marketKey: "result_or_ou", label: `${resLbl} or ${cap(ouM[1])} ${ouM[2]}`, line: Number(ouM[2]), side: resTok, period: "ft", gradeable: true, value: ouM[1] };
   }
 
   // ---- corners: handicap / 1X2 / odd-even / range (graded from per-team corner totals) ----
@@ -793,6 +801,12 @@ export function recognizeBet(input: string): RecognizedBet | null {
       const name = playerName(s, hit[0]);
       const bareStat = !name && /^(shots on target|shots on goal|shots|saves|fouls|offsides|passes|assists?)$/.test(s);
       if (bareStat) break; // a bare stat word with no name is a MATCH market, handled above
+      // a generic team word where the player name should be ("Team Assists", "Home Team to be
+      // carded") is a TEAM market, not a player one — there is no data to grade it, so it must
+      // settle manually as custom instead of auto-grading against a phantom player
+      if (name && /^(team|home(?:\s*team)?|away(?:\s*team)?|either\s*team)$/i.test(name)) {
+        return wp({ marketKey: "custom", label: raw.trim(), line: null, side: null, gradeable: false, period, value: null });
+      }
       const label = name ? `${p.label} — ${name}` : p.label;
       return wp({ marketKey: p.key, label, line: null, side: null, gradeable: p.gradeable, period, value: name, needsValue: PLAYER });
     }
