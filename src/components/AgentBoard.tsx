@@ -521,13 +521,12 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
-export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false, admin24 = null }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean; admin24?: string[] | null }) {
+export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
   const router = useRouter();
   const [agent, setAgent] = useState<string | null>(null);
   // 🎯 The 24 (admin-only): ranked shortlist view — mutually exclusive with the agent tabs
-  const [show24, setShow24] = useState(false);
   const [tracked, setTracked] = useState<Set<string>>(() => new Set(initialTracked));
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -655,16 +654,9 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     if (pct != null && !pctChoices.includes(pct)) setPct(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pctChoices]);
-  // The-24 view renders the ranked list in RANK ORDER (the id array is the ranking);
-  // agent/% filters don't apply there — it's a curated cross-agent shortlist.
-  const filtered = show24 && admin24?.length
-    ? (() => {
-        const byId = new Map(picks.map((p) => [p.id, p]));
-        return admin24.map((id) => byId.get(id)).filter((p): p is AgentPick => !!p);
-      })()
-    : picks.filter(
-        (p) => (!agent || p.agent_name === agent) && (pct == null || pctOf(p) === pct),
-      );
+  const filtered = picks.filter(
+    (p) => (!agent || p.agent_name === agent) && (pct == null || pctOf(p) === pct),
+  );
 
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
   // same growth loop as slip sharing: mint token → /a/[token] landing + OG card. Hidden on
@@ -770,28 +762,19 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
           {/* agent switcher — broadcast-style underline tabs on a hairline baseline (not pills):
               the active agent gets a flood beam under it. Full-bleed sideways scroll on mobile
               so long agent names never wrap the strip. */}
-          {(agents.length > 1 || (admin24?.length ?? 0) > 0) && (
+          {agents.length > 1 && (
             <div className="no-scrollbar -mx-5 mt-6 flex items-end gap-5 overflow-x-auto border-b border-white/10 px-5 md:mx-0 md:px-0">
-              <Tab on={!show24 && agent === null} onClick={() => { setShow24(false); setAgent(null); }}>All agents</Tab>
-              {(admin24?.length ?? 0) > 0 && (
-                <Tab on={show24} onClick={() => { setShow24(true); setAgent(null); }}>🎯 The 24</Tab>
-              )}
+              <Tab on={agent === null} onClick={() => setAgent(null)}>All agents</Tab>
               {agents.map((a) => (
-                <Tab key={a} on={!show24 && agent === a} onClick={() => { setShow24(false); setAgent(a); }}>{a}</Tab>
+                <Tab key={a} on={agent === a} onClick={() => setAgent(a)}>{a}</Tab>
               ))}
             </div>
-          )}
-          {show24 && (
-            <p className="mt-3 font-mono text-[11px] leading-relaxed text-onpitch-mute">
-              Today&apos;s {admin24?.length ?? 0} most likely, ranked by graded history (exact bet cell → family
-              band → model), big model-vs-market gaps penalised. Staff-only view.
-            </p>
           )}
           {/* one control row: share on the left, model-% filter pushed right. The chips are
               this view's real deployed percentages (lowest → highest); the list can be long,
               so it scrolls sideways instead of wrapping into a wall. Tapping the active %
               clears it. On phones the filter wraps under the share button, still right-aligned. */}
-          {!show24 && (pctChoices.length > 0 || (shareSid && shareName)) && (
+          {(pctChoices.length > 0 || (shareSid && shareName)) && (
             <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
               {shareSid && shareName && (
                 <>
