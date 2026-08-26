@@ -1,5 +1,7 @@
-// community-broadcast: Claude-authored posts to the public @onsideai Telegram channel — 2x/day
-// since 2026-08-24 (morning_slate + results_recap; the other slots remain manually invocable).
+// community-broadcast: Claude-authored posts to the public @onsideai Telegram channel — 3x/day
+// since 2026-08-26: morning_slate (the day ahead), product_gap (afternoon — measures real
+// platform adoption and teaches the weakest habit, see below), results_recap (night).
+// Other slots remain manually invocable.
 // Fired by pg_cron via invoke_community_broadcast(slot). Each slot builds a data brief, Claude drafts
 // the copy under strict guardrails, a banned-phrase filter runs, a responsible-gambling footer is
 // appended, then it auto-posts. Every attempt is logged to channel_posts.
@@ -127,6 +129,63 @@ async function buildBrief(slot: string): Promise<{ theme: string; facts: string;
       .map((r) => `- ${fxName(r.fixtures)}: ${r.market_label ?? r.market_key}${r.bet_value ? ` ${r.bet_value}` : ""} ✅${r.fixtures?.ft_home != null ? ` (${r.fixtures.ft_home}-${r.fixtures.ft_away})` : ""}`).join("\n");
     const facts = `Last 24h: ${rows.length} agent picks settled, ${won} landed (${pct(hit)} hit rate).${notable ? `\nStandout wins:\n${notable}` : ""}`;
     return { theme: "results_recap", facts, instruction: "Write an honest results recap. Celebrate the wins and the hit rate without spinning it as guaranteed. Keep it credible." };
+  }
+
+  if (slot === "product_gap") {
+    // The calculated slot: measure what users are actually (not) doing on the platform and
+    // teach the weakest habit. Adoption numbers steer the CHOICE only — they never appear
+    // in the post (publishing low adoption reads as weakness). Rotation: skip topics covered
+    // in the last 4 gap posts so the channel doesn't nag about the same thing.
+    const [{ count: onboarded }, pushRows, { count: agentsTotal }, { count: agentsRuled }, slipRows, { count: joined }, { data: recentRows }] = await Promise.all([
+      sb.from("profiles").select("id", { count: "exact", head: true }).eq("onboarded", true),
+      sb.from("push_subscriptions").select("user_id").limit(10000),
+      sb.from("strategies").select("id", { count: "exact", head: true }),
+      sb.from("strategies").select("id", { count: "exact", head: true }).not("rule_text", "is", null).neq("rule_text", ""),
+      sb.from("screenshot_imports").select("user_id").limit(10000),
+      sb.from("profiles").select("id", { count: "exact", head: true }).not("handle", "is", null),
+      sb.from("channel_posts").select("theme").eq("slot", "product_gap").eq("status", "posted").order("created_at", { ascending: false }).limit(4),
+    ]);
+    const denom = Math.max(1, onboarded ?? 1);
+    const pushUsers = new Set((pushRows.data ?? []).map((r: { user_id: string }) => r.user_id)).size;
+    const slipUsers = new Set((slipRows.data ?? []).map((r: { user_id: string }) => r.user_id)).size;
+    const pushRate = pushUsers / denom;
+
+    const topics = [
+      {
+        key: "pwa_install",
+        adoption: pushRate, // installs aren't tracked directly; push opt-in is the closest proxy
+        facts: "Onside installs on your phone like a real app — no app store. Android/Chrome: open Onside in the browser, tap the browser menu, choose 'Add to Home Screen'. iPhone/Safari: tap Share, then 'Add to Home Screen'. After that it opens full-screen from its own icon, one tap.",
+        instruction: "Teach readers to install Onside on their phone home screen using exactly these steps. Frame it as the one-minute upgrade that makes the tracker feel like a real app.",
+      },
+      {
+        key: "push_on",
+        adoption: pushRate,
+        facts: "Onside can push alerts: goals on games you track, the verdict the moment your pick lands or misses, and your agent's fresh picks. Turn it on inside Onside: Profile → Notifications → allow.",
+        instruction: "Convince readers to switch notifications on so they never follow a tracked game blind. Use the steps exactly as given.",
+      },
+      {
+        key: "agent_rules",
+        adoption: (agentsRuled ?? 0) / Math.max(1, agentsTotal ?? 1),
+        facts: "An Onside agent takes its rule in plain English — examples that work well: 'only home teams with strong last-5 form', 'skip cup games', 'only overs when both teams score freely'. One clear condition beats five vague ones. The engine reads the rule and applies it to every day's hunt.",
+        instruction: "Teach how to write a sharp agent rule, quoting 1-2 of the example rules verbatim. Position rule-writing as the skill that separates a decent agent from a great one.",
+      },
+      {
+        key: "slip_upload",
+        adoption: slipUsers / denom,
+        facts: "Any betslip screenshot works on Onside: tap Add, upload the screenshot, and every leg starts tracking itself live — goals, corners, cards — settled exactly how the bookie settles. No typing.",
+        instruction: "Show how effortless slip tracking is — screenshot in, every leg live. Aim at people still checking results one app at a time.",
+      },
+      {
+        key: "community",
+        adoption: (joined ?? 0) / denom,
+        facts: "Onside has a community feed: share a slip, see the agents other people built, talk tactics, and — if you opt in — climb a leaderboard ranked by real graded results, misses included.",
+        instruction: "Invite readers into the community side of Onside — the feed and the opt-in leaderboard where only real graded results decide the ranking.",
+      },
+    ];
+    const recent = new Set((recentRows ?? []).map((r: { theme: string }) => r.theme.replace(/^gap:/, "")));
+    const pool = topics.filter((t) => !recent.has(t.key));
+    const pick = (pool.length ? pool : topics).sort((a, b) => a.adoption - b.adoption)[0];
+    return { theme: `gap:${pick.key}`, facts: pick.facts, instruction: pick.instruction };
   }
 
   if (slot === "community_spotlight") {
