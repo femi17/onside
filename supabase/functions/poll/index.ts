@@ -792,6 +792,33 @@ async function settleHalfTime(fixtureId: number) {
   return all.length;
 }
 
+// OWNER RULE: standard markets settle on the 90' score — extra time only exists for the
+// to-qualify markets. The moment a game enters ET/BT/P, regulation is over and the provider's
+// score.fulltime (stored as ft_home/ft_away) is the settling score: grade every open bet NOW
+// except (a) to-qualify — ET's whole purpose, (b) corner/stat markets — their provider totals
+// keep counting through ET and the FT+grace reconcile owns their finals, (c) penalty-occurrence
+// markets — the parsed penalty flag can't tell a 90' pen from an ET one. Event facts are
+// trimmed to minute ≤ 90 so an ET goal can never grade a 90' bet. Idempotent per poll tick.
+const REGULATION_SKIP = new Set(["home_to_qualify", "away_to_qualify", "penalty_match", "penalty_scored"]);
+async function settleRegulation(fixtureId: number): Promise<number> {
+  const cols = "id,market_key,side,line,period,bet_value";
+  const { data: ts } = await sb.from("tickets").select(cols).eq("fixture_id", fixtureId).in("status", ["pending", "live"]);
+  const { data: aps } = await sb.from("agent_picks").select(cols).eq("fixture_id", fixtureId).in("status", ["pending", "live"]);
+  const { data: dls } = await sb.from("deliveries").select(cols).eq("fixture_id", fixtureId).eq("result", "pending");
+  const keep = (r: any) => !REGULATION_SKIP.has(r.market_key) && !CORNER_MARKETS.has(r.market_key) && !STAT_MARKETS.has(r.market_key);
+  const t2 = (ts ?? []).filter(keep), a2 = (aps ?? []).filter(keep), d2 = (dls ?? []).filter(keep);
+  const all = [...t2, ...a2, ...d2];
+  if (!all.length) return 0;
+  const facts = await buildFacts(fixtureId, all);
+  // regulation facts only: goals/cards past the 90th minute belong to the qualifier, not the bet
+  facts.goals = facts.goals.filter((g: any) => (g.min ?? 0) <= 90);
+  facts.cards = facts.cards.filter((c: any) => (c.min ?? 0) <= 90);
+  await settleRows("tickets", t2, facts);
+  await settleRows("agent_picks", a2, facts);
+  await settleRows("deliveries", d2, facts, "result");
+  return all.length;
+}
+
 async function poll() {
   const now = Date.now();
   const nowIso = new Date().toISOString();
@@ -882,6 +909,14 @@ async function poll() {
         + (await revertVarSettles("agent_picks", "status", id, hg, ag, regTime, short))
         + (await revertVarSettles("deliveries", "result", id, hg, ag, regTime, short));
       reverted += rv;
+    }
+
+    // regulation is over the moment extra time begins — settle the 90' markets now (owner
+    // rule: standard bets never wait out ET). Needs the provider's fulltime score present
+    // (stored into ft_home/ft_away by the fixture update above).
+    if (["ET", "BT", "P"].includes(short) && fx.score?.fulltime?.home != null && settleBudget > 0) {
+      settleBudget--;
+      settledLive += await settleRegulation(id);
     }
 
     const prev = prevById.get(id);
