@@ -17,10 +17,12 @@ export const metadata: Metadata = {
     "Every AI agent pick on Onside is graded in the open — landed or missed, the record stays up. See the live platform-wide results and what claimed confidence actually delivers.",
 };
 
+type PerfectLeg = { home: string; away: string; market: string; score: string | null };
 type RecordData = {
   all_time: { graded: number; won: number; since: string | null };
   today_delivered: number;
   days: { day: string; graded: number; won: number; perfect?: number; perfect_n?: number | null }[];
+  perfect_details?: { day: string; sweeps: { n: number; legs: PerfectLeg[] }[] }[];
   bands: { band: number; n: number; won: number; claimed: number }[];
 };
 
@@ -40,8 +42,9 @@ const dayLabel = (iso: string, opts: Intl.DateTimeFormatOptions) =>
 
 export default async function RecordPage() {
   const r = await loadRecord();
-  // the perfect-day spotlight: most recent days where an individual agent swept its card
-  const perfectDays = (r?.days ?? []).filter((d) => (d.perfect ?? 0) > 0).slice(0, 3);
+  // the perfect-day spotlight: most recent days where an individual agent swept its card,
+  // with the actual winning legs to expand into
+  const perfectDays = r?.perfect_details ?? [];
 
   return (
     <>
@@ -93,25 +96,58 @@ export default async function RecordPage() {
               voids excluded
             </p>
 
-            {/* perfect-day spotlight — an individual agent swept its whole card */}
+            {/* perfect-day spotlight — an individual agent swept its whole card; each card
+                is an accordion that opens into the actual winning games */}
             {perfectDays.length > 0 && (
               <div className="mt-8 flex flex-col gap-2">
-                {perfectDays.map((d) => (
-                  <div key={d.day} className="flex items-center gap-3 rounded-2xl bg-chalk-2 p-4 shadow-xl ring-2 ring-inset ring-flood/60">
-                    <span className="text-2xl">🎯</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-disp text-[15px] font-extrabold text-ink">
-                        {(d.perfect ?? 0) > 1 ? `${d.perfect} agents went perfect` : `An agent went ${d.perfect_n}/${d.perfect_n}`}
-                        {" — "}{dayLabel(d.day, { weekday: "long", day: "numeric", month: "short" })}
-                      </p>
-                      <p className="mt-0.5 font-mono text-[11px] text-ink-mute">
-                        {(d.perfect ?? 0) > 1
-                          ? `biggest sweep ${d.perfect_n}/${d.perfect_n} · every pick delivered, every pick landed`
-                          : "its whole delivered card, every pick landed"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
+                {perfectDays.map((d, di) => {
+                  const total = d.sweeps.length;
+                  const biggest = d.sweeps[0]?.n ?? 0;
+                  return (
+                    <details key={d.day} open={di === 0} className="group rounded-2xl bg-chalk-2 shadow-xl ring-2 ring-inset ring-flood/60">
+                      <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
+                        <span className="text-2xl">🎯</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-disp text-[15px] font-extrabold text-ink">
+                            {total > 1 ? `${total} agents went perfect` : `An agent went ${biggest}/${biggest}`}
+                            {" — "}{dayLabel(d.day, { weekday: "long", day: "numeric", month: "short" })}
+                          </p>
+                          <p className="mt-0.5 font-mono text-[11px] text-ink-mute">
+                            {total > 1
+                              ? `biggest sweep ${biggest}/${biggest} · tap to see every game`
+                              : "every pick landed · tap to see the games"}
+                          </p>
+                        </div>
+                        <span className="flex-none font-mono text-[12px] text-ink-mute transition-transform group-open:rotate-90">▶</span>
+                      </summary>
+                      <div className="flex flex-col gap-4 border-t border-dashed border-ink/15 px-4 pb-4 pt-3">
+                        {d.sweeps.map((s, si) => (
+                          <div key={si}>
+                            {total > 1 && (
+                              <p className="mb-1 font-mono text-[10.5px] font-bold uppercase tracking-wide text-ink-mute">
+                                Agent {si + 1} · {s.n}/{s.n}
+                              </p>
+                            )}
+                            <div className="flex flex-col divide-y divide-ink/[0.06]">
+                              {s.legs.map((l, li) => (
+                                <div key={li} className="flex items-center gap-3 py-2">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[13.5px] font-bold text-ink">
+                                      {l.home} <span className="font-normal text-ink-mute">v</span> {l.away}
+                                    </p>
+                                    <p className="mt-0.5 truncate font-mono text-[11px] text-ink-mute">{l.market}</p>
+                                  </div>
+                                  {l.score && <span className="flex-none font-mono text-[13px] font-bold text-ink">{l.score}</span>}
+                                  <span className="flex-none rounded-full bg-grass/15 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-grass-deep">won</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  );
+                })}
               </div>
             )}
 
