@@ -25,6 +25,9 @@ const CATEGORY_DEFAULT_ON: Record<string, boolean> = {
   // goals/build_up/cards are opt-in for noise.
   agent_picks: false, agent_games: false, results: true, kickoff: true, full_time: true, goals: false,
   community: true, build_up: false, cards: false,
+  // swing = a goal flipped a result-market pick's live verdict (on-track ↔ behind).
+  // High-signal by construction, so default ON — raw every-goal stays the opt-in 'goals'.
+  swing: true,
 };
 
 async function getSecret(name: string): Promise<string | null> {

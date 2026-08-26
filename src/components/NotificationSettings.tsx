@@ -33,6 +33,7 @@ export default function NotificationSettings({ userId }: { userId: string }) {
           agent_picks: data.agent_picks, agent_games: data.agent_games ?? false, results: data.results, kickoff: data.kickoff,
           full_time: data.full_time, goals: data.goals, cards: data.cards ?? false,
           build_up: data.build_up ?? false, community: data.community,
+          swing: data.swing ?? true, // verdict-flipping goals — default ON
         });
       }
     })();

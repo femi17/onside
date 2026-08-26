@@ -7,14 +7,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const VAPID = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
 // Category defaults MUST mirror send-push's CATEGORY_DEFAULT_ON so the UI and the sender agree.
-export type NotifCategory = "agent_picks" | "agent_games" | "results" | "kickoff" | "full_time" | "goals" | "cards" | "build_up" | "community";
+export type NotifCategory = "agent_picks" | "agent_games" | "results" | "kickoff" | "full_time" | "goals" | "cards" | "build_up" | "community" | "swing";
 export const CATEGORY_DEFAULTS: Record<NotifCategory, boolean> = {
-  agent_picks: false, agent_games: false, results: true, kickoff: true, full_time: true, goals: false, cards: false, build_up: false, community: true,
+  agent_picks: false, agent_games: false, results: true, kickoff: true, full_time: true, goals: false, cards: false, build_up: false, community: true, swing: true,
 };
 export const CATEGORY_META: { key: NotifCategory; label: string; desc: string }[] = [
   { key: "agent_picks", label: "Agent predictions", desc: "When your agent submits new picks (off by default — picks always show in the app)" },
   { key: "agent_games", label: "Agent game alerts", desc: "Live build-up and results for your agents' picked games (off by default)" },
   { key: "results", label: "Results", desc: "When your picks land or miss" },
+  { key: "swing", label: "Bet swings", desc: "A goal puts your 1X2/double-chance pick ahead or behind — only verdict-changing goals" },
   { key: "kickoff", label: "Kick-off", desc: "When a match you're on starts" },
   { key: "full_time", label: "Full-time", desc: "When a match you're on ends" },
   { key: "goals", label: "Goals", desc: "Every goal in a match you're on (can get busy)" },
