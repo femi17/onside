@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -14,6 +14,26 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // post-signup confirmation state: replaces the form entirely so a slow inbox can't tempt
+  // repeat "Create account" clicks (each signUp call re-sends the confirmation email)
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resendAt, setResendAt] = useState(0); // epoch ms when Resend unlocks
+
+  // 1s tick while the inbox screen shows, so the Resend countdown label stays live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!sentTo) return;
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [sentTo]);
+
+  async function handleResend() {
+    if (Date.now() < resendAt || !sentTo) return;
+    setResendAt(Date.now() + 60_000);
+    setMsg(null);
+    const { error } = await supabase.auth.resend({ type: "signup", email: sentTo });
+    setMsg(error ? error.message : "Sent again — give it a minute.");
+  }
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -29,10 +49,12 @@ export default function LoginPage() {
       setMsg(error.message);
       return;
     }
-    // signup with no session = email confirmation is on; nothing to route yet
+    // signup with no session = email confirmation is on; swap to the check-your-inbox
+    // screen (the form disappears — no button left to hammer for more emails)
     if (mode === "signup" && !data.session) {
       setBusy(false);
-      setMsg("Check your email to confirm your account, then sign in.");
+      setSentTo(email);
+      setResendAt(Date.now() + 60_000);
       return;
     }
     // a brand-new account goes straight to onboarding; a returning one lands where it belongs —
@@ -73,6 +95,32 @@ export default function LoginPage() {
         </span>
       </Link>
 
+      {sentTo ? (
+        <>
+          <h1 className="font-disp text-3xl font-bold text-chalk">Check your inbox.</h1>
+          <p className="mt-2 text-sm text-onpitch-mute">
+            We&apos;ve sent a confirmation link to <span className="font-semibold text-chalk">{sentTo}</span>.
+            It can take a minute or two — check Spam and Promotions as well.
+          </p>
+          <button
+            onClick={handleResend}
+            disabled={Date.now() < resendAt}
+            className="mt-6 rounded-xl border border-white/15 bg-white/5 px-4 py-3 font-semibold text-chalk hover:bg-white/10 disabled:opacity-50"
+          >
+            {Date.now() < resendAt
+              ? `Resend available in ${Math.ceil((resendAt - Date.now()) / 1000)}s`
+              : "Resend email"}
+          </button>
+          {msg && <p className="mt-4 font-mono text-xs text-flood">{msg}</p>}
+          <button
+            onClick={() => { setSentTo(null); setMsg(null); setMode("signin"); }}
+            className="mt-6 text-center text-sm text-onpitch-mute hover:text-chalk"
+          >
+            Wrong email? Start over
+          </button>
+        </>
+      ) : (
+        <>
       <h1 className="font-disp text-3xl font-bold text-chalk">
         {mode === "signin" ? "Welcome back." : "Create your account."}
       </h1>
@@ -143,6 +191,8 @@ export default function LoginPage() {
           ? "New here? Create an account"
           : "Already have an account? Sign in"}
       </button>
+        </>
+      )}
       </div>
       <Footer />
     </>
