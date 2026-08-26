@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { recognizeBet, recognizedFromClassification, canonicalMarket } from "@/lib/betCatalog";
+import { recognizeBet, recognizedFromClassification, canonicalMarket, BET_CATALOG } from "@/lib/betCatalog";
 import { settleFixtureByScore } from "@/lib/settle";
 import { pixelTrackCustom } from "@/lib/metaPixel";
 
@@ -228,6 +228,62 @@ export default function ImportSlip({
   const [findQ, setFindQ] = useState("");
   const [findResults, setFindResults] = useState<Game[] | null>(null);
   const [finding, setFinding] = useState(false);
+
+  // inline "fix bet" editor — the market twin of Find game. The user types the bet in plain
+  // words and the glossary recognizer answers LIVE (it's synchronous): green = will auto-grade,
+  // amber = tracked but settles manually. Suggestion chips come from the catalog ranked by
+  // word overlap with what the screenshot read, so the likely fix is one tap away.
+  const [fixRow, setFixRow] = useState<number | null>(null);
+  const [fixQ, setFixQ] = useState("");
+
+  // will this leg auto-grade as read? Non-custom parse keys (incl. team totals) are engine
+  // keys already; custom legs auto-grade only if the recognizer maps their label.
+  const betAuto = (s: Sel): boolean =>
+    s.market_key !== "custom" ? true : !!recognizeBet(s.market_label || "")?.gradeable;
+
+  // top catalog picks whose words overlap the read text — only entries that RESOLVE to a
+  // gradeable selection on their own (market headers that still need a side/value are noise here)
+  function betSuggestions(seed: string): string[] {
+    const st = new Set(norm(seed).split(" ").filter((w) => w.length >= 3));
+    const out: string[] = [];
+    if (st.size) {
+      const scored = BET_CATALOG
+        .map((m) => ({ label: m.label, score: norm(m.label).split(" ").filter((w) => w.length >= 3 && st.has(w)).length }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+      for (const x of scored) {
+        const r = recognizeBet(x.label);
+        if (r?.gradeable && !r.needsValue && !out.includes(r.label)) out.push(x.label);
+        if (out.length >= 3) break;
+      }
+    }
+    for (const c of ["Home win", "Draw", "Away win", "Over 2.5", "GG", "1X"]) {
+      if (out.length >= 6) break;
+      if (!out.includes(c)) out.push(c);
+    }
+    return out;
+  }
+
+  // a market that still needs its value typed in (a player name, a score) isn't ready to grade
+  const recReady = (r: ReturnType<typeof recognizeBet>) => !!r?.gradeable && (!r.needsValue || !!r.value);
+
+  function applyFix(i: number) {
+    const txt = fixQ.trim();
+    if (!txt) return;
+    const rec = recognizeBet(txt);
+    const ready = recReady(rec);
+    setSels((xs) => xs!.map((x, j) => (j === i ? {
+      ...x,
+      market_key: ready ? rec!.marketKey : "custom",
+      market_label: ready ? rec!.label : txt,
+      side: ready ? rec!.side ?? null : null,
+      line: ready ? rec!.line ?? null : null,
+      value: ready ? rec!.value ?? null : null,
+      confidence: "high" as const, // a human just confirmed the bet
+    } : x)));
+    setFixRow(null);
+    setFixQ("");
+  }
 
   // bring a lost slip back: restore the draft once on mount (reload-proof recovery)
   useEffect(() => {
@@ -905,7 +961,57 @@ export default function ImportSlip({
                       const opening = findRow !== i;
                       setFindRow(opening ? i : null);
                       setFindQ(opening ? s.home : "");
+                      if (opening) setFixRow(null);
                     };
+                    const toggleFix = () => {
+                      const opening = fixRow !== i;
+                      setFixRow(opening ? i : null);
+                      setFixQ(opening ? (s.market_label || "") : "");
+                      if (opening) setFindRow(null);
+                    };
+                    const auto = betAuto(s);
+                    const fixPanel = fixRow !== i ? null : (() => {
+                      const rec = recognizeBet(fixQ.trim());
+                      return (
+                        <div className="mt-2.5 border-t border-dashed border-ink/15 pt-2.5">
+                          <input
+                            autoFocus
+                            value={fixQ}
+                            onChange={(e) => setFixQ(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") applyFix(i); }}
+                            placeholder="Type the bet — e.g. Draw or Over 2.5, Home win"
+                            className="w-full rounded-lg border border-flood-deep bg-white px-3 py-2 text-sm text-ink focus:outline-none"
+                          />
+                          <p className={`mt-1.5 font-mono text-[11px] ${recReady(rec) ? "text-grass-deep" : "text-flood-deep"}`}>
+                            {!fixQ.trim()
+                              ? "Describe the bet in plain words — the glossary reads as you type."
+                              : recReady(rec)
+                              ? `✓ Auto-grades as: ${rec!.label}`
+                              : rec?.gradeable && rec.needsValue
+                              ? `Almost — ${rec.needsValue.label.toLowerCase().replace("?", "")}: add it to the text (${rec.needsValue.placeholder ?? "as printed"}).`
+                              : "Tracked as written — you'll settle it manually when the game ends."}
+                          </p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {betSuggestions(`${s.market_label} ${s.value ?? ""}`).map((c) => (
+                              <button
+                                key={c}
+                                onClick={() => setFixQ(c)}
+                                className="rounded-full border border-ink/15 px-2.5 py-1 font-mono text-[10.5px] text-ink transition-colors hover:border-flood-deep"
+                              >
+                                {c}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => applyFix(i)}
+                            disabled={!fixQ.trim()}
+                            className="mt-2 rounded-lg bg-ink px-3.5 py-1.5 font-mono text-[11px] font-bold text-chalk-2 disabled:opacity-40"
+                          >
+                            Save bet
+                          </button>
+                        </div>
+                      );
+                    })();
                     // matched: a toggle row you tick to include, with "Change" to re-pick the game
                     if (trackable)
                       return (
@@ -948,9 +1054,21 @@ export default function ImportSlip({
                               >
                                 {findRow === i ? "Close" : "↻ Change"}
                               </button>
+                              {/* wrong or manual-settle bet? fix it in plain words — loud when unsure */}
+                              <button
+                                onClick={toggleFix}
+                                className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase transition-colors ${
+                                  auto
+                                    ? "text-ink-mute hover:bg-ink/5 hover:text-ink"
+                                    : "bg-flood/15 text-flood-deep hover:bg-flood/25"
+                                }`}
+                              >
+                                {fixRow === i ? "Close" : auto ? "✎ Bet" : "Fix bet"}
+                              </button>
                             </div>
                           </div>
                           {findPanel}
+                          {fixPanel}
                         </div>
                       );
                     // unmatched: show what we read + a "Find game" search to attach a fixture
@@ -964,14 +1082,27 @@ export default function ImportSlip({
                             </div>
                             <div className="truncate font-mono text-[11px] font-bold uppercase text-flood-deep">{s.market_label}</div>
                           </div>
-                          <button
-                            onClick={toggleFind}
-                            className="flex-none rounded-full bg-flood/15 px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25"
-                          >
-                            {findRow === i ? "Close" : "Find game"}
-                          </button>
+                          <div className="flex flex-none flex-col items-end gap-1">
+                            <button
+                              onClick={toggleFind}
+                              className="rounded-full bg-flood/15 px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase text-flood-deep transition-colors hover:bg-flood/25"
+                            >
+                              {findRow === i ? "Close" : "Find game"}
+                            </button>
+                            <button
+                              onClick={toggleFix}
+                              className={`rounded-full px-2.5 py-1 font-mono text-[9.5px] font-bold uppercase transition-colors ${
+                                auto
+                                  ? "text-ink-mute hover:bg-ink/5 hover:text-ink"
+                                  : "bg-flood/15 text-flood-deep hover:bg-flood/25"
+                              }`}
+                            >
+                              {fixRow === i ? "Close" : auto ? "✎ Bet" : "Fix bet"}
+                            </button>
+                          </div>
                         </div>
                         {findPanel}
+                        {fixPanel}
                       </div>
                     );
                   })}
