@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
             <span style={{ fontSize: 34, fontWeight: 800, color: INK }}>onside.com.ng</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 26 }}>
-            <span style={{ display: "flex", fontSize: 24, color: ONPITCH }}>Full record: onside.com.ng/record</span>
+            <span style={{ display: "flex", fontSize: 24, color: ONPITCH }}>Onside — Track better, bet better</span>
             <span style={{ display: "flex", fontSize: 24, color: ONPITCH }}>18+ · Bet responsibly</span>
           </div>
         </div>
