@@ -125,6 +125,31 @@ export async function POST(req: Request) {
     } catch { /* one-off month; renewal handled by resubscribing */ }
   }
 
+  if (!isUpgrade) {
+    // Paystack fires subscription.create within seconds of the charge — usually BEFORE this route
+    // has stored the customer code that webhook matches profiles on, so the subscription code it
+    // carried updates zero rows and is lost (cancel still works via the customer-code fallback,
+    // but "Active subs" undercounts). Backfill it here, now that the subscription exists.
+    try {
+      const customer = tx.customer?.customer_code;
+      if (customer) {
+        const cRes = await fetch(`https://api.paystack.co/customer/${encodeURIComponent(customer)}`, {
+          headers: { Authorization: `Bearer ${secret}` },
+          cache: "no-store",
+        });
+        const cBody = await cRes.json();
+        const subs = (cBody?.data?.subscriptions ?? []) as Array<{ subscription_code?: string; email_token?: string; status?: string }>;
+        const sub = subs.find((s) => s.status === "active" || s.status === "attention");
+        if (sub?.subscription_code) {
+          await admin
+            .from("profiles")
+            .update({ paystack_subscription_code: sub.subscription_code, paystack_email_token: sub.email_token ?? null })
+            .eq("id", user.id);
+        }
+      }
+    } catch { /* non-fatal — the cancel route resolves the sub from the customer code when needed */ }
+  }
+
   // record the payment for revenue reporting (deduped on the Paystack reference — the webhook's
   // charge.success may also fire for this same charge)
   await admin.from("payments").upsert(
