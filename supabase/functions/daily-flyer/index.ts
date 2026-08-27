@@ -29,7 +29,9 @@ Deno.serve(async (_req) => {
     if (d) head = `${d.won}W ${d.graded - d.won}L (${Math.round((d.won / Math.max(1, d.graded)) * 100)}%)`;
   } catch { /* caption stays generic */ }
 
-  const bust = new Date().toISOString().slice(0, 10);
+  // full timestamp, not the date: Telegram caches the downloaded file per URL, so a re-send
+  // after a fix must present a URL Telegram has never seen or it re-serves the stale image
+  const bust = Date.now();
   const sent: string[] = [];
   for (const chatId of chatIds) {
     for (const [name, size] of [["story", "story"], ["feed", "feed"]] as const) {
