@@ -52,8 +52,9 @@ export default async function AppLayout({
   // first-run: send brand-new accounts through onboarding (route lives outside this layout group).
   if (profile && profile.onboarded === false) redirect("/onboarding");
 
-  // api_usage is now a sharded counter — sum via the admin-gated RPC (null for non-admins)
-  const { data: apiToday } = await supabase.rpc("api_usage_today");
+  // api_usage is now a sharded counter — sum via the admin-gated RPC. Only admins ever see the
+  // number, so skip the round-trip entirely for everyone else (this layout renders on every page).
+  const apiToday = profile?.is_admin ? (await supabase.rpc("api_usage_today")).data : null;
 
   const planLabel =
     profile?.plan === "pro_max" ? "Pro Max" : profile?.plan === "pro" ? "Pro" : "Free";
@@ -78,17 +79,17 @@ export default async function AppLayout({
         <div className="mt-auto flex flex-col gap-3">
           <div className="rounded-xl border border-white/15 bg-pitch-2 p-3.5">
             <div className="flex items-center justify-between gap-2">
-              <Link href="/profile" className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute transition-colors hover:text-chalk">
+              <Link href="/profile" prefetch={false} className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute transition-colors hover:text-chalk">
                 Your plan
               </Link>
               {profile?.plan !== "pro_max" && (
-                <Link href={upgradeHref} className="font-mono text-[10px] font-bold uppercase tracking-wide text-flood transition-colors hover:text-flood-deep">
+                <Link href={upgradeHref} prefetch={false} className="font-mono text-[10px] font-bold uppercase tracking-wide text-flood transition-colors hover:text-flood-deep">
                   Upgrade &rarr;
                 </Link>
               )}
             </div>
             <div className="mt-1 font-bold text-chalk">{planLabel}</div>
-            <Link href="/profile" className="mt-1.5 block truncate font-mono text-[11px] text-flood hover:underline">
+            <Link href="/profile" prefetch={false} className="mt-1.5 block truncate font-mono text-[11px] text-flood hover:underline">
               {profile?.display_name ?? user.email}
             </Link>
           </div>

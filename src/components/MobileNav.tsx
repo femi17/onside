@@ -79,6 +79,7 @@ export default function MobileNav({
             <Link
               key={tab.href}
               href={tab.href}
+              prefetch={false}
               className={`flex flex-1 flex-col items-center gap-1 py-2.5 font-mono text-[10px] uppercase tracking-wide transition-colors ${
                 tab.accent ? "text-flood" : active ? "text-flood" : "text-onpitch-mute"
               }`}
@@ -139,6 +140,7 @@ export default function MobileNav({
                 <Link
                   key={n.label}
                   href={n.href}
+                  prefetch={false}
                   onClick={close}
                   className={`flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm font-semibold transition ${
                     active ? "bg-pitch-2 text-chalk" : "text-onpitch-mute hover:bg-pitch-2 hover:text-onpitch"
@@ -154,16 +156,16 @@ export default function MobileNav({
           <div className="mt-4 flex shrink-0 flex-col gap-3 border-t border-white/10 pt-4">
             <div className="rounded-xl border border-white/15 bg-pitch-2 p-3.5">
               <div className="flex items-center justify-between gap-2">
-                <Link href="/profile" onClick={close} className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute transition-colors hover:text-chalk">
+                <Link href="/profile" prefetch={false} onClick={close} className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute transition-colors hover:text-chalk">
                   Your plan · profile
                 </Link>
                 {upgradeHref && (
-                  <Link href={upgradeHref} onClick={close} className="font-mono text-[10px] font-bold uppercase tracking-wide text-flood transition-colors hover:text-flood-deep">
+                  <Link href={upgradeHref} prefetch={false} onClick={close} className="font-mono text-[10px] font-bold uppercase tracking-wide text-flood transition-colors hover:text-flood-deep">
                     Upgrade &rarr;
                   </Link>
                 )}
               </div>
-              <Link href="/profile" onClick={close} className="mt-1 block">
+              <Link href="/profile" prefetch={false} onClick={close} className="mt-1 block">
                 <div className="font-bold text-chalk">{planLabel}</div>
                 <div className="mt-1.5 truncate font-mono text-[11px] text-flood">{name}</div>
               </Link>

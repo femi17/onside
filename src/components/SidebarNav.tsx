@@ -14,6 +14,7 @@ export default function SidebarNav({ items }: { items: { label: string; href: st
           <Link
             key={n.label}
             href={n.href}
+            prefetch={false}
             className={`flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm font-semibold transition ${
               active ? "bg-pitch-2 text-chalk" : "text-onpitch-mute hover:bg-pitch-2 hover:text-onpitch"
             }`}
