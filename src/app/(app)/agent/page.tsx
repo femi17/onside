@@ -25,6 +25,10 @@ export default async function AgentPage() {
       "id, strategy_id, market_key, market_label, line, side, period, bet_value, result, settle_score, current_value, delivered_at, edge, model_prob, market_prob, tier, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away, corners_home_ht, corners_away_ht))"
     )
     .gte("delivered_at", sinceIso)
+    // a DELETED agent's settled picks survive with strategy_id nulled (immutable record). They
+    // have no agent name, so they'd bunch under a stray "Agent" tab on the feed — hide them here.
+    // The rows stay in the DB for the anonymised public record; they just don't render personally.
+    .not("strategy_id", "is", null)
     .order("delivered_at", { ascending: false })
     .limit(1000);
 
