@@ -72,6 +72,7 @@ const ELO_BASE = 1500;
 
 type Rate = { gf: number; ga: number; n: number }; // time-decay-weighted LEAGUE-RELATIVE ratio sums
 export type Ratings = {
+  seedElo?: (teamId: number) => number; // optional tier prior: starting Elo for teams (default ELO_BASE)
   elo: Map<number, number>;
   home: Map<number, Rate>; // a team's record WHEN AT HOME (ratios vs the match's own league means)
   away: Map<number, Rate>; // ...WHEN AWAY
@@ -103,7 +104,7 @@ function shrunkMean(e: { goals: number; n: number } | undefined, gMean: number, 
 }
 
 // ---------- build ratings from finished matches (two passes) ----------
-export function buildRatings(history: Match[], config: Partial<ForecastConfig> = {}): Ratings {
+export function buildRatings(history: Match[], config: Partial<ForecastConfig> = {}, seedElo?: (teamId: number) => number): Ratings {
   const cfg = { ...DEFAULTS, ...config };
   const matches = [...history].sort((a, b) => a.kickoff - b.kickoff); // chronological for Elo
   const now = matches.length ? matches[matches.length - 1].kickoff : Date.now();
@@ -132,7 +133,7 @@ export function buildRatings(history: Match[], config: Partial<ForecastConfig> =
 
   // PASS 2 — Elo (chronological) + league-relative attack/defence ratios (venue-split AND overall)
   const elo = new Map<number, number>();
-  const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
+  const getElo = (id: number) => elo.get(id) ?? seedElo?.(id) ?? ELO_BASE;
   const home = new Map<number, Rate>();
   const away = new Map<number, Rate>();
   const overall = new Map<number, Rate>();
@@ -165,7 +166,7 @@ export function buildRatings(history: Match[], config: Partial<ForecastConfig> =
     bump(overall, mt.awayId, na, nh, w);
   }
 
-  return { elo, home, away, overall, leagueHome, leagueAway, gHome, gAway, cfg };
+  return { seedElo, elo, home, away, overall, leagueHome, leagueAway, gHome, gAway, cfg };
 }
 
 // ---------- expected goals for a fixture ----------
@@ -178,8 +179,8 @@ export function teamLambdas(r: Ratings, homeId: number, awayId: number, leagueId
   const leagueHome = shrunkMean(r.leagueHome.get(lg), ghMean, cfg.leagueShrink);
   const leagueAway = shrunkMean(r.leagueAway.get(lg), gaMean, cfg.leagueShrink);
 
-  const eloH = r.elo.get(homeId) ?? ELO_BASE;
-  const eloA = r.elo.get(awayId) ?? ELO_BASE;
+  const eloH = r.elo.get(homeId) ?? r.seedElo?.(homeId) ?? ELO_BASE;
+  const eloA = r.elo.get(awayId) ?? r.seedElo?.(awayId) ?? ELO_BASE;
   // Elo → strength multiplier prior (relative to an average team). Used as the SHRINKAGE TARGET so a
   // team with few games leans on Elo instead of a neutral 1.0 (fixes promoted sides / cups / friendlies).
   const attPrior = (elo: number) => Math.exp((elo - ELO_BASE) / cfg.eloPerLogGoal);
