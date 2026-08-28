@@ -1229,10 +1229,54 @@ export default function StrategyBuilder({
             </div>
           </section>
 
-          {/* 03 rule */}
+          {/* 03 odds band */}
+          <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
+            <Step n="03" t="Odds band" hint="optional" />
+            <p className="mb-3 text-[13px] leading-snug text-ink-mute">
+              Only get picks whose price sits in a range you choose — skip the tiny 1.05 bankers, or hunt bigger prices. This filters on the same odds shown on each pick (<b className="text-ink">@</b> is a real bookmaker price, <b className="text-ink">~</b> an estimate). Leave on <b className="text-ink">Any odds</b> to send every price. Your rule below can lean on this — e.g. <span className="italic">“use the odds range above.”</span>
+            </p>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {ODDS_BANDS.map((b) => {
+                const on = oddsBandRow(minOdds, maxOdds).min_odds === b.min && oddsBandRow(minOdds, maxOdds).max_odds === b.max;
+                return (
+                  <button
+                    key={b.label}
+                    type="button"
+                    onClick={() => { setMinOdds(b.min != null ? String(b.min) : ""); setMaxOdds(b.max != null ? String(b.max) : ""); }}
+                    aria-pressed={on}
+                    className={`rounded-lg border px-3 py-2 font-mono text-[12px] font-bold transition ${on ? "border-flood-deep bg-flood/10 text-ink shadow-[inset_0_0_0_1px_var(--flood-deep)]" : "border-ink/15 bg-white text-ink hover:border-ink/30"}`}
+                  >
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-mute">
+              <span className="uppercase tracking-wide">or set a range</span>
+              <label className="flex items-center gap-1.5">min
+                <input
+                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={minOdds}
+                  onChange={(e) => setMinOdds(e.target.value)}
+                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
+                />
+              </label>
+              <label className="flex items-center gap-1.5">max
+                <input
+                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={maxOdds}
+                  onChange={(e) => setMaxOdds(e.target.value)}
+                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
+                />
+              </label>
+              {(minOdds || maxOdds) && (
+                <button type="button" onClick={() => { setMinOdds(""); setMaxOdds(""); }} className="rounded-lg border border-ink/15 px-2 py-1.5 text-[11px] font-bold text-ink-mute hover:border-ink/30 hover:text-ink">clear</button>
+              )}
+            </div>
+          </section>
+
+          {/* 04 rule */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
             <div className="mb-3.5 flex items-center gap-2.5">
-              <span className="rounded-md bg-flood/15 px-1.5 py-0.5 font-mono text-[11px] font-bold text-flood-deep">03</span>
+              <span className="rounded-md bg-flood/15 px-1.5 py-0.5 font-mono text-[11px] font-bold text-flood-deep">04</span>
               <span className="font-disp text-[16px] font-bold text-ink">Your rule</span>
               <span className="ml-auto rounded-md bg-ink px-2 py-1 font-mono text-[9.5px] font-bold uppercase tracking-wide text-flood">✦ AI reads this</span>
             </div>
@@ -1303,10 +1347,10 @@ export default function StrategyBuilder({
             })()}
           </section>
 
-          {/* 04 leagues */}
+          {/* 05 leagues */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
             <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
-              <span className="rounded-md bg-flood/15 px-1.5 py-0.5 font-mono text-[11px] font-bold text-flood-deep">04</span>
+              <span className="rounded-md bg-flood/15 px-1.5 py-0.5 font-mono text-[11px] font-bold text-flood-deep">05</span>
               <span className="font-disp text-[16px] font-bold text-ink">Which leagues?</span>
               <span className="font-mono text-[10.5px] text-ink-mute">{plan.replace("_", " ")} · up to {maxLeagues}</span>
               <button
@@ -1487,9 +1531,9 @@ export default function StrategyBuilder({
             </div>
           </section>
 
-          {/* 05 selectivity */}
+          {/* 06 selectivity */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <Step n="05" t="How strict?" />
+            <Step n="06" t="How strict?" />
             <p className="mb-3 text-[13px] leading-snug text-ink-mute">
               Your agent only sends a game when our model rates it better than the bookmaker&apos;s price. This sets how much better it has to be. Stricter means fewer picks, but each one is a bigger edge.
             </p>
@@ -1515,53 +1559,9 @@ export default function StrategyBuilder({
             </div>
           </section>
 
-          {/* 05b odds band */}
+          {/* 07 cap + delivery */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <Step n="5b" t="Odds band" hint="optional" />
-            <p className="mb-3 text-[13px] leading-snug text-ink-mute">
-              Only get picks whose price sits in a range you choose — skip the tiny 1.05 bankers, or hunt bigger prices. This filters on the same odds shown on each pick (<b className="text-ink">@</b> is a real bookmaker price, <b className="text-ink">~</b> an estimate). Leave on <b className="text-ink">Any odds</b> to send every price.
-            </p>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {ODDS_BANDS.map((b) => {
-                const on = oddsBandRow(minOdds, maxOdds).min_odds === b.min && oddsBandRow(minOdds, maxOdds).max_odds === b.max;
-                return (
-                  <button
-                    key={b.label}
-                    type="button"
-                    onClick={() => { setMinOdds(b.min != null ? String(b.min) : ""); setMaxOdds(b.max != null ? String(b.max) : ""); }}
-                    aria-pressed={on}
-                    className={`rounded-lg border px-3 py-2 font-mono text-[12px] font-bold transition ${on ? "border-flood-deep bg-flood/10 text-ink shadow-[inset_0_0_0_1px_var(--flood-deep)]" : "border-ink/15 bg-white text-ink hover:border-ink/30"}`}
-                  >
-                    {b.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-mute">
-              <span className="uppercase tracking-wide">or set a range</span>
-              <label className="flex items-center gap-1.5">min
-                <input
-                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={minOdds}
-                  onChange={(e) => setMinOdds(e.target.value)}
-                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
-                />
-              </label>
-              <label className="flex items-center gap-1.5">max
-                <input
-                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={maxOdds}
-                  onChange={(e) => setMaxOdds(e.target.value)}
-                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
-                />
-              </label>
-              {(minOdds || maxOdds) && (
-                <button type="button" onClick={() => { setMinOdds(""); setMaxOdds(""); }} className="rounded-lg border border-ink/15 px-2 py-1.5 text-[11px] font-bold text-ink-mute hover:border-ink/30 hover:text-ink">clear</button>
-              )}
-            </div>
-          </section>
-
-          {/* 06 cap + delivery */}
-          <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <Step n="06" t="Cap & delivery" />
+            <Step n="07" t="Cap & delivery" />
             <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-ink-mute">Max games per prediction</div>
             <div className="flex flex-wrap items-center gap-2">
               {PICK_CAPS.map((c) => {
@@ -1646,9 +1646,9 @@ export default function StrategyBuilder({
             )}
           </section>
 
-          {/* 07 learning */}
+          {/* 08 learning */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <Step n="07" t="Learning" />
+            <Step n="08" t="Learning" />
             <button
               disabled={!canLearn}
               onClick={() => setLearning((v) => !v)}
