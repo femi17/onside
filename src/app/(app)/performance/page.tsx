@@ -40,6 +40,9 @@ async function PerfData() {
       .select(
         "id, strategy_id, result, model_prob, market_prob, edge, tier, clv, market_key, market_label, delivered_at, strategies(name), fixtures(leagues(name, flag_url, tier))"
       )
+      // a deleted agent's settled picks survive with strategy_id nulled (immutable record); exclude
+      // them so they don't list as a nameless "Agent" among the real agents (same as the feed).
+      .not("strategy_id", "is", null)
       .order("delivered_at", { ascending: false })
       .limit(3000),
     // learning-change log (Pro Max self-tuning); powers the "what your agent learned" timeline
