@@ -24,7 +24,7 @@ export default async function EditStrategyPage({ params }: { params: Promise<{ i
     supabase
       .from("strategies")
       .select(
-        "id, name, status, market_key, market_label, custom_market, side, line, period, bet_value, rule_text, rule_parsed, kickoff_at, kickoff_until, league_ids, league_mode, selectivity, max_per_prediction, deliver_at, target_day, channels, learning, markets"
+        "id, name, status, market_key, market_label, custom_market, side, line, period, bet_value, rule_text, rule_parsed, kickoff_at, kickoff_until, league_ids, league_mode, selectivity, min_odds, max_odds, max_per_prediction, deliver_at, target_day, channels, learning, markets"
       )
       .eq("id", id)
       .eq("user_id", user.id)

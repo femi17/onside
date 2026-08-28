@@ -92,6 +92,25 @@ const CATALOG_GROUPS = SHELF.map((g) => ({
 
 const PICK_CAPS = [8, 24, 50]; // plan ceilings: free 8 · pro 24 · pro_max 50 (plan_limits.max_games_per_prediction)
 
+// quick odds-band presets — fill the min/max inputs (both null = any odds). Tuned for the way
+// these picks price: favourites cluster short, so the bands split "banker" vs "value" vs "long".
+const ODDS_BANDS = [
+  { label: "Any odds", min: null, max: null },
+  { label: "Bankers · ≤1.40", min: null, max: 1.4 },
+  { label: "1.40 – 2.00", min: 1.4, max: 2.0 },
+  { label: "2.00 – 3.00", min: 2.0, max: 3.0 },
+  { label: "Longer · 2.50+", min: 2.5, max: null },
+] as const;
+
+// parse the two odds-band inputs into a { min_odds, max_odds } row patch. Blank = null (no bound);
+// values floor at 1.01; if the user inverts them we swap so max >= min (the DB check also guards).
+function oddsBandRow(minStr: string, maxStr: string): { min_odds: number | null; max_odds: number | null } {
+  const num = (s: string) => { const v = parseFloat(s); return Number.isFinite(v) && v >= 1.01 ? Math.round(v * 100) / 100 : null; };
+  let lo = num(minStr), hi = num(maxStr);
+  if (lo != null && hi != null && hi < lo) { const t = lo; lo = hi; hi = t; }
+  return { min_odds: lo, max_odds: hi };
+}
+
 // selectivity tiers -> the minimum edge (model prob − market prob) a pick must clear
 const SELECT = [
   { key: "elite", name: "Elite value", eq: "min edge +5.0%", min_edge: 0.05, desc: "Only the biggest mispricings clear the bar. Fewest picks, highest conviction." },
@@ -163,6 +182,8 @@ export type ExistingStrategy = {
   league_ids: number[] | null;
   league_mode: string | null;
   selectivity: string | null;
+  min_odds: number | null;
+  max_odds: number | null;
   max_per_prediction: number | null;
   deliver_at: string | null;
   target_day: string | null;
@@ -259,6 +280,10 @@ export default function StrategyBuilder({
   const [leagueSurprise, setLeagueSurprise] = useState<boolean>(existing?.league_mode === "surprise");
   const [lgSearch, setLgSearch] = useState("");
   const [selIdx, setSelIdx] = useState(initSelIdx);
+  // odds band: the agent only sends picks whose shown price sits in [minOdds, maxOdds]. Empty =
+  // no bound on that side; both empty = any odds. Kept as strings so the inputs can be cleared.
+  const [minOdds, setMinOdds] = useState(existing?.min_odds != null ? String(existing.min_odds) : "");
+  const [maxOdds, setMaxOdds] = useState(existing?.max_odds != null ? String(existing.max_odds) : "");
   // the cap is any number the user wants (e.g. a typed 16), clamped to the plan ceiling —
   // the pills are just shortcuts, so a stored in-between value survives editing exactly
   const [cap, setCap] = useState(() => Math.max(1, Math.min(existing?.max_per_prediction ?? 8, maxPicks)));
@@ -763,6 +788,8 @@ export default function StrategyBuilder({
       league_mode: leagueSurprise ? "surprise" : picked.size ? "fixed" : "all",
       selectivity: SELECT[selIdx].key,
       min_edge: SELECT[selIdx].min_edge,
+      // odds band — parse the inputs, floor at 1.01, and only keep sane values (max >= min)
+      ...oddsBandRow(minOdds, maxOdds),
       max_per_prediction: cap,
       deliver_at: jitteredDeliverAt(time),
       target_day: target,
@@ -1485,6 +1512,50 @@ export default function StrategyBuilder({
                   </button>
                 );
               })}
+            </div>
+          </section>
+
+          {/* 05b odds band */}
+          <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
+            <Step n="5b" t="Odds band" hint="optional" />
+            <p className="mb-3 text-[13px] leading-snug text-ink-mute">
+              Only get picks whose price sits in a range you choose — skip the tiny 1.05 bankers, or hunt bigger prices. This filters on the same odds shown on each pick (<b className="text-ink">@</b> is a real bookmaker price, <b className="text-ink">~</b> an estimate). Leave on <b className="text-ink">Any odds</b> to send every price.
+            </p>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {ODDS_BANDS.map((b) => {
+                const on = oddsBandRow(minOdds, maxOdds).min_odds === b.min && oddsBandRow(minOdds, maxOdds).max_odds === b.max;
+                return (
+                  <button
+                    key={b.label}
+                    type="button"
+                    onClick={() => { setMinOdds(b.min != null ? String(b.min) : ""); setMaxOdds(b.max != null ? String(b.max) : ""); }}
+                    aria-pressed={on}
+                    className={`rounded-lg border px-3 py-2 font-mono text-[12px] font-bold transition ${on ? "border-flood-deep bg-flood/10 text-ink shadow-[inset_0_0_0_1px_var(--flood-deep)]" : "border-ink/15 bg-white text-ink hover:border-ink/30"}`}
+                  >
+                    {b.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-mute">
+              <span className="uppercase tracking-wide">or set a range</span>
+              <label className="flex items-center gap-1.5">min
+                <input
+                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={minOdds}
+                  onChange={(e) => setMinOdds(e.target.value)}
+                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
+                />
+              </label>
+              <label className="flex items-center gap-1.5">max
+                <input
+                  type="number" min={1.01} step={0.01} inputMode="decimal" placeholder="any" value={maxOdds}
+                  onChange={(e) => setMaxOdds(e.target.value)}
+                  className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
+                />
+              </label>
+              {(minOdds || maxOdds) && (
+                <button type="button" onClick={() => { setMinOdds(""); setMaxOdds(""); }} className="rounded-lg border border-ink/15 px-2 py-1.5 text-[11px] font-bold text-ink-mute hover:border-ink/30 hover:text-ink">clear</button>
+              )}
             </div>
           </section>
 

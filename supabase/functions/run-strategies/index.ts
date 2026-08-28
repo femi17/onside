@@ -1656,6 +1656,21 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     return c;
   };
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
+  // ODDS BAND (opt-in): deliver only picks whose DISPLAYED price (the same priceOf shown on the
+  // feed) is within [min_odds, max_odds]. null/null = no band = unchanged behaviour. A pick that
+  // can't be priced at all is dropped when a band is set (we can't confirm it's in range). Applied
+  // BEFORE the cap so an out-of-band pick yields its slot to the next in-band one. Selection only.
+  const minOdds = strategy.min_odds != null ? Number(strategy.min_odds) : null;
+  const maxOdds = strategy.max_odds != null ? Number(strategy.max_odds) : null;
+  const hasBand = (minOdds != null || maxOdds != null) && !(minOdds != null && Number.isNaN(minOdds)) && !(maxOdds != null && Number.isNaN(maxOdds));
+  const bandOk = (mk: string, side: string | null, line: number | null, period: Period, bms: any[], mp: number | null, kp: number | null): boolean => {
+    if (!hasBand) return true;
+    const price = priceOf(mk, side, line, bms, period, mp, kp);
+    if (!price) return false;
+    if (minOdds != null && price.odd < minOdds) return false;
+    if (maxOdds != null && price.odd > maxOdds) return false;
+    return true;
+  };
   // a mixed-outcome strategy carries its own candidate set — treated exactly like a family
   const mixCands: Cand[] | null = Array.isArray(strategy.markets) && strategy.markets.length
     ? strategy.markets.map((m: any) => ({
@@ -1763,6 +1778,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (formVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, hForm, aForm)) continue;
       // model-band screen: this exact bet at this % has proven to land far under its claim
       if (bandVeto(chosen.mk, chosen.side ?? null, chosen.line ?? null, chosen.period ?? "ft", chosen.model_prob)) continue;
+      // odds-band gate: only if the agent set one (fetch is cached; skipped entirely when no band)
+      if (hasBand) {
+        const bms = await bookmakersFor(f.id, key);
+        if (!bandOk(chosen.mk, chosen.side ?? null, chosen.line ?? null, (chosen.period ?? "ft") as Period, bms, chosen.model_prob, chosen.market_prob)) continue;
+      }
       if (chosen.edge != null) priced.push(chosen); else unpriced.push(chosen);
       continue;
     }
@@ -1792,7 +1812,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (kp == null) {
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
-      if (mp >= 0.5 && passesDeferred(mp, null, null)) {
+      if (mp >= 0.5 && passesDeferred(mp, null, null)
+        && bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, mp, null)) {
         unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null, model_ver: usePilot ? "tier_v1" : null });
       }
       continue;
@@ -1801,6 +1822,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // too-good-to-be-true cap — see the set-path note above
     if (edge > 0.20) continue;
     if (!passesDeferred(mp, kp, edge)) continue;
+    // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
+    if (!bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, mp, kp)) continue;
     priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp, model_ver: usePilot ? "tier_v1" : null });
   }
   // memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test.
