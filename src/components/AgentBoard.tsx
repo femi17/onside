@@ -539,6 +539,15 @@ function Item({
 
 export type AgentEmptyRun = { id: string; agent_name: string; ran_at: string };
 
+// odds filter ranges for the feed dropdown — [min, max] on the pick's shown price (null = open end)
+const ODDS_FILTERS: { label: string; min: number | null; max: number | null }[] = [
+  { label: "Any odds", min: null, max: null },
+  { label: "≤ 1.40", min: null, max: 1.4 },
+  { label: "1.40 – 2.00", min: 1.4, max: 2.0 },
+  { label: "2.00 – 3.00", min: 2.0, max: 3.0 },
+  { label: "3.00+", min: 3.0, max: null },
+];
+
 export default function AgentBoard({ picks, userId, initialTracked = [], emptyRuns = [], doubles = [], doubleDeliveries = {}, noGamesToday = false }: { picks: AgentPick[]; userId: string; initialTracked?: string[]; emptyRuns?: AgentEmptyRun[]; doubles?: OnsideDouble[]; doubleDeliveries?: Record<string, LegDelivery>; noGamesToday?: boolean }) {
   const nowMs = useMinuteTick();
   const supabase = createClient();
@@ -672,8 +681,20 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
     if (pct != null && !pctChoices.includes(pct)) setPct(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pctChoices]);
+  // odds-range filter (index into ODDS_FILTERS; 0 = Any). Picks with no stored price hide while a
+  // range other than Any is active — same rule the model-% filter uses for price-less older picks.
+  const [oddsIdx, setOddsIdx] = useState(0);
+  const oddsInRange = (p: AgentPick) => {
+    const b = ODDS_FILTERS[oddsIdx];
+    if (!b || (b.min == null && b.max == null)) return true;
+    if (p.odds == null) return false;
+    if (b.min != null && p.odds < b.min) return false;
+    if (b.max != null && p.odds > b.max) return false;
+    return true;
+  };
+  const anyOdds = useMemo(() => picks.some((p) => (!agent || p.agent_name === agent) && p.odds != null), [picks, agent]);
   const filtered = picks.filter(
-    (p) => (!agent || p.agent_name === agent) && (pct == null || pctOf(p) === pct),
+    (p) => (!agent || p.agent_name === agent) && (pct == null || pctOf(p) === pct) && oddsInRange(p),
   );
 
   // share the agent in view (selected chip, or the only agent) as a public anonymised feed —
@@ -788,11 +809,10 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
               ))}
             </div>
           )}
-          {/* one control row: share on the left, model-% filter pushed right. The chips are
-              this view's real deployed percentages (lowest → highest); the list can be long,
-              so it scrolls sideways instead of wrapping into a wall. Tapping the active %
-              clears it. On phones the filter wraps under the share button, still right-aligned. */}
-          {(pctChoices.length > 0 || (shareSid && shareName)) && (
+          {/* one control row: share on the left, the Model % and Odds filters as dropdowns on the
+              right. Dropdowns (not a chip list) keep the row compact however many %s are deployed;
+              Model % stays exact-value (owner-ruled), Odds filters on the pick's shown price. */}
+          {(pctChoices.length > 0 || anyOdds || (shareSid && shareName)) && (
             <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-2 ${agents.length > 1 ? "mt-3" : "mt-6"}`}>
               {shareSid && shareName && (
                 <>
@@ -815,17 +835,33 @@ export default function AgentBoard({ picks, userId, initialTracked = [], emptyRu
                   )}
                 </>
               )}
-              {pctChoices.length > 0 && (
-                <div className="ml-auto flex min-w-0 max-w-full items-center gap-2">
-                  <span className="flex-none font-mono text-[10px] uppercase tracking-[0.2em] text-onpitch-mute">Model&nbsp;%</span>
-                  <div className="no-scrollbar flex min-w-0 items-center gap-2 overflow-x-auto py-0.5">
-                    <PctTag on={pct === null} onClick={() => setPct(null)}>Any</PctTag>
-                    {pctChoices.map((v) => (
-                      <PctTag key={v} on={pct === v} onClick={() => setPct(pct === v ? null : v)}>
-                        {v}%
-                      </PctTag>
-                    ))}
-                  </div>
+              {(pctChoices.length > 0 || anyOdds) && (
+                <div className="ml-auto flex items-center gap-2">
+                  {pctChoices.length > 0 && (
+                    <select
+                      aria-label="Filter by model %"
+                      value={pct == null ? "" : String(pct)}
+                      onChange={(e) => setPct(e.target.value === "" ? null : Number(e.target.value))}
+                      className="h-9 cursor-pointer rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[11.5px] font-bold text-chalk outline-none transition-colors hover:border-white/35 focus:border-flood"
+                    >
+                      <option value="">Model %: Any</option>
+                      {pctChoices.map((v) => (
+                        <option key={v} value={v}>{v}%</option>
+                      ))}
+                    </select>
+                  )}
+                  {anyOdds && (
+                    <select
+                      aria-label="Filter by odds"
+                      value={String(oddsIdx)}
+                      onChange={(e) => setOddsIdx(Number(e.target.value))}
+                      className="h-9 cursor-pointer rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[11.5px] font-bold text-chalk outline-none transition-colors hover:border-white/35 focus:border-flood"
+                    >
+                      {ODDS_FILTERS.map((b, i) => (
+                        <option key={b.label} value={i}>{i === 0 ? "Odds: Any" : `Odds: ${b.label}`}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               )}
             </div>
@@ -975,17 +1011,3 @@ function Tab({ on, onClick, children }: { on: boolean; onClick: () => void; chil
   );
 }
 
-// odds-tag: squared ticket-stub chip in tabular mono — reads like a price board, not a pill
-function PctTag({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={on}
-      className={`h-9 flex-none cursor-pointer rounded-md border px-3 font-mono text-[11.5px] font-bold tabular-nums transition-colors duration-200 ${
-        on ? "border-flood bg-flood text-ink" : "border-white/15 text-onpitch-mute hover:border-white/35 hover:text-chalk"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
