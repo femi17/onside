@@ -128,6 +128,8 @@ export default async function AgentPage() {
     market_prob: r.market_prob != null ? Number(r.market_prob) : null,
     tier: (r.tier as string) ?? null,
     reasons: ((r.criteria as { reasons?: unknown } | null)?.reasons as AgentPick["reasons"]) ?? null,
+    odds: ((r.criteria as { odds?: number } | null)?.odds) ?? null,
+    odds_src: ((r.criteria as { odds_src?: string } | null)?.odds_src as AgentPick["odds_src"]) ?? null,
     delivered_at: (r.delivered_at as string) ?? null,
     onside_score: onsideScore(r),
   }));

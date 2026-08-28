@@ -34,6 +34,10 @@ export type AgentPick = TrackedTicket & {
   market_prob?: number | null;
   tier?: string | null;
   reasons?: PickReasons | null;
+  // displayed price: odd = decimal odds; odds_src = quoted (real book price) | derived (de-vigged
+  // from related quotes) | model (fair odd from the model when nothing was quoted). null = no price.
+  odds?: number | null;
+  odds_src?: "quoted" | "derived" | "model" | null;
   // the Onside score — the same ranking build_onside_double uses (bookies' % + market-type
   // adjustment + agent-record nudge), computed at read time; null = no odds to score against
   onside_score?: number | null;
@@ -429,6 +433,20 @@ function Item({
                     <b title={tone.hint} className={tone.cls || undefined}>{Math.round(p.model_prob * 100)}%</b>
                   </>
                 ) : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
+                {/* price: "@" = real median bookmaker odds; "~" = estimate (no direct quote) */}
+                {p.odds != null ? (
+                  <>
+                    {" · "}
+                    <b
+                      className="text-ink"
+                      title={p.odds_src === "quoted"
+                        ? "Median bookmaker odds for this selection"
+                        : "Estimated fair odds — no direct quote for this market, so this is approximate"}
+                    >
+                      {p.odds_src === "quoted" ? "@" : "~"}{p.odds.toFixed(2)}
+                    </b>
+                  </>
+                ) : ""}
               </span>
               {/* the Onside score badge used to sit here too, but two look-alike numbers on one
                   row read as competing percentages (owner-ruled) — the card keeps ONLY the

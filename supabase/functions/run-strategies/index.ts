@@ -439,6 +439,62 @@ function marketProb(mk: string, side: string | null, line: number | null, bookma
   if (!ps.length) return null;
   return ps.reduce((a, b) => a + b, 0) / ps.length;
 }
+// ---------- displayed price for a delivered pick (waterfall: quoted → derived → model) ----------
+// Users want to SEE the odds on every pick, even markets the books don't quote. Three tiers, most
+// trustworthy first: (1) "quoted" — the real median decimal odd when the exact selection is directly
+// listed; (2) "derived" — a fair (de-vigged) odd from the market probability the engine already
+// de-margined off related quotes (e.g. a DC price implied by the 1X2 the books DO quote); (3)
+// "model" — a fair odd from the model's own probability when there are no odds at all. DISPLAY-ONLY:
+// this never feeds selection, edge, grading or settlement — those still run exactly as before.
+function selectionOdd(mk: string, side: string | null, line: number | null, bets: any[], period: Period): number | null {
+  const bet = (id: number | null) => (id == null ? undefined : bets.find((b) => Number(b.id) === id));
+  const ftOnly = (id: number) => (period === "ft" ? bet(id) : undefined);
+  const ou = (b: any) => (line == null ? null : oddOf(b, `${side === "under" ? "Under" : "Over"} ${line}`));
+  switch (mk) {
+    case "home_win": return oddOf(bet(P_ID.x1x2[period]), "Home");
+    case "away_win": return oddOf(bet(P_ID.x1x2[period]), "Away");
+    case "draw": return oddOf(bet(P_ID.x1x2[period]), "Draw");
+    case "result_1x2": return oddOf(bet(P_ID.x1x2[period]), side === "home" ? "Home" : side === "away" ? "Away" : "Draw");
+    case "double_chance_1x": return oddOf(bet(P_ID.dc[period]), "Home/Draw");
+    case "double_chance_x2": return oddOf(bet(P_ID.dc[period]), "Draw/Away");
+    case "double_chance_12": return oddOf(bet(P_ID.dc[period]), "Home/Away");
+    case "over_0_5": return oddOf(bet(P_ID.totals[period]), "Over 0.5");
+    case "over_1_5": return oddOf(bet(P_ID.totals[period]), "Over 1.5");
+    case "over_2_5": return oddOf(bet(P_ID.totals[period]), "Over 2.5");
+    case "over_3_5": return oddOf(bet(P_ID.totals[period]), "Over 3.5");
+    case "under_2_5": return oddOf(bet(P_ID.totals[period]), "Under 2.5");
+    case "under_3_5": return oddOf(bet(P_ID.totals[period]), "Under 3.5");
+    case "total_goals_ou": return ou(bet(P_ID.totals[period]));
+    case "btts": return oddOf(bet(P_ID.btts[period]), side === "no" ? "No" : "Yes");
+    case "home_to_score": return period === "ft" ? oddOf(bet(43), "Yes") : null;
+    case "away_to_score": return period === "ft" ? oddOf(bet(44), "Yes") : null;
+    case "home_goals_ou": return ou(bet(P_ID.homeTotal[period]));
+    case "away_goals_ou": return ou(bet(P_ID.awayTotal[period]));
+    case "corners_ou": return ou(bet(P_ID.corners[period]));
+    case "home_corners_ou": return ou(ftOnly(57));
+    case "away_corners_ou": return ou(ftOnly(58));
+    case "cards_ou": return ou(ftOnly(80));
+    case "home_cards_ou": return ou(ftOnly(82));
+    case "away_cards_ou": return ou(ftOnly(83));
+    default: return null;
+  }
+}
+function bookOdd(mk: string, side: string | null, line: number | null, bms: any[], period: Period): number | null {
+  const os: number[] = [];
+  for (const bm of bms) { const o = selectionOdd(mk, side, line, bm.bets ?? [], period); if (o != null && o > 1) os.push(o); }
+  if (!os.length) return null;
+  os.sort((a, b) => a - b);
+  return os[Math.floor(os.length / 2)]; // median across books
+}
+type Price = { odd: number; src: "quoted" | "derived" | "model" };
+function priceOf(mk: string, side: string | null, line: number | null, bms: any[], period: Period, modelProb: number | null, marketProb: number | null): Price | null {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const raw = bookOdd(mk, side, line, bms, period);
+  if (raw != null) return { odd: r2(raw), src: "quoted" };
+  if (marketProb != null && marketProb > 0.01 && marketProb < 0.995) return { odd: r2(1 / marketProb), src: "derived" };
+  if (modelProb != null && modelProb > 0.01 && modelProb < 0.995) return { odd: r2(1 / modelProb), src: "model" };
+  return null;
+}
 // ---------- market-implied pricing for EVERY goals-derived market the books don't quote ----------
 // Books quote 1X2 (+ over 2.5) for nearly every priced game, and those numbers pin down THEIR
 // implied goal rates. Fit lamH/lamA to reproduce them, rebuild the bookies' score matrix, and any
@@ -493,7 +549,17 @@ function marketAggFor(lam: { lh: number; la: number }, share: number): Agg {
 
 type Rate = { gf: number; ga: number; n: number }; // time-decay-weighted LEAGUE-RELATIVE ratio sums
 type TeamRates = { home: Rate; away: Rate; all: Rate }; // venue split + overall (blended by VENUE_WEIGHT)
-type Model = { lHome: Map<number, number>; lAway: Map<number, number>; gHome: number; gAway: number; team: Map<number, TeamRates>; elo: Map<number, number> };
+type Model = { lHome: Map<number, number>; lAway: Map<number, number>; gHome: number; gAway: number; team: Map<number, TeamRates>; elo: Map<number, number>; eloT: Map<number, number>; tierSeed: Map<number, number> };
+// ---- tier-seeded Elo (ADMIN PILOT, dc_1x/x2 only) ----------------------------------------------
+// Cup/cross-division fixtures are where flat-1500 Elo is blind: a lower-league side that only ever
+// appears in cup draws carries the same starting rating as the top-flight opponent. The pilot arm
+// seeds starting Elo by league tier (top ±X/2) and penalises cup-only teams (−Y). X=240/Y=160 were
+// fitted walk-forward on 2024-08→2025-07 cross-tier cup ties (perf/backtest-tier.mts: slice
+// log-loss −31%, overall unchanged). Served ONLY to admin agents on double_chance_1x/x2; every
+// such delivery is stamped criteria.model_ver="tier_v1" so its record never mixes with v2's.
+const TIER_SPLIT = 120, TIER_CUPONLY = 160; // Elo points: ±split for tier 1/2, −cuponly for tier 3
+const TIER_CUP_RE = /\b(cup|pokal|cupen|beker|copa|coppa|coupe|ta[çc]a|karika[s]?|kup[a]?|puchar|poh[áa]r|trophy|shield)\b/i;
+const TIER_FRIENDLY_RE = /friendl/i;
 // Build ratings from finished fixtures (two passes). Pass 1: time-decayed goal means per league +
 // global, so pass 2 can normalise every match by the league it was PLAYED in — the cross-league fix
 // (an Estonian side's domestic goals no longer read against the UEFA-competition mean). Pass 2:
@@ -502,6 +568,8 @@ type Model = { lHome: Map<number, number>; lAway: Map<number, number>; gHome: nu
 async function buildModel(leagueIds: number[]): Promise<Model> {
   const team = new Map<number, TeamRates>();
   const elo = new Map<number, number>();
+  const eloT = new Map<number, number>();
+  const tierSeed = new Map<number, number>();
   const lHomeSum = new Map<number, [number, number]>();
   const lAwaySum = new Map<number, [number, number]>();
   let gh = 0, ghn = 0, ga = 0, gan = 0;
@@ -541,8 +609,44 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
       const e = m.get(lg); const n = e?.[1] ?? 0;
       return Math.max(0.1, n + LEAGUE_SHRINK > 0 ? ((e?.[0] ?? 0) + g * LEAGUE_SHRINK) / (n + LEAGUE_SHRINK) : g);
     };
+    // tier seeds for the pilot Elo arm: numeric tier per league from leagues.tier, then each
+    // team's tier from where it actually played inside this model window (walk-forward safe —
+    // the window itself is history). Cup-only teams (≥2 apps, never in a non-cup competition)
+    // are treated as lower-league cup entrants.
+    try {
+      const lgMeta = new Map<number, { numTier: number | null; cup: boolean }>();
+      for (let off = 0; off < 3000; off += 1000) {
+        const { data: lgs, error: lgErr } = await sb.from("leagues").select("id,name,tier,type").range(off, off + 999);
+        if (lgErr || !lgs?.length) break;
+        for (const l of lgs) {
+          const friendly = TIER_FRIENDLY_RE.test(l.name ?? "");
+          lgMeta.set(l.id, {
+            numTier: l.tier === "top" || l.tier === "sa_top" || l.tier === "as_top" ? 1 : l.tier === "mid" ? 2 : null,
+            cup: !friendly && (l.type === "Cup" || TIER_CUP_RE.test(l.name ?? "")),
+          });
+        }
+        if (lgs.length < 1000) break;
+      }
+      const tierCnt = new Map<number, { t1: number; t2: number; total: number; nonCup: number }>();
+      for (const f of rows) {
+        const m = lgMeta.get(f.league_id);
+        if (!m) continue;
+        for (const id of [f.home_team_id, f.away_team_id]) {
+          if (id == null) continue;
+          const c = tierCnt.get(id) ?? { t1: 0, t2: 0, total: 0, nonCup: 0 };
+          c.total++; if (!m.cup) c.nonCup++;
+          if (m.numTier === 1) c.t1++; else if (m.numTier === 2) c.t2++;
+          tierCnt.set(id, c);
+        }
+      }
+      for (const [id, c] of tierCnt) {
+        if (c.t1 + c.t2 >= 5) tierSeed.set(id, c.t1 >= c.t2 ? ELO_BASE + TIER_SPLIT : ELO_BASE - TIER_SPLIT);
+        else if (c.total >= 2 && c.nonCup === 0) tierSeed.set(id, ELO_BASE - TIER_CUPONLY);
+      }
+    } catch { /* seedless pilot arm degrades to the base model — never blocks a run */ }
     // PASS 2 — Elo + league-relative ratios (venue + overall)
     const getElo = (id: number) => elo.get(id) ?? ELO_BASE;
+    const getEloT = (id: number) => eloT.get(id) ?? tierSeed.get(id) ?? ELO_BASE;
     const newRates = (): TeamRates => ({ home: { gf: 0, ga: 0, n: 0 }, away: { gf: 0, ga: 0, n: 0 }, all: { gf: 0, ga: 0, n: 0 } });
     for (const f of rows) {
       const hg = f.ft_home ?? f.home_goals, ag2 = f.ft_away ?? f.away_goals;
@@ -556,6 +660,13 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
       const mult = gd <= 1 ? 1 : Math.log(gd + 1) * (2.2 / (Math.abs(dr) * 0.001 + 2.2));
       const delta = ELO_K * mult * (s - exp);
       elo.set(f.home_team_id, rH + delta); elo.set(f.away_team_id, rA - delta);
+      // parallel tier-seeded Elo trajectory (identical update rule, seeded starting ratings)
+      const rHT = getEloT(f.home_team_id), rAT = getEloT(f.away_team_id);
+      const expT = 1 / (1 + Math.pow(10, -((rHT + HOME_ADV_ELO) - rAT) / 400));
+      const drT = (rHT + HOME_ADV_ELO) - rAT;
+      const multT = gd <= 1 ? 1 : Math.log(gd + 1) * (2.2 / (Math.abs(drT) * 0.001 + 2.2));
+      const deltaT = ELO_K * multT * (s - expT);
+      eloT.set(f.home_team_id, rHT + deltaT); eloT.set(f.away_team_id, rAT - deltaT);
       // goals relative to the league THIS match was played in
       const w = Math.exp(-decay * (now - Date.parse(f.kickoff_utc)));
       const mh = meanOf(lHomeSum, f.league_id, ghMean), ma = meanOf(lAwaySum, f.league_id, gaMean);
@@ -572,17 +683,20 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
     const lHome = new Map<number, number>(), lAway = new Map<number, number>();
     for (const [lg] of lHomeSum) lHome.set(lg, meanOf(lHomeSum, lg, ghMean));
     for (const [lg] of lAwaySum) lAway.set(lg, meanOf(lAwaySum, lg, gaMean));
-    return { lHome, lAway, gHome: ghMean, gAway: gaMean, team, elo };
+    return { lHome, lAway, gHome: ghMean, gAway: gaMean, team, elo, eloT, tierSeed };
   }
-  return { lHome: new Map(), lAway: new Map(), gHome: DEF_HOME, gAway: DEF_AWAY, team, elo };
+  return { lHome: new Map(), lAway: new Map(), gHome: DEF_HOME, gAway: DEF_AWAY, team, elo, eloT, tierSeed };
 }
-function lambdas(m: Model, f: Fixture): { lamH: number; lamA: number; confident: boolean } {
+function lambdas(m: Model, f: Fixture, useTier = false): { lamH: number; lamA: number; confident: boolean } {
   // the current fixture's league scoring environment (already shrunk toward global; floored vs NaN)
   const leagueHome = Math.max(0.1, m.lHome.get(f.league_id) ?? m.gHome);
   const leagueAway = Math.max(0.1, m.lAway.get(f.league_id) ?? m.gAway);
   // Elo → attack/defence prior (relative to an average team); the shrinkage TARGET so a team with
-  // few recent games leans on Elo instead of a neutral 1.0.
-  const eloOf = (id: number | null) => (id != null ? m.elo.get(id) : undefined) ?? ELO_BASE;
+  // few recent games leans on Elo instead of a neutral 1.0. The tier arm reads the seeded
+  // trajectory — for a team with no window history at all, the seed itself IS the prior.
+  const eloOf = (id: number | null) => (id != null
+    ? (useTier ? (m.eloT.get(id) ?? m.tierSeed.get(id)) : m.elo.get(id))
+    : undefined) ?? ELO_BASE;
   const attPrior = (id: number | null) => Math.exp((eloOf(id) - ELO_BASE) / ELO_PER_LOG_GOAL);
   const defPrior = (id: number | null) => Math.exp(-(eloOf(id) - ELO_BASE) / ELO_PER_LOG_GOAL);
   const H = f.home_team_id != null ? m.team.get(f.home_team_id) : undefined;
@@ -1433,7 +1547,7 @@ function hashShard(id: string, shards: number): number {
 }
 
 type Cell = { lamH: number; lamA: number; agg: Agg; agg1h?: Agg; agg2h?: Agg; confident: boolean; corn: StatLam | null; card: StatLam | null };
-type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null };
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null };
 // one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
 type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
 // the score matrix for the requested period, thinned lazily and cached on the cell
@@ -1528,7 +1642,19 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   }
   return null;
 }
-async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map()): Promise<Scored[]> {
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false): Promise<Scored[]> {
+  // ADMIN PILOT cells: same rates, tier-seeded Elo trajectory (see TIER_SPLIT note). Local cache —
+  // never written into the shared aggCache, so no other strategy can ever read a pilot matrix.
+  const tierCells = new Map<number, Cell>();
+  const tierCellFor = (f: Fixture, base: Cell): Cell => {
+    let c = tierCells.get(f.id);
+    if (!c) {
+      const ls = lambdas(model, f, true);
+      c = { lamH: ls.lamH, lamA: ls.lamA, agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident, corn: base.corn, card: base.card };
+      tierCells.set(f.id, c);
+    }
+    return c;
+  };
   const baseMk = strategy.market_key, baseSide = strategy.side, baseLine = strategy.line != null ? Number(strategy.line) : null;
   // a mixed-outcome strategy carries its own candidate set — treated exactly like a family
   const mixCands: Cand[] | null = Array.isArray(strategy.markets) && strategy.markets.length
@@ -1649,7 +1775,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // single-market path prices through the same router as sets, so periods (1st/2nd half),
     // corners, cards and every canonicalised catalog key work here too
     const baseCand: Cand = { mk: eff.mk, side: eff.side, line: eff.line, period: strategy.period ?? "ft", bet_value: strategy.bet_value ?? null };
-    const mp = modelFor(cell, baseCand);
+    // ADMIN PILOT: dc_1x/x2 picks price off the tier-seeded matrix; everything else is untouched
+    const usePilot = pilotTierDc && (eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2");
+    const mp = modelFor(usePilot ? tierCellFor(f, cell) : cell, baseCand);
     // owner-ruled 2026-08-18: EVERY delivered pick must carry a model rating — the old
     // model-less unpriced path is gone (cup/U23 games now get rated via the widened model
     // scope instead of shipping blind)
@@ -1665,7 +1793,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)) {
-        unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null });
+        unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null, model_ver: usePilot ? "tier_v1" : null });
       }
       continue;
     }
@@ -1673,7 +1801,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // too-good-to-be-true cap — see the set-path note above
     if (edge > 0.20) continue;
     if (!passesDeferred(mp, kp, edge)) continue;
-    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp });
+    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp, model_ver: usePilot ? "tier_v1" : null });
   }
   // memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test.
   // league + market-family reputations stack (each clamped), so a pick of a kind EVERY agent
@@ -1845,8 +1973,12 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   if (strategyRoom <= 0) return 0;
 
   let room = strategyRoom;
+  // tier-seeded model pilot: ADMIN accounts only, and only when the agent's base market is
+  // double-chance 1X or X2 (see TIER_SPLIT note at the Model type)
+  let pilotTierDc = false;
   try {
-    const { data: prof } = await sb.from("profiles").select("plan, created_at").eq("id", strategy.user_id).maybeSingle();
+    const { data: prof } = await sb.from("profiles").select("plan, created_at, is_admin").eq("id", strategy.user_id).maybeSingle();
+    pilotTierDc = prof?.is_admin === true && (strategy.market_key === "double_chance_1x" || strategy.market_key === "double_chance_x2");
     const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction, monthly_agent_runs").eq("plan", prof?.plan ?? "free").maybeSingle();
     // plans with a monthly run allowance (free) get that many delivery DAYS per calendar month;
     // paid plans carry null = unlimited. New accounts get a 7-DAY TRIAL of DAILY delivery first, so
@@ -1942,7 +2074,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const cornMap = ruleTests(rule, (fld) => fld.endsWith("corners_avg"))
     ? await buildCornerFormMap(Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null))))
     : new Map<number, CornForm>();
-  let ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap)).slice(0, room);
+  let ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap, pilotTierDc)).slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
   // head-to-head pulled live from API-Football (all competitions, not just what we've synced),
@@ -2027,6 +2159,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     const reasons = reasonsByFx.get(r.f.id) ?? null;
     const lmem = leagueScore(mem, r.f.league_id);
     const mmem = marketScore(memM, r.f.league_id, r.mk);
+    // displayed price for the pick — read ONLY from the in-memory odds already fetched during
+    // scoring (never triggers a new odds call). quoted = real book price; derived/model = fair
+    // estimate the UI marks with a "~". Purely for display; selection/edge/grading are untouched.
+    const price = priceOf(r.mk, r.side, r.line, oddsCache.get(r.f.id) ?? [], (r.period ?? strategy.period ?? "ft") as Period, r.model_prob, r.market_prob);
     const criteria = {
       // the selectivity bar in force when this pick was made — the raw material for per-bar
       // performance analysis (a real bandit over min_edge) once enough history accrues
@@ -2035,6 +2171,12 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       ...(mmem ? { market_memory: Number(mmem.toFixed(4)) } : {}),
       ...(rolledLeagueIds ? { rolled_league_ids: rolledLeagueIds } : {}),
       ...(reasons ? { reasons } : {}),
+      // which model priced this pick — absent = deployed v2. Keeps the pilot's record separable
+      // (band learning, calibration, any old-vs-new comparison) from day one.
+      ...(r.model_ver ? { model_ver: r.model_ver } : {}),
+      // displayed odds: { odd, src } where src is quoted (real median book price) | derived
+      // (de-vigged from related quotes) | model (fair odd from the model when nothing is quoted)
+      ...(price ? { odds: price.odd, odds_src: price.src } : {}),
     };
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
