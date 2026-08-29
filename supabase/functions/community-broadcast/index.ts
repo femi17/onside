@@ -1,7 +1,9 @@
 // community-broadcast: Claude-authored posts to the public @onsideai Telegram channel — 3x/day
-// since 2026-08-26: morning_slate (the day ahead), product_gap (afternoon — measures real
-// platform adoption and teaches the weakest habit, see below), results_recap (night).
-// Other slots remain manually invocable.
+// since 2026-08-26: morning_slate (the day ahead), perfect_agent (afternoon — see below),
+// results_recap (night). Other slots remain manually invocable.
+// The afternoon slot is perfect_agent: if an agent swept its WHOLE card yesterday (Lagos) it
+// posts that "perfect agent day" flyer image to the channel; on days with no sweep it falls back
+// to the product_gap text lesson (adoption-driven — the old afternoon behaviour, unchanged).
 // Fired by pg_cron via invoke_community_broadcast(slot). Each slot builds a data brief, Claude drafts
 // the copy under strict guardrails, a banned-phrase filter runs, a responsible-gambling footer is
 // appended, then it auto-posts. Every attempt is logged to channel_posts.
@@ -16,6 +18,7 @@ const SB_KEY = Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SER
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, SB_KEY);
 const CHANNEL = "@onsideai";
 const MODEL = "claude-haiku-4-5";
+const SITE = "https://onside.com.ng"; // the flyer OG route lives here (same host daily-flyer uses)
 
 async function getSecret(name: string): Promise<string | null> {
   const { data } = await sb.rpc("get_secret", { secret_name: name });
@@ -213,10 +216,63 @@ async function draft(instruction: string, facts: string): Promise<string> {
   return ((j?.content ?? []) as any[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 
-Deno.serve(async (req) => {
-  let slot = "education";
-  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); } catch { /* default */ }
+// Lagos (UTC+1, no DST) calendar date for "yesterday" — the day the afternoon card celebrates.
+function lagosYesterdayKey(): string {
+  const lagosNow = new Date(Date.now() + 3600_000);
+  const y = new Date(lagosNow); y.setUTCDate(y.getUTCDate() - 1);
+  return y.toISOString().slice(0, 10);
+}
 
+// The perfect-agent sweep for Lagos-yesterday, if any agent went a full card (n>=3, all won).
+// Mirrors the day the /flyer/results OG route renders, so the attached image matches these legs.
+async function yesterdaySweep(): Promise<{ n: number; legs: any[] } | null> {
+  const { data } = await sb.rpc("public_record");
+  const rec = data as { perfect_details?: { day: string; sweeps: { n: number; legs: any[] }[] }[] } | null;
+  const entry = (rec?.perfect_details ?? []).find((p) => p.day === lagosYesterdayKey());
+  const sweep = entry?.sweeps?.[0];
+  if (!sweep || !(sweep.n >= 3) || !(sweep.legs?.length)) return null;
+  return { n: sweep.n, legs: sweep.legs };
+}
+
+// Afternoon slot when there IS a perfect card: post the flyer image + a short Claude caption.
+// Returns a Response once handled; returns null when there's no sweep so the caller can fall back.
+async function perfectAgentPost(): Promise<Response | null> {
+  const sweep = await yesterdaySweep();
+  if (!sweep) return null;
+
+  const { n, legs } = sweep;
+  const shown = legs.slice(0, 5);
+  const legLines = shown.map((l) => `- ${l.home} v ${l.away}: ${l.market}${l.score ? ` (${l.score})` : ""}`).join("\n");
+  const facts = `Yesterday one Onside agent swept its ENTIRE card — ${n}/${n} legs, every single one landed:\n${legLines}` +
+    (legs.length > shown.length ? `\n…and ${legs.length - shown.length} more, all landed` : "") +
+    `\nThe slip image with all the legs is attached to this post.`;
+  const instruction = "Write a short, punchy caption for an image showing an Onside agent that swept its whole card yesterday — every leg landed. Celebrate it as a rare perfect day, plain variance, never proof of a sure thing. Gently nudge readers to build their own agent. 2-3 short beats.";
+
+  let body = "";
+  try {
+    body = await draft(instruction, facts);
+    if (BANNED.test(body)) body = await draft(instruction + " IMPORTANT: do not use any language implying a guaranteed or certain outcome.", facts);
+  } catch { /* fall through to the static caption below */ }
+  if (!body || BANNED.test(body)) {
+    body = `⚽ Yesterday one Onside agent swept its whole card — ${n}/${n}, every leg landed. 👀\n\n` +
+      `No be everyday e dey happen — but when the value line up with sense, agent fit sweep am.\n\n` +
+      `Build your own AI agent on Onside and track am for yourself.`;
+  }
+
+  const text = body.slice(0, 900) + FOOTER; // sendPhoto caption cap is 1024; 900 + footer stays under
+  const photo = `${SITE}/flyer/results?size=feed&d=${Date.now()}`; // cache-bust so Telegram refetches
+  const sent = await tg("sendPhoto", { chat_id: CHANNEL, photo, caption: text });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "perfect_agent", theme: "perfect_agent", body: text,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { photo, n } : { photo, n, telegram: sent },
+  });
+  return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "perfect_agent", n }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+async function runTextSlot(slot: string): Promise<Response> {
   let theme = slot; let body = "";
   try {
     const brief = await buildBrief(slot);
@@ -244,4 +300,18 @@ Deno.serve(async (req) => {
     meta: ok ? null : { telegram: sent },
   });
   return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot, theme }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+Deno.serve(async (req) => {
+  let slot = "education";
+  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); } catch { /* default */ }
+
+  // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
+  if (slot === "perfect_agent") {
+    const posted = await perfectAgentPost();
+    if (posted) return posted;
+    slot = "product_gap";
+  }
+
+  return await runTextSlot(slot);
 });
