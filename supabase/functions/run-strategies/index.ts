@@ -1,7 +1,9 @@
 // Onside strategy runner + edge engine + rule engine + per-user delivery scheduler.
 // Cron every minute; only DUE strategies run. Target window (same_day/tomorrow/saturday/sunday/
 // weekend/future); saturday/sunday fire only on that weekday. Pricing: model_prob (Poisson) vs
-// de-vigged market_prob = edge; families price every option and deliver the best. No fixture twice
+// de-vigged market_prob = edge; families price every option and deliver the best. The DELIVERED
+// model % is calibrated via blend50 (model-market log-odds midpoint; selection stays raw — see
+// blend50). No fixture twice
 // per strategy; per-user daily cap = max_agents x cap. Telegram picks show flag + league + time +
 // a traffic-light confidence dot.
 // Leagues are a MODE (league_mode): fixed = hunt league_ids; all = every competition (Pro Max);
@@ -583,7 +585,7 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
     const acc: any[] = [];
     for (let off = 0; off < MAX_ROWS; off += PAGE) {
       const { data, error } = await sb.from("fixtures")
-        .select("league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
+        .select("id,league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
         .in("league_id", leagueIds).in("status", FINISHED).gte("kickoff_utc", sinceIso)
         .order("kickoff_utc", { ascending: false }).order("id", { ascending: false })
         .range(off, off + PAGE - 1);
@@ -591,6 +593,29 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
       acc.push(...data);
       if (data.length < PAGE) break;
     }
+    // xG per fixture (xg_v1, backtested 2026-08-29: walk-forward on 184K matches, α=1.0 fitted on
+    // May-June and held out on July-Aug — 1X2 log-loss −0.47% on xG-covered fixtures, −0.09%
+    // overall, O/U flat). Where the provider recorded xG, the attack/defence RATES learn from it
+    // instead of the scoreline (chance quality over luck); Elo and the league goal means stay on
+    // actual goals — Elo measures who won, the means keep lambdas calibrated to real scorelines.
+    const xgMap = new Map<number, [number, number]>();
+    try {
+      for (let off = 0; off < 20000; off += 1000) {
+        const { data: xr, error: xe } = await sb.from("fixture_stats")
+          .select("fixture_id,xg:stats->expected_goals")
+          .not("stats->expected_goals", "is", null)
+          .order("fixture_id", { ascending: true })
+          .range(off, off + 999);
+        if (xe || !xr?.length) break;
+        for (const r of xr as any[]) {
+          const x = r.xg;
+          if (Array.isArray(x) && x.length === 2 && (Number(x[0]) > 0 || Number(x[1]) > 0)) {
+            xgMap.set(Number(r.fixture_id), [Number(x[0]), Number(x[1])]);
+          }
+        }
+        if (xr.length < 1000) break;
+      }
+    } catch { /* xG-less build degrades to goals-only — never blocks a run */ }
     const rows = acc.slice().sort((a: any, b: any) => Date.parse(a.kickoff_utc) - Date.parse(b.kickoff_utc));
     const now = rows.length ? Date.parse(rows[rows.length - 1].kickoff_utc) : Date.now();
     const decay = Math.LN2 / (HALF_LIFE_DAYS * 86400000);
@@ -667,10 +692,13 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
       const multT = gd <= 1 ? 1 : Math.log(gd + 1) * (2.2 / (Math.abs(drT) * 0.001 + 2.2));
       const deltaT = ELO_K * multT * (s - expT);
       eloT.set(f.home_team_id, rHT + deltaT); eloT.set(f.away_team_id, rAT - deltaT);
-      // goals relative to the league THIS match was played in
+      // goals relative to the league THIS match was played in — EFFECTIVE goals where xG exists
+      // (α=1.0, the fitted xgWeight: pure chance quality; see the xgMap note above)
+      const xgF = xgMap.get(f.id);
+      const effH = xgF ? xgF[0] : hg, effA = xgF ? xgF[1] : ag2;
       const w = Math.exp(-decay * (now - Date.parse(f.kickoff_utc)));
       const mh = meanOf(lHomeSum, f.league_id, ghMean), ma = meanOf(lAwaySum, f.league_id, gaMean);
-      const nh = hg / mh, na = ag2 / ma;
+      const nh = effH / mh, na = effA / ma;
       const h = team.get(f.home_team_id) ?? newRates();
       h.home.gf += nh * w; h.home.ga += na * w; h.home.n += w;
       h.all.gf += nh * w; h.all.ga += na * w; h.all.n += w;
@@ -841,6 +869,20 @@ function canon(mk: string, side: string | null, line: number | null): { mk: stri
 // halves as independently thinned Poissons: goals skew slightly to the 2nd half, corners a bit more
 const H1_GOALS = 0.45;
 const H1_CORNERS = 0.44;
+// Calibration blend (2026-08-29, validated on 627 settled picks: log-loss 0.5696 model-only /
+// 0.5680 market-only / 0.5620 blended; the blend's claimed avg ≈72.4% vs 72.25% actual — the model
+// alone claimed 76.9%). The DELIVERED model % is the log-odds midpoint (w=0.5, the flat centre of
+// the fitted 0.45-0.60 bowl) of the model prob and the de-vigged market prob. SELECTION IS
+// UNTOUCHED — floor/edge/tier/min_edge/ranking still run on the raw model prob, so pick counts
+// don't move; only the claim users see (and the band-learning cells) is calibrated. No odds = raw.
+const blend50 = (mp: number | null, kp: number | null): number | null => {
+  if (mp == null) return null;
+  if (kp == null || kp <= 0 || kp >= 1) return mp;
+  const c = (x: number) => Math.min(0.99, Math.max(0.01, x));
+  const a = Math.sqrt(c(mp) * c(kp)), b = Math.sqrt((1 - c(mp)) * (1 - c(kp)));
+  return a / (a + b);
+};
+
 // rank on the CAPPED edge so an implausible number can't outrank a genuine one
 const rankEdge = (e: number | null) => (e == null ? -1 : Math.min(e, MAX_PLAUSIBLE_EDGE));
 function tierOf(edge: number): string {
@@ -1547,7 +1589,7 @@ function hashShard(id: string, shards: number): number {
 }
 
 type Cell = { lamH: number; lamA: number; agg: Agg; agg1h?: Agg; agg2h?: Agg; confident: boolean; corn: StatLam | null; card: StatLam | null };
-type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null };
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null; model_raw?: number | null };
 // one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
 type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
 // the score matrix for the requested period, thinned lazily and cached on the cell
@@ -1624,7 +1666,7 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   }
   const out = (c: Cand, rest: Partial<Scored>): Scored => ({
     f, mk: c.mk, side: c.side, line: c.line, edge: null, tier: null, model_prob: null, market_prob: null,
-    label: c.label ?? null, period: c.period ?? null, bet_value: c.bet_value ?? null, ...rest,
+    label: c.label ?? null, period: c.period ?? null, bet_value: c.bet_value ?? null, model_ver: "xg_v1", ...rest,
   });
   if (priced && priced.edge >= minEdge) return out(priced.c, { edge: priced.edge, tier: tierOf(priced.edge), model_prob: priced.mp, market_prob: priced.kp });
   if (model) return out(model.c, { model_prob: model.mp });
@@ -1726,7 +1768,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         away_corners_avg: aCornAvg,
         corners_avg: hCornAvg != null && aCornAvg != null ? round2(hCornAvg + aCornAvg) : null,
       };
-      const sig = signalsFor(bms, bmp, bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
+      // rules see the same model % the card will show (the blend) — edge stays raw like the tiers
+      const sig = signalsFor(bms, blend50(bmp, bkp), bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
         homeForm, awayForm, cell.confident ? cell.agg.hw : null, cell.confident ? cell.agg.aw : null,
         cell.confident ? cell.agg.homeScore : null, cell.confident ? cell.agg.awayScore : null, extra);
       let blocked = false;
@@ -1772,11 +1815,18 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // owner-ruled 2026-08-18: EVERY delivered pick must carry a model rating — a card that
       // can't print its probabilities never ships
       if (chosen.model_prob == null) continue;
+      // calibration blend: the DELIVERED claim is the model-market midpoint (see blend50). The
+      // owner's ≥50% floor applies to the shown number too — never print "more likely to miss".
+      // Selection stayed raw above (floor, edge cap); everything from here gates on the shown %.
+      const shown = blend50(chosen.model_prob, chosen.market_prob);
+      if (shown == null || shown < 0.5) continue;
+      if (shown !== chosen.model_prob) { chosen.model_raw = chosen.model_prob; chosen.model_prob = shown; }
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
       if (formVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, hForm, aForm)) continue;
       // model-band screen: this exact bet at this % has proven to land far under its claim
+      // (gates on the SAME number the row will record, so the learning cells stay in step)
       if (bandVeto(chosen.mk, chosen.side ?? null, chosen.line ?? null, chosen.period ?? "ft", chosen.model_prob)) continue;
       // odds-band gate: only if the agent set one (fetch is cached; skipped entirely when no band)
       if (hasBand) {
@@ -1814,17 +1864,23 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)
         && bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, mp, null)) {
-        unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null, model_ver: usePilot ? "tier_v1" : null });
+        unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null, model_ver: usePilot ? "tier_v1" : "xg_v1" });
       }
       continue;
     }
     const edge = mp - kp;
     // too-good-to-be-true cap — see the set-path note above
     if (edge > 0.20) continue;
-    if (!passesDeferred(mp, kp, edge)) continue;
+    // calibration blend (see set-path note): shown claim = model-market midpoint, floor applies
+    // to it, and the band screen re-checks the blended cell (raw check above stays as a cheap
+    // pre-odds early exit during the transition)
+    const shownP = blend50(mp, kp);
+    if (shownP == null || shownP < 0.5) continue;
+    if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
+    if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
-    if (!bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, mp, kp)) continue;
-    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: mp, market_prob: kp, model_ver: usePilot ? "tier_v1" : null });
+    if (!bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, shownP, kp)) continue;
+    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: shownP, market_prob: kp, model_ver: usePilot ? "tier_v1" : "xg_v1", model_raw: shownP !== mp ? mp : null });
   }
   // memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test.
   // league + market-family reputations stack (each clamped), so a pick of a kind EVERY agent
@@ -2197,6 +2253,9 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       // which model priced this pick — absent = deployed v2. Keeps the pilot's record separable
       // (band learning, calibration, any old-vs-new comparison) from day one.
       ...(r.model_ver ? { model_ver: r.model_ver } : {}),
+      // calibration audit: when the shown % is the model-market blend, the raw model prob is kept
+      // here so old-vs-new comparisons (and any rollback re-grade) stay possible forever
+      ...(r.model_raw != null ? { model_raw: Number(r.model_raw.toFixed(4)), calib: "blend50" } : {}),
       // displayed odds: { odd, src } where src is quoted (real median book price) | derived
       // (de-vigged from related quotes) | model (fair odd from the model when nothing is quoted)
       ...(price ? { odds: price.odd, odds_src: price.src } : {}),
