@@ -27,6 +27,8 @@ export type Match = {
   ag: number; // away goals
   kickoff: number; // epoch ms
   leagueId?: number;
+  xgH?: number; // expected goals, when the provider recorded them (top leagues only)
+  xgA?: number;
 };
 
 export type ForecastConfig = {
@@ -43,6 +45,9 @@ export type ForecastConfig = {
   defHome: number; // fallback league home goal mean
   defAway: number; // fallback league away goal mean
   maxGoals: number; // score-matrix truncation
+  xgWeight: number; // attack/defence rates use xgWeight*xG + (1-xgWeight)*goals where xG exists
+  // (0 = goals only, the pre-xG behaviour). Elo ALWAYS updates on the actual result — Elo measures
+  // who won, xG measures chance quality; blending them into Elo would corrupt both signals.
 };
 
 // Fitted on 172k finished fixtures (2025-06 → 2026-08) by coordinate search minimising held-out 1X2
@@ -66,6 +71,7 @@ export const DEFAULTS: ForecastConfig = {
   defHome: 1.45,
   defAway: 1.15,
   maxGoals: 10,
+  xgWeight: 0, // fit via perf/backtest-xg.mts before turning on
 };
 
 const ELO_BASE = 1500;
@@ -155,11 +161,17 @@ export function buildRatings(history: Match[], config: Partial<ForecastConfig> =
     elo.set(mt.homeId, rH + delta);
     elo.set(mt.awayId, rA - delta);
 
-    // league-relative goals for THIS match's league — the cross-league fix
+    // league-relative goals for THIS match's league — the cross-league fix.
+    // Where xG exists, the attack/defence rates learn from EFFECTIVE goals (xgWeight*xG +
+    // (1-xgWeight)*goals): a team that hit the post five times keeps its attack credit, a team
+    // that scored twice off nothing doesn't inflate. League means stay actual-goals so the
+    // lambdas remain calibrated to real scorelines.
+    const effH = cfg.xgWeight > 0 && mt.xgH != null ? cfg.xgWeight * mt.xgH + (1 - cfg.xgWeight) * mt.hg : mt.hg;
+    const effA = cfg.xgWeight > 0 && mt.xgA != null ? cfg.xgWeight * mt.xgA + (1 - cfg.xgWeight) * mt.ag : mt.ag;
     const lg = mt.leagueId ?? -1;
     const mh = shrunkMean(leagueHome.get(lg), ghMean, cfg.leagueShrink);
     const ma = shrunkMean(leagueAway.get(lg), gaMean, cfg.leagueShrink);
-    const nh = mt.hg / mh, na = mt.ag / ma;
+    const nh = effH / mh, na = effA / ma;
     bump(home, mt.homeId, nh, na, w);
     bump(away, mt.awayId, na, nh, w);
     bump(overall, mt.homeId, nh, na, w);
