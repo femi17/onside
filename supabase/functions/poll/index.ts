@@ -280,7 +280,7 @@ function liveValue(mk: string, hg: number, ag: number, corners: number): number 
   if (mk === "home_to_score" || mk === "home_goals_ou") return hg;
   if (mk === "away_to_score" || mk === "away_goals_ou") return ag;
   if (mk === "btts") return Math.min(hg, 1) + Math.min(ag, 1);
-  if (["home_win", "away_win", "draw", "home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "draw_2up", "home_win_never_down", "away_win_never_down", "draw_never_down", "double_chance_1x_1up", "double_chance_x2_1up"].includes(mk)) return hg - ag;
+  if (["home_win", "away_win", "draw", "home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "draw_2up", "home_win_never_down", "away_win_never_down", "draw_never_down", "double_chance_1x_1up", "double_chance_x2_1up", "result_1h_or_ft"].includes(mk)) return hg - ag;
   return hg + ag;
 }
 function earlyResult(t: { market_key: string; side?: string | null; line?: number | null }, hg: number, ag: number, elapsed: number | null = null): "won" | "lost" | null {
@@ -385,7 +385,7 @@ const STAT_MARKETS = new Set([
 const EVENT_MARKETS = new Set([
   "anytime_goalscorer", "first_goalscorer", "last_goalscorer", "player_not_to_score",
   "player_score_assist", "player_assist", "player_card", "player_booked", "player_sent_off", "sub_to_score",
-  "first_team_to_score", "last_team_to_score", "penalty_match", "penalty_scored", "htft", "first_goal_interval", "result_by_minute", "goals_ou_by_minute",
+  "first_team_to_score", "last_team_to_score", "penalty_match", "penalty_scored", "htft", "result_1h_or_ft", "first_goal_interval", "result_by_minute", "goals_ou_by_minute",
   "cards_ou", "cards_1x2", "booking_points_ou", "home_cards_ou", "away_cards_ou", "exact_cards", "cards_handicap", "home_exact_cards", "away_exact_cards", "first_booking",
   "highest_scoring_half", "home_highest_scoring_half", "away_highest_scoring_half", "htft_cs", "both_halves_ou", "btts_both_halves",
   "home_win_both_halves", "away_win_both_halves", "home_win_either_half", "away_win_either_half",
@@ -555,6 +555,9 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
     case "away_score_both_halves": return W(f.h1a > 0 && f.h2a > 0);
     case "correct_score": { const m = (val || "").match(/(\d+)\D+(\d+)/); return m ? W(h === Number(m[1]) && a === Number(m[2])) : null; }
     case "htft": { const m = (val || "").split("/"); if (m.length !== 2) return null; return W(outcome(f.h1h, f.h1a) === m[0] && outcome(f.hg, f.ag) === m[1]); }
+    // owner-ruled 2026-08-30: pick (home/draw/away) wins if it is the result at HT OR at FT —
+    // one occurring is enough. Same facts htft uses (settleHalfTime-finalised h1h/h1a + FT score).
+    case "result_1h_or_ft": { if (!side) return null; return W(outcome(f.h1h, f.h1a) === side || outcome(f.hg, f.ag) === side); }
     case "first_team_to_score": { const g0 = f.goals[0]; const s = g0 ? g0.side : "none"; return W(s === side); }
     case "last_team_to_score": { const gl = f.goals[f.goals.length - 1]; const s = gl ? gl.side : "none"; return W(s === side); }
     case "result_by_minute": { const m = (val || "").match(/(\d+)/); if (!m || !side) return null; const N = Number(m[1]); const hm = f.goals.filter((g) => g.side === "home" && (g.min ?? 999) <= N).length; const am = f.goals.filter((g) => g.side === "away" && (g.min ?? 999) <= N).length; return W(outcome(hm, am) === side); }

@@ -49,6 +49,7 @@ export const BET_CATALOG: CatalogMarket[] = [
   { id: "over_2_5_eg", label: "Over 2.5 (Early Goals)", group: "Goals", gradeableKey: "over_2_5_eg", rule: "Pays early if 2 goals by the 30th minute; else a normal Over 2.5." },
   { id: "over_3_5_eg", label: "Over 3.5 (Early Goals)", group: "Goals", gradeableKey: "over_3_5_eg", rule: "Pays early if 3 goals by the 50th minute; else a normal Over 3.5." },
   { id: "double_chance", label: "Double chance", group: "Result", gradeableKey: "double_chance", rule: "Two of the three outcomes (1X/X2/12)." },
+  { id: "result_1h_or_ft", label: "1st half result or match result", group: "Result", gradeableKey: "result_1h_or_ft", rule: "Pick home/draw/away; wins if it is the result at half-time OR at full-time (one is enough)." },
   { id: "dnb", label: "Draw no bet", group: "Result", gradeableKey: "dnb", rule: "Pick a team; stake voided on a draw." },
   { id: "team_no_bet", label: "Home/Away no bet", group: "Result", gradeableKey: "home_no_bet", rule: "Voided if the named team wins." },
   { id: "total_goals_ou", label: "Total goals over/under", group: "Goals", gradeableKey: "total_goals_ou", value: LINE, rule: "Total goals over/under a line, by period." },
@@ -244,6 +245,12 @@ D(["fouls 1x2", "most fouls"], "Fouls 1X2");
 D(["offsides 1x2", "most offsides"], "Offsides 1X2");
 D(["odd corners", "corners odd"], "Odd corners");
 D(["even corners", "corners even"], "Even corners");
+// ---- 1st half result OR match result (owner-ruled 2026-08-30): pick home/draw/away, wins if it
+// is the result at HT or at FT — one is enough. Sided phrases grade; the bare market name (no
+// pick captured) stays a manual leg.
+A(["1st half result or match result home", "1st half result or match result 1", "half or match result home", "half or match result 1", "1st half or match result home"], "result_1h_or_ft", "1st half or match result — Home", "home");
+A(["1st half result or match result draw", "1st half result or match result x", "half or match result draw", "half or match result x", "1st half or match result draw"], "result_1h_or_ft", "1st half or match result — Draw", "draw");
+A(["1st half result or match result away", "1st half result or match result 2", "half or match result away", "half or match result 2", "1st half or match result away"], "result_1h_or_ft", "1st half or match result — Away", "away");
 D(["1st half result or match result", "half or match result"], "1st half result or match result");
 
 const OVER: Record<string, string> = { "0.5": "over_0_5", "1.5": "over_1_5", "2.5": "over_2_5", "3.5": "over_3_5" };
