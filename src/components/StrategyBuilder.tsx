@@ -35,6 +35,10 @@ const FAMILIES = [
 function familyFromText(text: string): { key: string; label: string } | null {
   const t = text.trim().toLowerCase();
   if (!t) return null;
+  // before the plain match-result test — this phrase CONTAINS "match result" but is its own
+  // market (owner, 2026-08-30): pick wins at HT or FT; side-less = the agent picks per game
+  if (/(1st|first)\s*half\s*(result\s*)?or\s*(match|full[\s-]*time|ft)\s*result/.test(t))
+    return { key: "result_1h_or_ft_best", label: "1st half or match result" };
   if (/\bhandicap\b|\bah\b/.test(t)) return { key: "handicap_best", label: "Handicap" };
   if (/double\s*chance|\bdc\b/.test(t)) return { key: "dc_best", label: "Double chance" };
   if (/over\s*\/?\s*under|\bo\/u\b|\btotals?\b|^goals?$/.test(t)) return { key: "ou_best", label: "Over / Under" };
@@ -327,11 +331,13 @@ export default function StrategyBuilder({
       const s = surprisePick;
       return { key: s.key, label: s.label.split(" — ")[0], side: s.side, line: s.line, period: "ft", value: null as string | null, gradeable: true, needsValue: null as null | { label: string; placeholder: string }, valueTarget: "bet_value" as "bet_value" | "side" };
     }
-    if (!customParsed) {
-      // free text that names a whole category (e.g. "double chance", "handicap") → run it as a family
+    if (!customParsed || !customParsed.gradeable) {
+      // free text that names a whole category (e.g. "double chance", "handicap") → run it as a
+      // family. Also rescues text the recognizer only knows as a MANUAL leg (e.g. the side-less
+      // "1st half result or match result") when it names a family the engine CAN hunt.
       const fam = mode === "custom" ? familyFromText(customText) : null;
       if (fam) return { key: fam.key, label: fam.label, side: null as string | null, line: null as number | null, period: "ft", value: null as string | null, gradeable: true, needsValue: null as null | { label: string; placeholder: string }, valueTarget: "bet_value" as "bet_value" | "side" };
-      return null;
+      if (!customParsed) return null;
     }
     return {
       key: customParsed.marketKey,
@@ -1170,10 +1176,11 @@ export default function StrategyBuilder({
                         return rule ? <p className="mt-1 text-[12px] leading-snug text-ink-mute">{rule}</p> : null;
                       })()}
                     </>
+                  ) : familyFromText(customText) ? (
+                    // family beats an ungradeable parse — mirrors the market useMemo's precedence
+                    <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">✓ Hunting the best {familyFromText(customText)!.label} per game</p>
                   ) : customParsed ? (
                     <p className="mt-2 font-mono text-[11px] font-bold text-brick">Recognised, but not auto-gradeable yet — pick another.</p>
-                  ) : familyFromText(customText) ? (
-                    <p className="mt-2 font-mono text-[11px] font-bold text-grass-deep">✓ Hunting the best {familyFromText(customText)!.label} per game</p>
                   ) : (
                     <p className="mt-2 font-mono text-[11px] text-ink-mute">Not recognised yet — try a clearer market name. Tip: separate several outcomes with commas.</p>
                   )

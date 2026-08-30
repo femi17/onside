@@ -869,6 +869,30 @@ function canon(mk: string, side: string | null, line: number | null): { mk: stri
 // halves as independently thinned Poissons: goals skew slightly to the 2nd half, corners a bit more
 const H1_GOALS = 0.45;
 const H1_CORNERS = 0.44;
+
+// P(HT result = side OR FT result = side) — "1st half result or match result" (owner market,
+// 2026-08-30). Needs the JOINT of the two checkpoints, not the marginals: exact sum over the two
+// independently-thinned half matrices (FT score = 1H + 2H). Works off any FT lambda pair, so the
+// model prices it from cell lambdas and the market side derives it from the bookies' fitted
+// lambdas (marketLams) — same dual use as every other goals-derived market.
+function probHtOrFtLam(lamH: number, lamA: number, side: string | null): number | null {
+  if (side !== "home" && side !== "draw" && side !== "away") return null;
+  const N = 8; // ≥99.9% of half-goal mass at these lambdas
+  const pm = (lam: number) => { const a = [Math.exp(-lam)]; for (let k = 1; k <= N; k++) a[k] = a[k - 1] * lam / k; return a; };
+  const ph1 = pm(lamH * H1_GOALS), pa1 = pm(lamA * H1_GOALS);
+  const ph2 = pm(lamH * (1 - H1_GOALS)), pa2 = pm(lamA * (1 - H1_GOALS));
+  const out = (h: number, a: number) => (h > a ? "home" : a > h ? "away" : "draw");
+  let p = 0;
+  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
+    const pht = ph1[i] * pa1[j];
+    if (pht < 1e-10) continue;
+    if (out(i, j) === side) { p += pht; continue; } // HT leg hit — the whole branch wins
+    for (let k = 0; k <= N; k++) for (let l = 0; l <= N; l++) {
+      if (out(i + k, j + l) === side) p += pht * ph2[k] * pa2[l];
+    }
+  }
+  return Math.min(0.999, p);
+}
 // Calibration blend (2026-08-29, validated on 627 settled picks: log-loss 0.5696 model-only /
 // 0.5680 market-only / 0.5620 blended; the blend's claimed avg ≈72.4% vs 72.25% actual — the model
 // alone claimed 76.9%). The DELIVERED model % is the log-odds midpoint (w=0.5, the flat centre of
@@ -890,13 +914,20 @@ function tierOf(edge: number): string {
   return edge >= 0.05 ? "elite" : edge >= 0.04 ? "strong" : "wide";
 }
 
-const FAMILIES: Record<string, { mk: string; side: string | null; line: number | null }[]> = {
+const FAMILIES: Record<string, { mk: string; side: string | null; line: number | null; label?: string }[]> = {
   result_best: [
     { mk: "home_win", side: "home", line: null }, { mk: "draw", side: "draw", line: null }, { mk: "away_win", side: "away", line: null },
     { mk: "double_chance_1x", side: "1x", line: null }, { mk: "double_chance_x2", side: "x2", line: null }, { mk: "double_chance_12", side: "12", line: null },
   ],
   dc_best: [
     { mk: "double_chance_1x", side: "1x", line: null }, { mk: "double_chance_x2", side: "x2", line: null }, { mk: "double_chance_12", side: "12", line: null },
+  ],
+  // "1st half result or match result" typed without a pick — the agent prices all three sides
+  // (labels carry the side because all three share one mk, unlike the other families)
+  result_1h_or_ft_best: [
+    { mk: "result_1h_or_ft", side: "home", line: null, label: "1st half or match result — Home" },
+    { mk: "result_1h_or_ft", side: "draw", line: null, label: "1st half or match result — Draw" },
+    { mk: "result_1h_or_ft", side: "away", line: null, label: "1st half or match result — Away" },
   ],
   ou_best: [
     { mk: "over_1_5", side: "over", line: 1.5 }, { mk: "over_2_5", side: "over", line: 2.5 }, { mk: "over_3_5", side: "over", line: 3.5 },
@@ -920,6 +951,7 @@ const MK_LABEL: Record<string, string> = {
   over_1_5: "Over 1.5 goals", over_2_5: "Over 2.5 goals", over_3_5: "Over 3.5 goals",
   under_2_5: "Under 2.5 goals", under_3_5: "Under 3.5 goals", btts: "Both teams to score",
   home_to_score: "Home team to score", away_to_score: "Away team to score",
+  result_1h_or_ft: "1st half or match result",
 };
 function defSide(mk: string): string | null {
   if (mk === "home_win" || mk === "home_to_score") return "home";
@@ -1604,6 +1636,8 @@ const periodOf = (c: Cand): Period => (c.period === "1h" || c.period === "2h" ? 
 function modelFor(cell: Cell, c: Cand): number | null {
   const k = canon(c.mk, c.side, c.line);
   const period = periodOf(c);
+  // HT-or-FT result: joint of the two checkpoints — priced off the raw FT lambdas, not an Agg
+  if (k.mk === "result_1h_or_ft") return cell.confident ? probHtOrFtLam(cell.lamH, cell.lamA, k.side) : null;
   if (CORNER_MKS.has(k.mk)) {
     if (!cell.corn?.ok) return null;
     const share = period === "1h" ? H1_CORNERS : period === "2h" ? 1 - H1_CORNERS : 1;
@@ -1627,6 +1661,7 @@ function marketFor(c: Cand, bms: any[]): number | null {
   if (CORNER_MKS.has(k.mk) || CARD_MKS.has(k.mk)) return null;
   const lam = marketLams(bms);
   if (!lam) return null;
+  if (k.mk === "result_1h_or_ft") return probHtOrFtLam(lam.lh, lam.la, k.side); // joint, not an Agg
   const share = period === "1h" ? H1_GOALS : period === "2h" ? 1 - H1_GOALS : 1;
   return modelProb(k.mk, k.side, k.line, marketAggFor(lam, share), c.bet_value ?? null);
 }
