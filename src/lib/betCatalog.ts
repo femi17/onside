@@ -366,6 +366,16 @@ export function recognizeBet(input: string): RecognizedBet | null {
     };
   }
 
+  // ---- "1st half result or match result" — must ALSO run before pullPeriod strips the half
+  //      words (the alias-table keys containing "1st half" are unreachable after the strip).
+  //      Pick = home/draw/away word, or a trailing 1/x/2 code. No pick captured → manual leg.
+  if (/(1st|first)\s*half\s*(result\s*)?or\s*(match|full\s*time|ft)\s*result/.test(raw)) {
+    const side = /\bhome\b/.test(raw) ? "home" : /\bdraw\b/.test(raw) ? "draw" : /\baway\b/.test(raw) ? "away"
+      : /\b1\s*$/.test(raw) ? "home" : /\bx\s*$/.test(raw) ? "draw" : /\b2\s*$/.test(raw) ? "away" : null;
+    if (side) return { marketKey: "result_1h_or_ft", label: `1st half or match result — ${cap(side)}`, line: null, side, period: "ft", gradeable: true, value: null };
+    return { marketKey: "custom", label: "1st half result or match result", line: null, side: null, period: "ft", gradeable: false, value: null };
+  }
+
   // 1UP (early-pay result): pays the moment the team goes one goal ahead — final result then
   // no longer matters. Keyword "1up" (also "1 up" / "1-up" / "one up") plus a side.
   const oneUp = raw.replace(/\b1\s*-?\s*up\b/g, "1up").replace(/\bone\s*up\b/g, "1up");
@@ -576,6 +586,23 @@ export function recognizeBet(input: string): RecognizedBet | null {
     if (resTok && hasCS) return { marketKey: "result_or_cs", label: `${resLbl} or clean sheet`, line: null, side: resTok, period: "ft", gradeable: true, value: null };
     if (resTok && (hasGG || hasNG)) return { marketKey: "result_or_btts", label: `${resLbl} or ${hasNG ? "NG" : "GG"}`, line: null, side: resTok, period: "ft", gradeable: true, value: hasNG ? "no" : "yes" };
     if (resTok && ouM) return { marketKey: "result_or_ou", label: `${resLbl} or ${cap(ouM[1])} ${ouM[2]}`, line: Number(ouM[2]), side: resTok, period: "ft", gradeable: true, value: ouM[1] };
+  }
+
+  // ---- Double Chance & O/U printed WITHOUT a joiner (owner-reported 2026-08-30): slips write
+  //      "Home/Draw Under 3.5" with no "&"/"and", so the combo block above never fired and the
+  //      leg fell through to the plain total-goals parse — grading the LOOSER "Under 3.5" and
+  //      silently dropping the DC leg. Only the unambiguous slash/comma/code forms fire here:
+  //      bare words ("home under 3.5") stay &-gated because that's how TEAM totals print, and
+  //      "or" phrasings keep their result_or_ou OR-semantics via the block above. ----
+  if (!/corners?|cards?|shots?|fouls?|offsides?|booking/.test(raw)) {
+    const ouJ = raw.match(/\b(over|under)\s*([0-9]+(?:\.5)?)/);
+    // test DC codes on the phrase MINUS the matched O/U token, so the "12" in "over 12.5" (a
+    // line, not a double-chance code) can never read as DC 12
+    const rest = ouJ ? raw.replace(ouJ[0], " ") : raw;
+    const dcs = /\b1x\b|home\s*(?:\/|,)\s*draw|draw\s*(?:\/|,)\s*home/.test(rest) ? "1x"
+      : /\bx2\b|draw\s*(?:\/|,)\s*away|away\s*(?:\/|,)\s*draw/.test(rest) ? "x2"
+      : /\b12\b|home\s*(?:\/|,)\s*away|away\s*(?:\/|,)\s*home/.test(rest) ? "12" : null;
+    if (dcs && ouJ) return wp({ marketKey: "dc_ou", label: `${dcs.toUpperCase()} & ${cap(ouJ[1])} ${ouJ[2]}`, line: Number(ouJ[2]), side: dcs, gradeable: true, period, value: ouJ[1] });
   }
 
   // ---- corners: handicap / 1X2 / odd-even / range (graded from per-team corner totals) ----
