@@ -408,7 +408,16 @@ function Item({
       <div className="flex items-center gap-3 px-3.5 py-3 md:gap-4 md:px-4 md:py-3.5">
         <Marker cat={cat} />
         <div className="min-w-0 flex-1">
-          <League f={f} />
+          {/* on mobile the price moves up here, right of the league — the market row below
+              truncates on long market names and was swallowing the odds off-screen */}
+          <div className="flex items-center gap-2">
+            <League f={f} />
+            {p.odds != null && (
+              <span className="ml-auto flex-none font-mono text-[11px] font-bold text-ink md:hidden">
+                {p.odds_src === "quoted" ? "@" : "~"}{p.odds.toFixed(2)}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-[14.5px] font-bold text-ink">
               {f ? (<>{f.home_team} <span className="font-semibold text-ink-mute">v</span> {f.away_team}</>) : "Match"}
@@ -433,9 +442,10 @@ function Item({
                     <b title={tone.hint} className={tone.cls || undefined}>{Math.round(p.model_prob * 100)}%</b>
                   </>
                 ) : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
-                {/* price: "@" = real median bookmaker odds; "~" = estimate (no direct quote) */}
+                {/* price: "@" = real median bookmaker odds; "~" = estimate (no direct quote);
+                    on mobile it lives on the league row instead */}
                 {p.odds != null ? (
-                  <>
+                  <span className="hidden md:inline">
                     {" · "}
                     <b
                       className="text-ink"
@@ -445,7 +455,7 @@ function Item({
                     >
                       {p.odds_src === "quoted" ? "@" : "~"}{p.odds.toFixed(2)}
                     </b>
-                  </>
+                  </span>
                 ) : ""}
               </span>
               {/* the Onside score badge used to sit here too, but two look-alike numbers on one
