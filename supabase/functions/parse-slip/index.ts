@@ -89,8 +89,11 @@ A slip (especially an accumulator) can list many games stacked vertically; retur
 For each selection return: home team, away team, league (if visible else ""), and map the bet to ONE market_key from this set: ${MARKET_KEYS.join(", ")}.
 market_label must be the SELECTION as picked — e.g. "Over 2.5", "1X", "Milan to score" — never just the market header ("Over/Under", "Double Chance", "1X2"). When the slip shows a grey/small market name with the picked option in bold beneath it, the bold option is the market_label.
 ROW ALIGNMENT (CRITICAL on long slips): each selection's market belongs to ITS OWN row block — read the market text that sits between that leg's team names and the next leg's, and NEVER carry a market down or up from an adjacent leg. If a leg's market text is unreadable, return market_key "custom" with confidence "low" and whatever raw_market you can see — do not substitute a neighbour's market.
+PICK/MARKET TABLE LAYOUT (CRITICAL): many bookmakers print each leg as labelled rows — e.g. "Pick: Over 8.5 @1.52" / "Market: Corners - Over/Under" / "Result: --". The Market row names WHICH market the Pick belongs to; the Pick row alone is meaningless. ALWAYS combine the two: "Market: GG/NG" + "Pick: Yes" is both-teams-to-score YES (btts, market_label "GG — Yes"), never a bare "Yes"; "Market: Corners - Over/Under" + "Pick: Over 8.5" is a CORNERS total (market_label "Over 8.5 corners"), NEVER a goals total; "Market: <Team> Over/Under" + "Pick: Over 0.5" is that TEAM's goal total (see TEAM TOTALS below). Copy the Market row text verbatim into raw_market.
 Use the FULL team names as printed (do not abbreviate).
 Mapping guide for the engine markets: "1X"/home or draw -> double_chance_1x; "X2"/draw or away -> double_chance_x2; "12"/home or away -> double_chance_12; GG/BTTS/both teams to score -> btts; "Over 0.5/1.5/2.5/3.5" goals -> over_0_5/over_1_5/over_2_5/over_3_5 ONLY when the printed line is exactly that .5 line; "Under 2.5/3.5" -> under_2_5/under_3_5 same condition; home win/"1" -> home_win; away win/"2" -> away_win; draw/"X" -> draw; home/away to score -> home_to_score/away_to_score; corners over N -> over_8_5_corners with line=N; to qualify/advance -> home_to_qualify/away_to_qualify.
+GG/NG (CRITICAL): a "GG/NG" or BTTS market always carries a Yes/No choice — put it in BOTH the label and value: pick Yes -> btts, market_label "GG — Yes", value "Yes"; pick No -> btts, market_label "NG — No", value "No". Never return a bare "Yes"/"No" label, and never key a GG/NG "No" as anything but btts.
+CORNERS LABELS (CRITICAL): a corners total's market_label must ALWAYS contain the word "corners" — "Over 8.5 corners", "Under 10.5 corners" — even when the printed pick is just "Over 8.5" and the corners context is only in the market name. A corners label without "corners" becomes a GOALS total downstream and settles on the wrong number. Corners UNDER a line -> market_key "custom" with that label.
 WHOLE-NUMBER goal lines (CRITICAL): "Over 1", "Over 2", "Under 3" — any goal line WITHOUT .5 — is a DIFFERENT bet from the .5 line: it PUSHES (voids) when the total lands exactly on the number. NEVER round or convert it to a .5 line. Use market_key "custom" with market_label exactly "Over N goals"/"Under N goals" keeping the printed number (e.g. "Over 1 goals"), value "", line = the printed whole number. Copy the printed line digit-for-digit into raw_market too.
 HALF SCOPE (CRITICAL, applies to EVERY market): if a selection is scoped to a half ("1st Half", "2nd Half", "First Half", "HT"), the market_label MUST start with that scope — e.g. "1st half - Under 1.5", "2nd half - Over 0.5" — even when the printed layout shows the half only in the grey market header. A half bet whose label loses the half becomes a WHOLE-MATCH bet in the tracker and settles wrongly. This includes lines with no engine key (e.g. Under 1.5 → custom, label "1st half - Under 1.5").
 TEAM TOTALS (read carefully — this is common and easy to miss): a plain Over/Under with NO team attached counts BOTH teams' goals (use over_x_5/under_x_5). But an Over/Under is a SINGLE-TEAM total whenever a team's name is attached to it — INCLUDING when the bold line shows only "Over N"/"Under N" and a nearby subtitle or market description reads "<Team> Over/Under", "<Team> Total", or "<Team> Goals". This is exactly how SportyBet and many bookmakers label a team total: e.g. a subtitle "Kuopion Palloseura Over/Under" with a bold "Over 0.5" means Kuopion Palloseura's goals over 0.5 — NOT the match total. Inline forms count too ("Barcelona Over 1.5", "Man City Total Over 2.5"). For ANY single-team total, do NOT use the total over_x_5/under_x_5 keys — use market_key "custom" with market_label "Home over N" / "Home under N" when the named team is the fixture's HOME team, or "Away over N" / "Away under N" when it is the AWAY team (N = the printed line, keep over/under exactly as shown). Decide home vs away by matching the named team to the home/away teams you read for that fixture. Only treat an Over/Under as the match total when NO team name is attached to it.
@@ -423,6 +426,33 @@ Deno.serve(async (req) => {
         label = s.market_label || s.raw_market || label;
         side = null;
         outLine = null;
+      }
+      // Corners guard: on Pick/Market table layouts the model reads the Pick column ("Over 8.5")
+      // and drops the Market column ("Corners - Over/Under"), landing a CORNERS total on a GOALS
+      // key — Over 8.5 GOALS then settles lost on the scoreline while the corner bet may have won.
+      // raw_market keeps the printed market text, so re-key deterministically whenever the printed
+      // text says corners but the label lost the word: custom "Over/Under N corners" maps to the
+      // gradeable corners_ou in the tracker's recognizer.
+      if (/corner/i.test(comboSrc) && !/corner/i.test(label ?? "")) {
+        const ouC = comboSrc.match(/\b(over|under)\b[^0-9]{0,3}(\d+(?:[.,]\d)?)/i);
+        if (ouC) {
+          const sd = ouC[1].toLowerCase() === "under" ? "Under" : "Over";
+          mk = "custom";
+          label = `${sd} ${Number(ouC[2].replace(",", "."))} corners`;
+          side = null;
+          outLine = null;
+        }
+      }
+      // GG/NG guard: the same layouts split market ("GG/NG") from pick ("Yes"/"No"). A btts leg
+      // that loses its choice settles as YES (poll treats side !== "no" as GG), so derive the side
+      // from the printed pick and make the label carry the market — a bare "Yes" tells the user
+      // nothing. Derive from the pick text only (label/value), never raw_market: "GG/NG" itself
+      // contains "ng" and would false-flag every yes.
+      if (mk === "btts") {
+        const pickTxt = `${s.market_label ?? ""} ${value}`;
+        const no = /\b(no|ng)\b/i.test(pickTxt) && !/\byes\b|\bgg\b/i.test(pickTxt);
+        side = no ? "no" : "yes";
+        label = no ? "NG — No (both teams to score)" : "GG — Yes (both teams to score)";
       }
       // A label with no words lost its market text entirely ("Excluded number of Goals - Home 0"
       // came back as just "0"). raw_market keeps the verbatim print — rebuild the label from it
