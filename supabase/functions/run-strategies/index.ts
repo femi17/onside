@@ -1002,7 +1002,14 @@ async function parseRule(text: string, key: string, base: { mk: string; side: st
         model: "claude-sonnet-5", max_tokens: 1500,
         thinking: { type: "disabled" },
         output_config: { format: { type: "json_schema", schema: RULE_SCHEMA } },
-        messages: [{ role: "user", content: `${RULE_PROMPT}\n\nBASE market: ${base.label} (key ${base.mk}, side ${base.side ?? ""}).\nRULE: ${text.trim().slice(0, 800)}` }],
+        // The ~3.5K-token field glossary (RULE_PROMPT) is identical on every parse and dominates
+        // the call's cost — cache it. Builder sessions re-parse within minutes (cache TTL 5min),
+        // so repeat parses pay ~10% on the prefix instead of 100%. The dynamic tail (base market
+        // + rule text) stays outside the breakpoint.
+        messages: [{ role: "user", content: [
+          { type: "text", text: RULE_PROMPT, cache_control: { type: "ephemeral" } },
+          { type: "text", text: `\nBASE market: ${base.label} (key ${base.mk}, side ${base.side ?? ""}).\nRULE: ${text.trim().slice(0, 800)}` },
+        ] }],
       }),
     });
     if (!res.ok) return null;
