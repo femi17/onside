@@ -10,6 +10,7 @@ import PushChime from "@/components/PushChime";
 import InstallPushPrompt from "@/components/InstallPushPrompt";
 import InstallNudge from "@/components/InstallNudge";
 import UpdateWatcher from "@/components/UpdateWatcher";
+import FounderQuestion from "@/components/FounderQuestion";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
 
@@ -131,6 +132,8 @@ export default async function AppLayout({
       <InstallNudge />
       {/* prompts a reload when an already-open app is behind a new deploy */}
       <UpdateWatcher />
+      {/* one founder question at a time, targeted server-side by what the user actually did */}
+      <FounderQuestion />
     </div>
     </ConfirmProvider>
   );

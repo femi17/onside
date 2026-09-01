@@ -2,7 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
-import AdminAnalytics, { type AdminStats, type DailyActivity, type RecentPick, type LlmUsageRow } from "@/components/AdminAnalytics";
+import AdminAnalytics, { type AdminStats, type DailyActivity, type RecentPick, type LlmUsageRow, type FeedbackData } from "@/components/AdminAnalytics";
 import { getAnthropicCredit } from "@/lib/anthropicCost";
 
 // Platform analytics — admin-only. Gated on profiles.is_admin here and again inside the
@@ -17,11 +17,12 @@ export default async function AnalyticsPage() {
   const { data: prof } = await supabase.from("profiles").select("is_admin").eq("id", user.id).maybeSingle();
   if (!prof?.is_admin) notFound();
 
-  const [{ data }, { data: daily }, { data: picks }, { data: llm }, anthropic] = await Promise.all([
+  const [{ data }, { data: daily }, { data: picks }, { data: llm }, { data: feedback }, anthropic] = await Promise.all([
     supabase.rpc("admin_analytics"),
     supabase.rpc("admin_daily_activity"),
     supabase.rpc("admin_recent_picks"),
     supabase.rpc("admin_llm_usage"),
+    supabase.rpc("admin_feedback"),
     getAnthropicCredit(),
   ]);
   const stats = data as AdminStats | null;
@@ -38,7 +39,7 @@ export default async function AnalyticsPage() {
 
       <div className="mx-auto max-w-5xl px-5 pt-2 md:px-8">
         {stats ? (
-          <AdminAnalytics s={stats} daily={daily as DailyActivity | null} picks={picks as RecentPick[] | null} anthropic={anthropic} llm={llm as LlmUsageRow[] | null} />
+          <AdminAnalytics s={stats} daily={daily as DailyActivity | null} picks={picks as RecentPick[] | null} anthropic={anthropic} llm={llm as LlmUsageRow[] | null} feedback={feedback as FeedbackData | null} />
         ) : (
           <p className="mt-6 rounded-2xl border border-white/10 bg-pitch-2 p-6 text-center text-[13.5px] text-onpitch-mute">
             Couldn&apos;t load analytics.

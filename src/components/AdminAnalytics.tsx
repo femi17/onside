@@ -32,6 +32,12 @@ export type LlmUsageRow = {
   input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
 };
 
+// admin_feedback() — founder-question answers: distribution per question + recent notes
+export type FeedbackData = {
+  summary: { prompt_key: string; answer: string; n: number }[];
+  recent: { prompt_key: string; answer: string; note: string | null; answered_at: string; who: string }[];
+};
+
 // admin_daily_activity() — the three per-day activity counts (real users only)
 export type DailyActivity = {
   uploads_daily: { day: string; n: number }[];
@@ -58,7 +64,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s, daily, picks, anthropic, llm }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null; llm?: LlmUsageRow[] | null }) {
+export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedback }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null; llm?: LlmUsageRow[] | null; feedback?: FeedbackData | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -265,7 +271,86 @@ export default function AdminAnalytics({ s, daily, picks, anthropic, llm }: { s:
         </div>
         {llm && llm.length > 0 && <LlmBreakdown rows={llm} />}
       </Section>
+
+      {/* Founder questions — what real users say when asked one question at the right moment */}
+      {feedback && (feedback.summary.length > 0 || feedback.recent.length > 0) && (
+        <Section label="What users are telling us">
+          <FeedbackPanel f={feedback} />
+        </Section>
+      )}
     </>
+  );
+}
+
+// Human labels for the founder-question keys and answer values (kept in sync with
+// FounderQuestion.tsx — the card owns the copy, this owns the reading view).
+const FB_Q: Record<string, string> = {
+  agent_staked: "Did you stake your agent's picks this week?",
+  losing_pain: "A pick lost — how did that land?",
+  tracking_value: "Has tracking your bets helped?",
+  pmf: "If Onside disappeared tomorrow…",
+  agent_quality: "Is your agent picking games you'd bet?",
+  improve: "Change ONE thing about Onside",
+};
+const FB_A: Record<string, string> = {
+  most: "Staked most", some: "One or two", watching: "Just watching",
+  fine: "Part of betting", annoying: "Annoying but fine", trust_hit: "Trust it less",
+  yes: "Yes", a_bit: "A bit", no: "Not really",
+  very: "Very disappointed", somewhat: "Somewhat", not: "Not bothered",
+  sometimes: "Sometimes", free_text: "(wrote in)", "(dismissed)": "Dismissed",
+};
+function FeedbackPanel({ f }: { f: FeedbackData }) {
+  const byQ = new Map<string, { answer: string; n: number }[]>();
+  for (const row of f.summary) {
+    if (row.answer === "(dismissed)") continue; // dismissals aren't opinions
+    const list = byQ.get(row.prompt_key) ?? [];
+    list.push({ answer: row.answer, n: row.n });
+    byQ.set(row.prompt_key, list);
+  }
+  const notes = f.recent.filter((r) => r.note);
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <Panel title="Answers" sub="Distribution per question (dismissals excluded)">
+        {byQ.size ? (
+          <div className="mt-4 flex flex-col gap-4">
+            {[...byQ.entries()].map(([k, answers]) => {
+              const total = Math.max(1, answers.reduce((a, b) => a + b.n, 0));
+              return (
+                <div key={k}>
+                  <div className="text-[13px] font-bold text-ink">{FB_Q[k] ?? k}</div>
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {answers.map((a) => (
+                      <div key={a.answer} className="flex items-center gap-3 text-[12.5px]">
+                        <span className="w-32 flex-none truncate font-mono text-ink-mute">{FB_A[a.answer] ?? a.answer}</span>
+                        <div className="h-2 flex-1 rounded-full bg-ink/[0.08]">
+                          <div className="h-full rounded-full bg-flood-deep" style={{ width: `${(a.n / total) * 100}%` }} />
+                        </div>
+                        <span className="w-6 flex-none text-right font-mono font-bold text-ink">{a.n}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : <Empty>No answers yet — questions started going out today.</Empty>}
+      </Panel>
+      <Panel title="In their words" sub="The follow-up notes — read every one">
+        {notes.length ? (
+          <div className="mt-4 flex flex-col divide-y divide-ink/[0.06]">
+            {notes.map((r, i) => (
+              <div key={i} className="py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-[12.5px] font-bold text-ink">{r.who}</span>
+                  <span className="flex-none font-mono text-[10.5px] text-ink-mute">{FB_Q[r.prompt_key] ?? r.prompt_key} · {FB_A[r.answer] ?? r.answer}</span>
+                </div>
+                <p className="mt-1 text-[13px] leading-relaxed text-ink">&ldquo;{r.note}&rdquo;</p>
+              </div>
+            ))}
+          </div>
+        ) : <Empty>No written feedback yet.</Empty>}
+      </Panel>
+    </div>
   );
 }
 
