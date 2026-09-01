@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Footer from "@/components/Footer";
+import { authEmailWait, stampAuthEmail, fmtWait } from "@/lib/authEmailLimit";
+
+// confirmation resends: 3 minutes per address, persisted — the in-memory 60s countdown
+// reset on every refresh, which is how slow inboxes turned into 4-5 real emails
+const CONFIRM_COOLDOWN_S = 180;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,9 +34,16 @@ export default function LoginPage() {
 
   async function handleResend() {
     if (Date.now() < resendAt || !sentTo) return;
-    setResendAt(Date.now() + 60_000);
+    const wait = authEmailWait("confirm", sentTo, CONFIRM_COOLDOWN_S);
+    if (wait > 0) {
+      setResendAt(Date.now() + wait * 1000);
+      setMsg(`Already sent — check spam too. You can resend in ${fmtWait(wait)}.`);
+      return;
+    }
+    setResendAt(Date.now() + CONFIRM_COOLDOWN_S * 1000);
     setMsg(null);
     const { error } = await supabase.auth.resend({ type: "signup", email: sentTo });
+    if (!error) stampAuthEmail("confirm", sentTo);
     setMsg(error ? error.message : "Sent again — give it a minute.");
   }
 
@@ -39,6 +51,18 @@ export default function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
+    // refresh + re-signup with the same address used to re-send the confirmation email each
+    // time — inside the cooldown, skip the API and go straight back to the inbox screen
+    if (mode === "signup") {
+      const wait = authEmailWait("confirm", email, CONFIRM_COOLDOWN_S);
+      if (wait > 0) {
+        setBusy(false);
+        setSentTo(email);
+        setResendAt(Date.now() + wait * 1000);
+        setMsg(`A confirmation email already went to this address — check spam too. You can resend in ${fmtWait(wait)}.`);
+        return;
+      }
+    }
     const fn =
       mode === "signin"
         ? supabase.auth.signInWithPassword({ email, password })
@@ -50,11 +74,14 @@ export default function LoginPage() {
       return;
     }
     // signup with no session = email confirmation is on; swap to the check-your-inbox
-    // screen (the form disappears — no button left to hammer for more emails)
+    // screen (the form disappears — no button left to hammer for more emails). Stamp the
+    // persistent cooldown too: a page refresh + re-signup used to re-send the confirmation.
     if (mode === "signup" && !data.session) {
       setBusy(false);
       setSentTo(email);
-      setResendAt(Date.now() + 60_000);
+      stampAuthEmail("confirm", email);
+      const wait = authEmailWait("confirm", email, CONFIRM_COOLDOWN_S);
+      setResendAt(Date.now() + (wait > 0 ? wait : CONFIRM_COOLDOWN_S) * 1000);
       return;
     }
     // a brand-new account goes straight to onboarding; a returning one lands where it belongs —

@@ -4,6 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Footer from "@/components/Footer";
+import { authEmailWait, stampAuthEmail, fmtWait } from "@/lib/authEmailLimit";
+
+// one reset email per address per 10 minutes — survives page refreshes, so a slow inbox
+// can't be mashed into 4-5 real emails
+const RESET_COOLDOWN_S = 600;
 
 export default function ForgotPasswordPage() {
   const supabase = createClient();
@@ -16,6 +21,14 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
+    // recently sent to this address? show the sent screen without firing another email
+    const wait = authEmailWait("reset", email, RESET_COOLDOWN_S);
+    if (wait > 0) {
+      setBusy(false);
+      setSent(true);
+      setMsg(`A reset link already went to this address — check spam too. You can request another in ${fmtWait(wait)}.`);
+      return;
+    }
     // the recovery link lands on /auth/callback, which exchanges the code for a session and then
     // forwards to /reset-password where the new password is set
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -27,6 +40,7 @@ export default function ForgotPasswordPage() {
       setMsg(error.message);
       return;
     }
+    stampAuthEmail("reset", email);
     setSent(true);
   }
 
@@ -48,6 +62,7 @@ export default function ForgotPasswordPage() {
               If an account exists for <span className="font-semibold text-chalk">{email}</span>, a reset link is on its way.
               Open it on this device to set a new password.
             </p>
+            {msg && <p className="mt-3 font-mono text-xs text-flood">{msg}</p>}
             <Link href="/login" className="mt-6 text-sm text-flood hover:underline">
               ← Back to sign in
             </Link>
