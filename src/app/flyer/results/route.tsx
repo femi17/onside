@@ -56,7 +56,8 @@ export async function GET(req: NextRequest) {
 
   // ---- target-hit card (?sweep=N): one agent's perfect card as the hero, no day-stats bloat ----
   if (sweepIdx != null && sweep) {
-    const tLegs = sweep.legs.slice(0, story ? 6 : 5);
+    // feed (1350px) fits 4 leg rows before the card collides with the footer; story fits 5
+    const tLegs = sweep.legs.slice(0, story ? 5 : 4);
     return new ImageResponse(
       (
         <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: PITCH, padding: story ? "88px 72px" : "64px 72px", fontFamily: "sans-serif" }}>
