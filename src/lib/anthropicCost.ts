@@ -69,12 +69,16 @@ export async function getAnthropicCredit(): Promise<AnthropicCredit | null> {
     return null;
   }
   try {
-    // end at "now" — the API rejects ranges that reach into the future
-    const end = new Date();
+    // End every query at the START of the current UTC day, never "now": the API floors both
+    // range ends to UTC days (intra-day spend is unqueryable regardless) and 400s any window
+    // that floors to zero length. Ending at "now" made the 31-day walk emit exactly such a
+    // window whenever the range crossed a step boundary into the current day — every 31st day
+    // the whole card silently fell back to the env default (2026-09-01, Aug-1 baseline).
+    const todayStart = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+    const end = new Date(todayStart);
     const since = process.env.ANTHROPIC_CREDIT_SINCE?.trim() || null;
     const credit = process.env.ANTHROPIC_CREDIT_USD ? parseFloat(process.env.ANTHROPIC_CREDIT_USD) : null;
 
-    const todayStart = Math.floor(end.getTime() / DAY_MS) * DAY_MS;
     const start30d = new Date(todayStart - 30 * DAY_MS);
     let baseline = since ? new Date(`${since}T00:00:00Z`) : start30d;
     if (isNaN(baseline.getTime())) {
