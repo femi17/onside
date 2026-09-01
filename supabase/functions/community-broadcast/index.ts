@@ -20,6 +20,21 @@ const CHANNEL = "@onsideai";
 const MODEL = "claude-haiku-4-5";
 const SITE = "https://onside.com.ng"; // the flyer OG route lives here (same host daily-flyer uses)
 
+// Anthropic spend attribution: each Claude call logs its token usage tagged with the feature
+// it served; /analytics prices the tokens per model. Metering must never break the feature.
+async function logLLM(purpose: string, model: string, u: any): Promise<void> {
+  if (!u) return;
+  try {
+    await sb.from("llm_usage").insert({
+      purpose, model,
+      input_tokens: u.input_tokens ?? 0,
+      output_tokens: u.output_tokens ?? 0,
+      cache_read_tokens: u.cache_read_input_tokens ?? 0,
+      cache_creation_tokens: u.cache_creation_input_tokens ?? 0,
+    });
+  } catch { /* best-effort */ }
+}
+
 async function getSecret(name: string): Promise<string | null> {
   const { data } = await sb.rpc("get_secret", { secret_name: name });
   return (data as string) ?? null;
@@ -213,6 +228,7 @@ async function draft(instruction: string, facts: string): Promise<string> {
     body: JSON.stringify({ model: MODEL, max_tokens: 400, system: SYSTEM, messages: [{ role: "user", content: `${instruction}\n\nFACTS:\n${facts}` }] }),
   });
   const j = await res.json();
+  await logLLM("social_post", MODEL, j?.usage);
   return ((j?.content ?? []) as any[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 

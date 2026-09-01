@@ -26,6 +26,12 @@ export type AdminStats = {
   deliveries_weekly: { w: string; n: number }[];
 };
 
+// admin_llm_usage() — 30-day Claude token usage per (purpose, model), from llm_usage metering
+export type LlmUsageRow = {
+  purpose: string; model: string; calls: number;
+  input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
+};
+
 // admin_daily_activity() — the three per-day activity counts (real users only)
 export type DailyActivity = {
   uploads_daily: { day: string; n: number }[];
@@ -52,7 +58,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s, daily, picks, anthropic }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null }) {
+export default function AdminAnalytics({ s, daily, picks, anthropic, llm }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null; llm?: LlmUsageRow[] | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -257,6 +263,7 @@ export default function AdminAnalytics({ s, daily, picks, anthropic }: { s: Admi
           <Kpi k="API today" v={n(s.engagement.api_today)} d="of 75,000" tone={s.engagement.api_today > 60000 ? "down" : undefined} />
           {anthropic && <AnthropicKpi a={anthropic} />}
         </div>
+        {llm && llm.length > 0 && <LlmBreakdown rows={llm} />}
       </Section>
     </>
   );
@@ -279,6 +286,50 @@ function AnthropicKpi({ a }: { a: AnthropicCredit }) {
   }
   // spend-only mode: admin key set but credit total/baseline not configured
   return <Kpi k="Anthropic spend · 30d" v={usd(a.spent30dUsd)} d="set ANTHROPIC_CREDIT_USD + _SINCE to track credit left" />;
+}
+
+// Where the Anthropic credit goes — llm_usage rows priced per model (USD per MTok; cache
+// read bills at 0.1x input, cache write at 1.25x). Attribution, not billing-grade accounting.
+const LLM_PRICE: { prefix: string; in: number; out: number }[] = [
+  { prefix: "claude-haiku-4-5", in: 1, out: 5 },
+  { prefix: "claude-sonnet-5", in: 3, out: 15 },
+  { prefix: "claude-opus", in: 5, out: 25 },
+];
+const LLM_LABEL: Record<string, string> = {
+  slip_upload: "Slip uploads (screenshot reading)",
+  social_post: "Social media posts",
+  agent_rules: "Agent rule parsing",
+};
+function llmCostUsd(r: LlmUsageRow): number {
+  const p = LLM_PRICE.find((x) => r.model.startsWith(x.prefix)) ?? { in: 3, out: 15 };
+  return (r.input_tokens * p.in + r.cache_read_tokens * p.in * 0.1 + r.cache_creation_tokens * p.in * 1.25 + r.output_tokens * p.out) / 1_000_000;
+}
+function LlmBreakdown({ rows }: { rows: LlmUsageRow[] }) {
+  const byPurpose = new Map<string, { usd: number; calls: number }>();
+  for (const r of rows) {
+    const e = byPurpose.get(r.purpose) ?? { usd: 0, calls: 0 };
+    e.usd += llmCostUsd(r); e.calls += r.calls;
+    byPurpose.set(r.purpose, e);
+  }
+  const items = [...byPurpose.entries()].sort((a, b) => b[1].usd - a[1].usd);
+  const total = Math.max(1e-9, items.reduce((a, [, v]) => a + v.usd, 0));
+  const fmt = (x: number) => (x >= 0.01 ? `$${x.toFixed(2)}` : `<$0.01`);
+  return (
+    <Panel title="Where the Anthropic credit goes" sub="Claude usage by feature · last 30 days (metered since 1 Sep)">
+      <div className="mt-5 flex flex-col gap-3">
+        {items.map(([purpose, v]) => (
+          <div key={purpose} className="flex items-center gap-3 text-[13px]">
+            <span className="w-56 flex-none truncate text-ink">{LLM_LABEL[purpose] ?? purpose}</span>
+            <div className="h-2.5 flex-1 rounded-full bg-ink/[0.08]">
+              <div className="h-full rounded-full bg-flood-deep" style={{ width: `${(v.usd / total) * 100}%` }} />
+            </div>
+            <span className="w-24 flex-none text-right font-mono text-[12px] text-ink-mute">{n(v.calls)} calls</span>
+            <span className="w-16 flex-none text-right font-mono font-bold text-ink">{fmt(v.usd)}</span>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {

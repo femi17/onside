@@ -16,6 +16,21 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 
+// Anthropic spend attribution: each Claude call logs its token usage tagged with the feature
+// it served; /analytics prices the tokens per model. Metering must never break the feature.
+async function logLLM(purpose: string, model: string, u: any): Promise<void> {
+  if (!u) return;
+  try {
+    await sb.from("llm_usage").insert({
+      purpose, model,
+      input_tokens: u.input_tokens ?? 0,
+      output_tokens: u.output_tokens ?? 0,
+      cache_read_tokens: u.cache_read_input_tokens ?? 0,
+      cache_creation_tokens: u.cache_creation_input_tokens ?? 0,
+    });
+  } catch { /* best-effort */ }
+}
+
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -267,6 +282,7 @@ Deno.serve(async (req) => {
         }),
       });
       const d = await r.json();
+      await logLLM("slip_upload", MODEL, d?.usage);
       if (!r.ok) throw new Error(`vision api ${r.status}: ${d?.error?.message ?? "error"}`);
       if (d.stop_reason === "refusal") throw new Error("REFUSAL");
       if (d.stop_reason === "max_tokens") console.warn("parse-slip hit max_tokens — slip may be very long");

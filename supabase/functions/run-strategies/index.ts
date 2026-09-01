@@ -70,6 +70,20 @@ async function anthropicKey(): Promise<string | null> {
   if (env) return env;
   try { const { data } = await sb.rpc("get_secret", { secret_name: "anthropic_api_key" }); return (data as string) ?? null; } catch { return null; }
 }
+// Anthropic spend attribution: each Claude call logs its token usage tagged with the feature
+// it served; /analytics prices the tokens per model. Metering must never break the feature.
+async function logLLM(purpose: string, model: string, u: any): Promise<void> {
+  if (!u) return;
+  try {
+    await sb.from("llm_usage").insert({
+      purpose, model,
+      input_tokens: u.input_tokens ?? 0,
+      output_tokens: u.output_tokens ?? 0,
+      cache_read_tokens: u.cache_read_input_tokens ?? 0,
+      cache_creation_tokens: u.cache_creation_input_tokens ?? 0,
+    });
+  } catch { /* best-effort */ }
+}
 async function sendTelegram(chatId: number, text: string): Promise<void> {
   const token = await getSecretSoft("telegram_bot_token");
   if (!token) return;
@@ -993,6 +1007,7 @@ async function parseRule(text: string, key: string, base: { mk: string; side: st
     });
     if (!res.ok) return null;
     const data = await res.json();
+    await logLLM("agent_rules", "claude-sonnet-5", data?.usage);
     const block = (data.content ?? []).find((b: any) => b.type === "text");
     const p = JSON.parse(block?.text ?? "{}");
     return { filters: Array.isArray(p.filters) ? p.filters : [], select: Array.isArray(p.select) ? p.select : [] };
@@ -1014,6 +1029,7 @@ async function rephraseRule(text: string, key: string): Promise<string | null> {
     });
     if (!res.ok) return null;
     const data = await res.json();
+    await logLLM("agent_rules", "claude-haiku-4-5", data?.usage);
     const t = ((data.content ?? []).find((b: any) => b.type === "text")?.text ?? "").trim();
     return t || null;
   } catch { return null; }
