@@ -41,6 +41,7 @@ const FIELD: Record<string, string> = {
   away_win_prob: "the model's away-win chance",
   home_score_prob: "the chance the home team scores",
   away_score_prob: "the chance the away team scores",
+  btts_prob: "the model's chance that both teams score",
   home_goals_blend: "the home team's blend (goals scored + conceded per game, last 5)",
   away_goals_blend: "the away team's blend (goals scored + conceded per game, last 5)",
   goals_blend: "the two teams' combined blend",
@@ -61,7 +62,7 @@ const FIELD: Record<string, string> = {
   corners_avg: "the two teams' combined corners per game",
 };
 // probability-like fields read better as percentages
-const PCT = new Set(["model_prob", "market_prob", "edge", "home_win_prob", "away_win_prob", "home_score_prob", "away_score_prob"]);
+const PCT = new Set(["model_prob", "market_prob", "edge", "home_win_prob", "away_win_prob", "home_score_prob", "away_score_prob", "btts_prob"]);
 
 const MARKET: Record<string, string> = {
   home_win: "Home win",

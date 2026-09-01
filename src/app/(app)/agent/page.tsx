@@ -66,7 +66,7 @@ export default async function AgentPage() {
   const per = (f: Form5 | null) => (f && f.n ? (f.gf + f.ga) / f.n : null); // team blend (engine formula)
   const gfAvg = (f: Form5 | null) => (f && f.n ? f.gf / f.n : null);
   const ppg = (f: Form5 | null) => (f && f.n ? (3 * f.w + f.d) / f.n : null);
-  const guideValue = (field: string, hf: Form5 | null, af: Form5 | null, model?: { home?: number; away?: number; home_score?: number; away_score?: number } | null, mp?: number | null, mk?: string | null): number | null => {
+  const guideValue = (field: string, hf: Form5 | null, af: Form5 | null, model?: { home?: number; away?: number; home_score?: number; away_score?: number; btts?: number } | null, mp?: number | null, mk?: string | null): number | null => {
     switch (field) {
       case "home_goals_avg": return gfAvg(hf);
       case "away_goals_avg": return gfAvg(af);
@@ -86,6 +86,7 @@ export default async function AgentPage() {
       // IS that team's score probability (same quantity), so old rows stay verifiable
       case "home_score_prob": return model?.home_score ?? (mk === "home_to_score" ? mp ?? null : null);
       case "away_score_prob": return model?.away_score ?? (mk === "away_to_score" ? mp ?? null : null);
+      case "btts_prob": return model?.btts ?? null;
       case "model_prob": return mp ?? null;
       default: return null; // odds fields aren't displayed per-pick — not Guide-verifiable
     }
@@ -100,7 +101,7 @@ export default async function AgentPage() {
   const guideFails = (r: Record<string, unknown>): boolean => {
     const filters = guideFilters.get(r.strategy_id as string);
     if (!filters) return false;
-    const reasons = (r.criteria as { reasons?: { home_form?: Form5 | null; away_form?: Form5 | null; model?: { home?: number; away?: number; home_score?: number; away_score?: number } | null } } | null)?.reasons;
+    const reasons = (r.criteria as { reasons?: { home_form?: Form5 | null; away_form?: Form5 | null; model?: { home?: number; away?: number; home_score?: number; away_score?: number; btts?: number } | null } } | null)?.reasons;
     const hf = reasons?.home_form ?? null, af = reasons?.away_form ?? null;
     for (const c of filters) {
       const x = guideValue(c.field, hf, af, reasons?.model ?? null, typeof r.model_prob === "number" ? r.model_prob : null, (r.market_key as string) ?? null);
