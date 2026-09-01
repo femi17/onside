@@ -1082,6 +1082,42 @@ async function poll() {
     }
   }
 
+  // Stats-unavailable fallback (owner-ruled 2026-09-01, Wolfsberger v LASK: the provider never
+  // produced corner stats for a finished game, so its corner bets sat "pending" forever —
+  // reading as a system breakdown rather than a data gap). Once BOTH recovery paths have had
+  // their shot — the one-shot reconcile above (flag set) plus the overnight collect-stats
+  // backfill — a finished fixture still missing its stats row can never grade these bets:
+  // VOID them, exactly like a postponed game (acca math already excludes void legs, the record
+  // counts only won/lost, tracker/feed render "Void"). 36h after the fixture's last touch is
+  // safely past the 24h reconcile window and at least one overnight backfill.
+  let statsVoided = 0;
+  {
+    const VOID_AFTER_MS = 36 * 60 * 60 * 1000;
+    const voidable = [...CORNER_MARKETS, ...STAT_MARKETS];
+    const stuck = new Set<number>();
+    for (const [table, statusCol] of [["tickets", "status"], ["agent_picks", "status"], ["deliveries", "result"]] as const) {
+      const { data } = await sb.from(table).select("fixture_id").in("market_key", voidable)
+        .in(statusCol, ["pending", "live"]).not("fixture_id", "is", null);
+      for (const r of data ?? []) stuck.add(r.fixture_id as number);
+    }
+    if (stuck.size) {
+      const { data: cand } = await sb.from("fixtures").select("id").in("id", [...stuck]).in("status", FINISHED)
+        .not("stats_reconciled_at", "is", null)
+        .lte("updated_at", new Date(now - VOID_AFTER_MS).toISOString());
+      for (const f of cand ?? []) {
+        const { data: st } = await sb.from("fixture_stats").select("corners_home,corners_away").eq("fixture_id", f.id).maybeSingle();
+        if (st && (st.corners_home != null || st.corners_away != null)) continue; // counts exist — normal grading owns it
+        for (const [table, statusCol] of [["tickets", "status"], ["agent_picks", "status"], ["deliveries", "result"]] as const) {
+          const { data: v } = await sb.from(table)
+            .update({ [statusCol]: "void", settled_at: nowIso })
+            .eq("fixture_id", f.id).in("market_key", voidable).in(statusCol, ["pending", "live"])
+            .select("id");
+          statsVoided += v?.length ?? 0;
+        }
+      }
+    }
+  }
+
   // A live corner bet needs the corner stats WHEREVER it lives — tracked tickets, agent picks,
   // OR untracked feed deliveries (owner ruling: corner bets show their own count on EVERY
   // surface; the old tickets-only gate left the feed's corner picks blank until someone
@@ -1116,7 +1152,7 @@ async function poll() {
     if (liveMap.get(id)?.fixture?.status?.short === "HT") htSettled += await settleHalfTime(id);
   }
 
-  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted, orientationFixes, cornerHeals, cornerFlips };
+  return { window: windowFx?.length ?? 0, live: liveMap.size, updated, finalized, reconciled, statsUpdated, settledLive, htSettled, eventsUpdated, reverted, orientationFixes, cornerHeals, cornerFlips, statsVoided };
 }
 Deno.serve(async () => {
   try {
