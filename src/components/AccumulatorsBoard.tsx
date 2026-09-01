@@ -30,12 +30,13 @@ export type Acca = {
   tickets: AccaLeg[];
 };
 
-type Cat = "cut" | "live" | "safe" | "soon" | "void";
+type Cat = "cut" | "live" | "safe" | "grading" | "soon" | "void";
 
 const GROUPS: { cat: Cat; label: string; dot: string }[] = [
   { cat: "cut", label: "Cut", dot: "bg-brick" },
   { cat: "live", label: "Live now", dot: "bg-flood" },
   { cat: "safe", label: "Safe", dot: "bg-grass" },
+  { cat: "grading", label: "Awaiting result", dot: "bg-ink/40" },
   { cat: "soon", label: "Upcoming", dot: "bg-ink/30" },
   { cat: "void", label: "Void", dot: "bg-ink/25" },
 ];
@@ -44,18 +45,22 @@ const MK: Record<Cat, { glyph: string; cls: string }> = {
   cut: { glyph: "✕", cls: "bg-brick/15 text-brick" },
   live: { glyph: "●", cls: "bg-flood/20 text-flood-deep" },
   safe: { glyph: "✓", cls: "bg-grass/15 text-grass-deep" },
+  grading: { glyph: "⋯", cls: "bg-ink/[0.07] text-ink-mute" },
   soon: { glyph: "◷", cls: "bg-ink/[0.07] text-ink-mute" },
   void: { glyph: "–", cls: "bg-ink/[0.07] text-ink-mute" },
 };
 
 // Only the leg that actually lost is "cut". A voided leg doesn't count toward the acca (stake back)
-// — call it out as "void" rather than folding it back into upcoming/live.
+// — call it out as "void" rather than folding it back into upcoming/live. A finished game whose
+// leg is STILL pending is "grading", never "safe": the green ✓ used to claim a result we don't
+// have (a stats-less corner leg wore it for hours — owner-reported 2026-09-01, Wolfsberger v
+// LASK / Zurich v YB). Normal legs pass through this state for under a minute at FT.
 function legCat(leg: TrackedTicket, ms: MatchState | null): Cat {
   if (leg.status === "void") return "void";
   if (leg.status === "lost") return "cut";
   if (leg.status === "won") return "safe";
   if (leg.status === "live" || ms?.phase === "live") return "live";
-  if (ms?.phase === "done") return "safe";
+  if (ms?.phase === "done") return "grading";
   return "soon";
 }
 
@@ -134,12 +139,15 @@ function LegRow({ leg, nowMs, onDetach, onTrack, onSettle, busy, dead, settling 
     mn = track?.under ? (track.busted ? "line broken" : `${ms?.label ?? ""} · under`) : ms?.label ?? "";
   } else if (cat === "safe") {
     sc = ev ?? ms?.score ?? "✓";
-    mn = leg.status === "won" ? "landed" : "FT";
+    mn = "landed";
+  } else if (cat === "grading") {
+    sc = ev ?? ms?.score ?? "—";
+    mn = "FT · awaiting result";
   } else {
     sc = ev ?? ms?.score ?? "✕";
     mn = "cut";
   }
-  const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : pulse ? "text-flood-deep" : "text-ink";
+  const scColor = cat === "cut" ? "text-brick" : cat === "safe" ? "text-grass-deep" : cat === "grading" ? "text-ink-mute" : pulse ? "text-flood-deep" : "text-ink";
 
   // a leg the feed never graded — a game well past kickoff still not settled (no coverage), or a
   // custom bet the engine can't auto-grade once it has kicked off — gets manual settle controls
@@ -443,8 +451,8 @@ function AccaCard({ acca, nowMs, plan, uploadsLeft, userId, onRebet }: { acca: A
     router.refresh();
   }
 
-  const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, soon: 0, void: 0 };
-  const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], soon: [], void: [] };
+  const counts: Record<Cat, number> = { cut: 0, live: 0, safe: 0, grading: 0, soon: 0, void: 0 };
+  const grouped: Record<Cat, TrackedTicket[]> = { cut: [], live: [], safe: [], grading: [], soon: [], void: [] };
   for (const leg of legs) {
     const c = legCat(leg, stateOf(leg, nowMs));
     counts[c]++;
