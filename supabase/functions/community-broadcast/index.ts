@@ -265,11 +265,19 @@ async function yesterdaySweeps(): Promise<{ n: number; legs: any[] }[]> {
 // The morning-slot footer carries the receipts link — this post's whole job is proof + door.
 const RECORD_FOOTER = "\n\n———\n📊 Every pick, graded in public → onside.com.ng/record\n📲 Build your own AI agent → @OnsideAIbot\n18+ · Bet responsibly";
 
+// DM preview: {to:"owner"} sends the composed post to the linked admin chat(s) instead of the
+// channel — the owner forwards it to WhatsApp status / IG / X. No channel_posts log, so DM
+// previews never advance the rotation or pollute the channel history.
+async function adminChatIds(): Promise<number[]> {
+  const { data } = await sb.from("profiles").select("telegram_chat_id").eq("is_admin", true).not("telegram_chat_id", "is", null);
+  return (data ?? []).map((p: { telegram_chat_id: number }) => Number(p.telegram_chat_id));
+}
+
 // Morning slot: flyer post about the agents that HIT their target yesterday. One flyer per
 // sweeping agent, sent as an album (carousel) when there's more than one so the channel scrolls
 // through the receipts. No sweep yesterday → the day-record flyer with an honest caption, so the
 // morning is ALWAYS a visual post.
-async function agentHitsPost(dry: boolean): Promise<Response> {
+async function agentHitsPost(dry: boolean, dmChats: number[] | null = null): Promise<Response> {
   const sweeps = await yesterdaySweeps();
   const stamp = Date.now();
   const photos = sweeps.length
@@ -300,6 +308,17 @@ async function agentHitsPost(dry: boolean): Promise<Response> {
 
   if (dry) {
     return new Response(JSON.stringify({ status: "dry", slot: "agent_hits", sweeps: sweeps.length, photos, caption }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
+  if (dmChats && dmChats.length) {
+    const results = [];
+    for (const chat of dmChats) {
+      const r = photos.length > 1
+        ? await tg("sendMediaGroup", { chat_id: chat, media: photos.map((p, i) => ({ type: "photo", media: p, ...(i === 0 ? { caption } : {}) })) })
+        : await tg("sendPhoto", { chat_id: chat, photo: photos[0], caption });
+      results.push(r?.ok === true);
+    }
+    return new Response(JSON.stringify({ status: "dm_sent", slot: "agent_hits", sweeps: sweeps.length, chats: results }), { status: 200, headers: { "content-type": "application/json" } });
   }
 
   let sent: any;
@@ -363,7 +382,7 @@ const RULE_TIPS: { key: string; name: string; stat: string[]; rules: string[] }[
   ]},
 ];
 
-async function ruleTipPost(dry: boolean): Promise<Response> {
+async function ruleTipPost(dry: boolean, dmChats: number[] | null = null): Promise<Response> {
   // rotation: skip families covered in the recent posts so the tips keep changing
   const { data: recent } = await sb.from("channel_posts").select("theme").eq("slot", "rule_tip").eq("status", "posted").order("created_at", { ascending: false }).limit(RULE_TIPS.length - 1);
   const covered = new Set((recent ?? []).map((r: any) => String(r.theme)));
@@ -396,6 +415,14 @@ async function ruleTipPost(dry: boolean): Promise<Response> {
   const text = body.slice(0, 700) + FOOTER;
   if (dry) {
     return new Response(JSON.stringify({ status: "dry", slot: "rule_tip", family: tip.key, text }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  if (dmChats && dmChats.length) {
+    const results = [];
+    for (const chat of dmChats) {
+      const r = await tg("sendMessage", { chat_id: chat, text, disable_web_page_preview: true });
+      results.push(r?.ok === true);
+    }
+    return new Response(JSON.stringify({ status: "dm_sent", slot: "rule_tip", family: tip.key, chats: results }), { status: 200, headers: { "content-type": "application/json" } });
   }
   const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
   const ok = sent?.ok === true;
@@ -479,12 +506,14 @@ async function runTextSlot(slot: string): Promise<Response> {
 Deno.serve(async (req) => {
   let slot = "education";
   let dry = false;
-  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); dry = b?.dry === true; } catch { /* default */ }
+  let toOwner = false;
+  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); dry = b?.dry === true; toOwner = b?.to === "owner"; } catch { /* default */ }
+  const dmChats = toOwner ? await adminChatIds() : null;
 
   // Morning: the target-hit flyer carousel (or the honest day-record flyer when no agent swept).
-  if (slot === "agent_hits") return await agentHitsPost(dry);
+  if (slot === "agent_hits") return await agentHitsPost(dry, dmChats);
   // Night: one short rule tip, rotating across the glossary's market families.
-  if (slot === "rule_tip") return await ruleTipPost(dry);
+  if (slot === "rule_tip") return await ruleTipPost(dry, dmChats);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
   // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
