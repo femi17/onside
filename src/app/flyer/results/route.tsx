@@ -68,37 +68,37 @@ export async function GET(req: NextRequest) {
             <div style={{ display: "flex", fontSize: 26, fontWeight: 700, color: ONPITCH, letterSpacing: 4 }}>{dayLabel.toUpperCase()}</div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", marginTop: story ? 80 : 48 }}>
-            <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: FLOOD, letterSpacing: 6 }}>🎯 TARGET HIT</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginTop: 12 }}>
-              <span style={{ fontSize: story ? 160 : 130, fontWeight: 800, color: GRASS }}>{sweep.n}/{sweep.n}</span>
-              <span style={{ fontSize: 42, fontWeight: 800, color: CHALK }}>full card swept</span>
+          <div style={{ display: "flex", flexDirection: "column", marginTop: story ? 80 : 36 }}>
+            <div style={{ display: "flex", fontSize: 32, fontWeight: 700, color: FLOOD, letterSpacing: 6 }}>🎯 TARGET HIT</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginTop: 8 }}>
+              <span style={{ fontSize: story ? 160 : 116, lineHeight: 1, fontWeight: 800, color: GRASS }}>{sweep.n}/{sweep.n}</span>
+              <span style={{ fontSize: 40, fontWeight: 800, color: CHALK }}>full card swept</span>
             </div>
-            <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: ONPITCH, marginTop: 4 }}>
+            <div style={{ display: "flex", fontSize: 30, fontWeight: 700, color: ONPITCH, marginTop: 4 }}>
               One AI agent. Every single pick landed.
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", background: CHALK, borderRadius: 34, padding: "40px 48px", marginTop: story ? 70 : 42 }}>
+          <div style={{ display: "flex", flexDirection: "column", background: CHALK, borderRadius: 34, padding: "32px 48px", marginTop: story ? 70 : 30 }}>
             {tLegs.map((l, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: i === 0 ? 0 : 22, paddingBottom: 4 }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: i === 0 ? 0 : 16, paddingBottom: 2 }}>
                 <div style={{ display: "flex", flexDirection: "column", maxWidth: 700 }}>
-                  <span style={{ fontSize: 34, fontWeight: 700, color: INK }}>{l.home} v {l.away}</span>
-                  <span style={{ fontSize: 25, color: INK_MUTE, marginTop: 2 }}>{l.market}</span>
+                  <span style={{ fontSize: 32, fontWeight: 700, color: INK }}>{l.home} v {l.away}</span>
+                  <span style={{ fontSize: 24, color: INK_MUTE, marginTop: 2 }}>{l.market}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-                  {l.score ? <span style={{ fontSize: 34, fontWeight: 800, color: INK }}>{l.score}</span> : null}
-                  <span style={{ display: "flex", fontSize: 22, fontWeight: 800, color: GRASS_DEEP, background: "#57a77326", borderRadius: 999, padding: "8px 18px" }}>WON</span>
+                  {l.score ? <span style={{ fontSize: 32, fontWeight: 800, color: INK }}>{l.score}</span> : null}
+                  <span style={{ display: "flex", fontSize: 21, fontWeight: 800, color: GRASS_DEEP, background: "#57a77326", borderRadius: 999, padding: "7px 16px" }}>WON</span>
                 </div>
               </div>
             ))}
             {sweep.legs.length > tLegs.length ? (
-              <div style={{ display: "flex", fontSize: 25, color: INK_MUTE, marginTop: 16 }}>…and {sweep.legs.length - tLegs.length} more, all landed</div>
+              <div style={{ display: "flex", fontSize: 24, color: INK_MUTE, marginTop: 12 }}>…and {sweep.legs.length - tLegs.length} more, all landed</div>
             ) : null}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", marginTop: "auto" }}>
-            <div style={{ display: "flex", fontSize: 28, fontWeight: 700, color: ONPITCH, marginBottom: 22 }}>
+            <div style={{ display: "flex", fontSize: 26, fontWeight: 700, color: ONPITCH, marginBottom: 16 }}>
               Every pick graded in public — wins AND misses → onside.com.ng/record
             </div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: FLOOD, borderRadius: 26, padding: "30px 40px" }}>
