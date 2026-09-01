@@ -5,7 +5,7 @@
 import type { AnthropicCredit } from "@/lib/anthropicCost";
 
 export type AdminStats = {
-  users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; telegram_linked: number };
+  users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; active_by_day?: { day: string; n: number }[]; telegram_linked: number };
   // may be absent while an older RPC is cached — render guards on it
   funnel?: { onboarded: number; with_bet: number; with_agent: number; push_enabled: number };
   revenue: { free: number; pro: number; pro_max: number; active_subs: number; mrr_naira: number; collected_naira: number };
@@ -96,7 +96,11 @@ export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedba
         <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
           <Kpi k="Total users" v={n(s.users.total)} d={`+${s.users.new_today} today`} />
           <Kpi k="New · 7 days" v={n(s.users.new_7d)} d={`${n(s.users.new_30d)} in 30d`} tone="up" />
-          <Kpi k="Active · 7 days" v={n(s.users.active_7d)} d={`${pct(s.users.active_7d, s.users.total)} of users`} />
+          {s.users.active_by_day?.length ? (
+            <ActiveKpi total={s.users.active_7d} days={s.users.active_by_day} users={s.users.total} />
+          ) : (
+            <Kpi k="Active · 7 days" v={n(s.users.active_7d)} d={`${pct(s.users.active_7d, s.users.total)} of users`} />
+          )}
           <Kpi k="Telegram linked" v={n(s.users.telegram_linked)} d={`${pct(s.users.telegram_linked, s.users.total)} of users`} />
         </div>
         {/* the activation ladder the launch phase is driving — each step as share of all users */}
@@ -438,6 +442,32 @@ function Hero({ k, v, d, tone }: { k: string; v: string; d: string; tone?: "up" 
       <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">{k}</div>
       <div className={`mt-2 font-disp text-[30px] font-extrabold leading-none tracking-tight md:text-[34px] ${vc}`}>{v}</div>
       <div className="mt-2.5 font-mono text-[11px] leading-relaxed text-ink-mute">{d}</div>
+    </div>
+  );
+}
+
+// "Active · 7 days" with its per-day rhythm: seven mini bars (oldest → today, today highlighted).
+// The bars count USER-INITIATED actions that day (bet tracked, slip, post, comment, reaction,
+// agent built, payment, question answered) — agent auto-runs deliberately don't count, so the
+// headline 7d number (which includes them) can read higher than the bars suggest.
+function ActiveKpi({ total, days, users }: { total: number; days: { day: string; n: number }[]; users: number }) {
+  const today = days[days.length - 1]?.n ?? 0;
+  const max = Math.max(1, ...days.map((d) => d.n));
+  return (
+    <div className="rounded-2xl bg-chalk p-4 text-ink shadow-xl md:p-5">
+      <div className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Active · 7 days</div>
+      <div className="mt-1.5 font-disp text-[24px] font-extrabold leading-none tracking-tight text-ink md:text-[28px]">{n(total)}</div>
+      <div className="mt-2 flex h-6 items-end gap-1">
+        {days.map((d, i) => (
+          <div
+            key={d.day}
+            title={`${dayLabel(d.day)}: ${n(d.n)} active`}
+            className={`flex-1 rounded-t ${i === days.length - 1 ? "bg-flood-deep" : "bg-ink/25"}`}
+            style={{ height: `${Math.max(12, (d.n / max) * 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="mt-1.5 font-mono text-[11px] text-ink-mute">{`${n(today)} active today · ${pct(total, users)} of users`}</div>
     </div>
   );
 }
