@@ -74,15 +74,19 @@ export async function getAnthropicCredit(): Promise<AnthropicCredit | null> {
     const since = process.env.ANTHROPIC_CREDIT_SINCE?.trim() || null;
     const credit = process.env.ANTHROPIC_CREDIT_USD ? parseFloat(process.env.ANTHROPIC_CREDIT_USD) : null;
 
-    const start30d = new Date(Math.floor(end.getTime() / DAY_MS - 30) * DAY_MS);
+    const todayStart = Math.floor(end.getTime() / DAY_MS) * DAY_MS;
+    const start30d = new Date(todayStart - 30 * DAY_MS);
     let baseline = since ? new Date(`${since}T00:00:00Z`) : start30d;
-    if (isNaN(baseline.getTime()) || baseline >= end) {
-      console.error(`[anthropic-credit] unusable ANTHROPIC_CREDIT_SINCE ${JSON.stringify(since)} — counting spend from now`);
-      baseline = end; // zero-length range → fetches nothing, spentSince = 0
+    if (isNaN(baseline.getTime())) {
+      console.error(`[anthropic-credit] unusable ANTHROPIC_CREDIT_SINCE ${JSON.stringify(since)} — counting spend from today`);
+      baseline = new Date(todayStart);
     }
 
+    // The cost API floors both range ends to UTC days — a range confined to today
+    // collapses to zero days and 400s. Spend inside the current day isn't queryable;
+    // count it as 0 until the day closes.
     const [spentSinceUsd, spent30dUsd] = await Promise.all([
-      fetchRangeUsd(key, baseline, end),
+      baseline.getTime() >= todayStart ? Promise.resolve(0) : fetchRangeUsd(key, baseline, end),
       fetchRangeUsd(key, start30d, end),
     ]);
 
