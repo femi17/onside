@@ -1041,12 +1041,29 @@ async function rephraseRule(text: string, key: string): Promise<string | null> {
     return t || null;
   } catch { return null; }
 }
-// The full pipeline: canonicalise, then parse original + clarified together (the parser sees
-// both, so a bad rephrase can't hide the user's actual words). heard = what the engine
-// understood in plain English, surfaced by the builder's read-back.
+// A parse is deterministic per (base market, rule text), yet the builder re-parses on every
+// typing pause and users retype the same sentence for days (2026-09-01: two users burned their
+// full 40/day quota on repeats and ~10 agents share one identical rule — 117 LLM parses, ~94%
+// avoidable). Cache results in api_cache keyed by a hash of (RULE_PROMPT, base, text): hashing
+// the prompt in means any glossary change silently invalidates every cached parse, and each
+// reuse refreshes fetched_at so live rules never age out of the 3-day pruning. Empty/null
+// parses are never cached — they keep their retry semantics (see emptyParse).
+async function ruleParseKey(text: string, base: { mk: string; side: string | null }): Promise<string> {
+  const bytes = new TextEncoder().encode(`${RULE_PROMPT}|${base.mk}|${base.side ?? ""}|${text.trim().slice(0, 800)}`);
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return "ruleparse_res:" + Array.from(d.slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+const usableParse = (rp: RuleParsed | null | undefined): boolean => !!rp && (rp.filters.length > 0 || rp.select.length > 0);
+// The full pipeline: cache first, else canonicalise, then parse original + clarified together
+// (the parser sees both, so a bad rephrase can't hide the user's actual words). heard = what the
+// engine understood in plain English, surfaced by the builder's read-back.
 async function parseRuleFull(text: string, key: string, base: { mk: string; side: string | null; label: string }): Promise<{ parsed: RuleParsed | null; heard: string | null }> {
+  const ck = await ruleParseKey(text, base);
+  const hit = await sharedCacheGet<{ parsed: RuleParsed | null; heard: string | null }>(ck);
+  if (hit && usableParse(hit.parsed)) { await sharedCachePut(ck, hit); return hit; } // re-put refreshes fetched_at
   const heard = await rephraseRule(text, key);
   const parsed = await parseRule(heard ? `${text}\n(Clarified: ${heard})` : text, key, base);
+  if (usableParse(parsed)) await sharedCachePut(ck, { parsed, heard });
   return { parsed, heard };
 }
 function medianOdd(bms: any[], betId: number, value: string): number | null {
@@ -2424,18 +2441,23 @@ Deno.serve(async (req) => {
         const payload = JSON.parse(atob(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
         if (typeof payload?.sub === "string") uid = payload.sub;
       } catch { /* shared anon bucket */ }
+      const mk = typeof parseOnly.market_key === "string" ? parseOnly.market_key : "custom";
+      const base = {
+        mk,
+        side: typeof parseOnly.side === "string" ? parseOnly.side : null,
+        label: typeof parseOnly.market_label === "string" ? parseOnly.market_label : mk,
+      };
+      // a repeat of an already-parsed (text, base) serves from cache: no LLM call, no quota burn —
+      // so the cap only ever bites genuinely novel text
+      const cached = await sharedCacheGet<{ parsed: RuleParsed | null; heard: string | null }>(await ruleParseKey(parseOnly.text, base));
+      if (cached && usableParse(cached.parsed)) return json(cached);
       const ck = `ruleparse:${uid}:${dayKey()}`;
       const used = (await sharedCacheGet<number>(ck)) ?? 0;
       if (used >= 40) return json({ error: "rule_parse_limit" }, 429);
       await sharedCachePut(ck, used + 1);
       const akey = await anthropicKey();
       if (!akey) return json({ error: "parser_unavailable" }, 503);
-      const mk = typeof parseOnly.market_key === "string" ? parseOnly.market_key : "custom";
-      const { parsed, heard } = await parseRuleFull(parseOnly.text, akey, {
-        mk,
-        side: typeof parseOnly.side === "string" ? parseOnly.side : null,
-        label: typeof parseOnly.market_label === "string" ? parseOnly.market_label : mk,
-      });
+      const { parsed, heard } = await parseRuleFull(parseOnly.text, akey, base);
       return json({ parsed, heard });
     }
 
