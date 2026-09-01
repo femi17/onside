@@ -219,6 +219,9 @@ async function buildBrief(slot: string): Promise<{ theme: string; facts: string;
   return evergreen();
 }
 
+// Posts go out as plain text (no parse_mode) — markdown tokens would render literally.
+const stripMd = (s: string) => s.replace(/\*\*|__|^#+\s*/gm, "");
+
 async function draft(instruction: string, facts: string): Promise<string> {
   const key = await anthropicKey();
   if (!key) throw new Error("no anthropic key");
@@ -229,7 +232,7 @@ async function draft(instruction: string, facts: string): Promise<string> {
   });
   const j = await res.json();
   await logLLM("social_post", MODEL, j?.usage);
-  return ((j?.content ?? []) as any[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+  return stripMd(((j?.content ?? []) as any[]).filter((b) => b.type === "text").map((b) => b.text).join("").trim());
 }
 
 // Lagos (UTC+1, no DST) calendar date for "yesterday" — the day the afternoon card celebrates.
@@ -375,7 +378,7 @@ async function ruleTipPost(dry: boolean): Promise<Response> {
     const { data } = await sb.from("deliveries").select("result").in("market_key", tip.stat).gte("settled_at", since).in("result", ["won", "lost"]).limit(2000);
     const rows = data ?? [];
     const won = rows.filter((r: any) => r.result === "won").length;
-    if (rows.length >= 15) statLine = `\nReal context: agents' ${tip.name} picks landed ${won} of ${rows.length} (${pct(won / rows.length)}) over the last 30 days.`;
+    if (rows.length >= 15) statLine = `\nReal context (quote it as the market's overall agent record, NEVER as the result of this specific rule): agents' ${tip.name} picks overall landed ${won} of ${rows.length} (${pct(won / rows.length)}) over the last 30 days.`;
   } catch { /* stat is garnish */ }
 
   const facts = `Market family: ${tip.name}.\nA rule that works, written exactly how the Onside agent engine understands it: "${rule}"${statLine}`;
