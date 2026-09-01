@@ -38,7 +38,7 @@ async function fetchWindowCents(key: string, startISO: string, endISO: string): 
       headers: { "anthropic-version": "2023-06-01", "x-api-key": key },
       next: { revalidate: 3600 },
     });
-    if (!res.ok) throw new Error(`cost_report ${res.status}`);
+    if (!res.ok) throw new Error(`cost_report ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const body = (await res.json()) as {
       data?: { results?: { amount?: string }[] }[];
       has_more?: boolean;
@@ -64,7 +64,10 @@ async function fetchRangeUsd(key: string, from: Date, to: Date): Promise<number>
 
 export async function getAnthropicCredit(): Promise<AnthropicCredit | null> {
   const key = process.env.ANTHROPIC_ADMIN_KEY;
-  if (!key) return null;
+  if (!key) {
+    console.error("[anthropic-credit] ANTHROPIC_ADMIN_KEY not set in this runtime");
+    return null;
+  }
   try {
     const now = new Date();
     // end at the next UTC midnight so today's partial bucket is included
@@ -87,7 +90,9 @@ export async function getAnthropicCredit(): Promise<AnthropicCredit | null> {
       remainingUsd: credit != null && since ? Math.max(0, credit - spentSinceUsd) : null,
       since,
     };
-  } catch {
-    return null; // bad key / org without Admin API access / transient error — card just hides
+  } catch (e) {
+    // bad key / org without Admin API access / transient error — card just hides
+    console.error("[anthropic-credit]", e instanceof Error ? e.message : e);
+    return null;
   }
 }
