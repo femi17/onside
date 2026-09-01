@@ -2,6 +2,8 @@
 // No interactivity → server component. A north-star hero strip up top, then four spacious sections:
 // Users & growth, Revenue & plans, Agents & picks, Engagement & ops.
 
+import type { AnthropicCredit } from "@/lib/anthropicCost";
+
 export type AdminStats = {
   users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; telegram_linked: number };
   // may be absent while an older RPC is cached — render guards on it
@@ -50,7 +52,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s, daily, picks }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null }) {
+export default function AdminAnalytics({ s, daily, picks, anthropic }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -253,10 +255,30 @@ export default function AdminAnalytics({ s, daily, picks }: { s: AdminStats; dai
           <Kpi k="Leaderboard opt-ins" v={n(s.engagement.leaderboard_opt_ins)} d={`${s.engagement.open_reports} open reports`} tone={s.engagement.open_reports > 0 ? "down" : undefined} />
           <Kpi k="Channel posts" v={n(s.engagement.channel_posts)} d={`${s.engagement.channel_posted} posted · ${s.engagement.channel_failed} failed`} tone={s.engagement.channel_failed > 0 ? "down" : undefined} />
           <Kpi k="API today" v={n(s.engagement.api_today)} d="of 75,000" tone={s.engagement.api_today > 60000 ? "down" : undefined} />
+          {anthropic && <AnthropicKpi a={anthropic} />}
         </div>
       </Section>
     </>
   );
+}
+
+// Anthropic API credit — remaining = credit loaded (env) − spend from the Cost Admin API.
+// There is no balance endpoint, so this is an estimate; reconcile against the Console when topping up.
+const usd = (x: number) => `$${x >= 1000 ? `${(x / 1000).toFixed(1)}k` : x.toFixed(2)}`;
+function AnthropicKpi({ a }: { a: AnthropicCredit }) {
+  if (a.remainingUsd != null && a.creditUsd != null) {
+    const low = a.remainingUsd < Math.max(5, a.creditUsd * 0.2);
+    return (
+      <Kpi
+        k="Anthropic credit"
+        v={usd(a.remainingUsd)}
+        d={`of ${usd(a.creditUsd)} since ${a.since} · ${usd(a.spent30dUsd)} in 30d`}
+        tone={low ? "down" : "up"}
+      />
+    );
+  }
+  // spend-only mode: admin key set but credit total/baseline not configured
+  return <Kpi k="Anthropic spend · 30d" v={usd(a.spent30dUsd)} d="set ANTHROPIC_CREDIT_USD + _SINCE to track credit left" />;
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
