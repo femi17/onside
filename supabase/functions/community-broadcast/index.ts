@@ -250,6 +250,161 @@ async function yesterdaySweep(): Promise<{ n: number; legs: any[] } | null> {
   return { n: sweep.n, legs: sweep.legs };
 }
 
+// All the sweeps for Lagos-yesterday (not just the first) — the morning carousel posts one
+// target-hit flyer per agent that swept its full card.
+async function yesterdaySweeps(): Promise<{ n: number; legs: any[] }[]> {
+  const { data } = await sb.rpc("public_record");
+  const rec = data as { perfect_details?: { day: string; sweeps: { n: number; legs: any[] }[] }[] } | null;
+  const entry = (rec?.perfect_details ?? []).find((p) => p.day === lagosYesterdayKey());
+  return (entry?.sweeps ?? []).filter((s) => s.n >= 3 && s.legs?.length);
+}
+
+// The morning-slot footer carries the receipts link — this post's whole job is proof + door.
+const RECORD_FOOTER = "\n\n———\n📊 Every pick, graded in public → onside.com.ng/record\n📲 Build your own AI agent → @OnsideAIbot\n18+ · Bet responsibly";
+
+// Morning slot: flyer post about the agents that HIT their target yesterday. One flyer per
+// sweeping agent, sent as an album (carousel) when there's more than one so the channel scrolls
+// through the receipts. No sweep yesterday → the day-record flyer with an honest caption, so the
+// morning is ALWAYS a visual post.
+async function agentHitsPost(dry: boolean): Promise<Response> {
+  const sweeps = await yesterdaySweeps();
+  const stamp = Date.now();
+  const photos = sweeps.length
+    ? sweeps.slice(0, 5).map((_, i) => `${SITE}/flyer/results?size=feed&sweep=${i}&d=${stamp}`)
+    : [`${SITE}/flyer/results?size=feed&d=${stamp}`];
+
+  let facts: string, instruction: string;
+  if (sweeps.length) {
+    const cards = sweeps.slice(0, 5).map((s, i) => `Agent ${i + 1}: ${s.n}/${s.n} — ${s.legs.slice(0, 3).map((l: any) => `${l.home} v ${l.away} (${l.market}${l.score ? `, ${l.score}` : ""})`).join("; ")}${s.legs.length > 3 ? " …" : ""}`).join("\n");
+    facts = `${sweeps.length} Onside agent${sweeps.length > 1 ? "s" : ""} hit ${sweeps.length > 1 ? "their" : "its"} FULL target yesterday — every pick on the card landed:\n${cards}\nThe flyer image(s) attached show each full card. The public record page shows every pick ever, wins and misses.`;
+    instruction = `Write a short caption for ${sweeps.length > 1 ? "a carousel of flyer images, one per agent that swept its full card" : "a flyer image of an agent that swept its full card"} yesterday. Celebrate the target hit as a great day (variance, never certainty), tell readers the full public record is open for anyone to check, and nudge them to build their own agent. 2-3 short beats.`;
+  } else {
+    facts = "No agent swept a full card yesterday. The attached flyer shows yesterday's honest day record (wins and losses) from the public record, which anyone can check.";
+    instruction = "Write a short caption for yesterday's record flyer. Honest tone: some days agents eat, some days the market wins — the record stays public either way. Nudge readers to check the record and build their own agent. 2-3 short beats.";
+  }
+
+  let body = "";
+  try {
+    body = await draft(instruction, facts);
+    if (BANNED.test(body)) body = await draft(instruction + " IMPORTANT: do not use any language implying a guaranteed or certain outcome.", facts);
+  } catch { /* static fallback below */ }
+  if (!body || BANNED.test(body)) {
+    body = sweeps.length
+      ? `🎯 ${sweeps.length > 1 ? `${sweeps.length} agents` : "One agent"} hit ${sweeps.length > 1 ? "their" : "its"} FULL target yesterday — every pick landed.\n\nNo be magic, na value hunting. And the record dey public — check am yourself.\n\nOya build your own agent make e hunt for you.`
+      : `Yesterday's card — wins and misses, all on the board. 📊\n\nSome days agents eat, some days market collect. We no dey hide any result.\n\nCheck the record, then build your own agent.`;
+  }
+  const caption = body.slice(0, 850) + RECORD_FOOTER;
+
+  if (dry) {
+    return new Response(JSON.stringify({ status: "dry", slot: "agent_hits", sweeps: sweeps.length, photos, caption }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+
+  let sent: any;
+  if (photos.length > 1) {
+    // Telegram album = the carousel; caption rides on the FIRST photo only
+    sent = await tg("sendMediaGroup", { chat_id: CHANNEL, media: photos.map((p, i) => ({ type: "photo", media: p, ...(i === 0 ? { caption } : {}) })) });
+  } else {
+    sent = await tg("sendPhoto", { chat_id: CHANNEL, photo: photos[0], caption });
+  }
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "agent_hits", theme: sweeps.length ? "agent_hits" : "agent_hits_fallback", body: caption,
+    telegram_message_id: ok ? (Array.isArray(sent.result) ? sent.result[0]?.message_id : sent.result?.message_id) : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { photos, sweeps: sweeps.length } : { photos, sweeps: sweeps.length, telegram: sent },
+  });
+  return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "agent_hits", sweeps: sweeps.length, photos: photos.length }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+// Night slot: one short, human rule tip — "you want a rule for X? try this" — rotating across
+// the glossary's market families so the channel never repeats itself back-to-back. Every example
+// rule is phrased so the agent rule engine can actually parse it (form / blends / h2h / score
+// probability / corner averages), so a reader who copies it verbatim gets a working agent.
+const RULE_TIPS: { key: string; name: string; stat: string[]; rules: string[] }[] = [
+  { key: "gg", name: "Both teams to score (GG)", stat: ["btts"], rules: [
+    "Only take GG when both teams' score probability is 65% or higher",
+    "GG only when both teams' goals blend is at least 1.5 over their last 5",
+    "Skip GG unless at least 6 of the last 10 head-to-heads ended with both teams scoring",
+  ]},
+  { key: "home_to_score", name: "Home team to score", stat: ["home_to_score"], rules: [
+    "Home to score only when the home team's score probability is 75% or higher",
+    "Home to score only when the home team averages 1.5 goals or more over its last 5",
+    "Skip the game when the home team's goals blend is under 1.3",
+  ]},
+  { key: "overs", name: "Over 2.5 goals", stat: ["over_2_5", "over_3_5"], rules: [
+    "Overs only when the fixture's goals blend is 3.0 or higher",
+    "Over 2.5 only when the head-to-head average goals is at least 3",
+    "Skip overs when either team's goals blend is under 1.2",
+  ]},
+  { key: "unders", name: "Under 3.5 goals", stat: ["under_2_5", "under_3_5"], rules: [
+    "Unders only when the fixture's goals blend is 2.4 or less",
+    "Skip unders when the head-to-head average goals is above 3",
+    "Unders only when both teams average under 1.2 goals scored over their last 5",
+  ]},
+  { key: "double_chance", name: "Double chance (1X)", stat: ["double_chance_1x", "double_chance_x2"], rules: [
+    "1X only when the home team's form is at least 1.8 points per game over its last 5",
+    "1X only when the home win probability is 55% or higher",
+    "Skip the game when the away team won 3 or more of its last 5",
+  ]},
+  { key: "away_to_score", name: "Away team to score", stat: ["away_to_score"], rules: [
+    "Away to score only when the away team's score probability is 70% or higher",
+    "Away to score only when the away team averages 1.5 goals or more over its last 5",
+  ]},
+  { key: "corners", name: "Corners over/under", stat: ["corners_ou", "over_8_5_corners"], rules: [
+    "Corner overs only when the two teams average 10 corners or more between them",
+    "Skip corner overs when the teams' combined corner average is under 9",
+  ]},
+  { key: "match_result", name: "Match result (home win)", stat: ["home_win", "away_win"], rules: [
+    "Home win only when the home win probability is 60% or higher",
+    "Home win only when home form is at least 2.0 points per game and the away side won 1 or fewer of its last 5",
+  ]},
+];
+
+async function ruleTipPost(dry: boolean): Promise<Response> {
+  // rotation: skip families covered in the recent posts so the tips keep changing
+  const { data: recent } = await sb.from("channel_posts").select("theme").eq("slot", "rule_tip").eq("status", "posted").order("created_at", { ascending: false }).limit(RULE_TIPS.length - 1);
+  const covered = new Set((recent ?? []).map((r: any) => String(r.theme)));
+  const tip = RULE_TIPS.find((t) => !covered.has(`rule_tip:${t.key}`)) ?? RULE_TIPS[0];
+  // vary WHICH example rule within the family by day, so a family's second outing reads fresh
+  const rule = tip.rules[Math.floor(Date.now() / 86400000) % tip.rules.length];
+
+  // garnish with the family's real 30-day hit rate when the sample is worth quoting
+  let statLine = "";
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data } = await sb.from("deliveries").select("result").in("market_key", tip.stat).gte("settled_at", since).in("result", ["won", "lost"]).limit(2000);
+    const rows = data ?? [];
+    const won = rows.filter((r: any) => r.result === "won").length;
+    if (rows.length >= 15) statLine = `\nReal context: agents' ${tip.name} picks landed ${won} of ${rows.length} (${pct(won / rows.length)}) over the last 30 days.`;
+  } catch { /* stat is garnish */ }
+
+  const facts = `Market family: ${tip.name}.\nA rule that works, written exactly how the Onside agent engine understands it: "${rule}"${statLine}`;
+  const instruction = `Write a SHORT rule tip: 3-4 lines MAXIMUM, total under 400 characters. Shape: one hook line like "You wan rule for ${tip.name}?" — then the rule QUOTED VERBATIM exactly as given in the facts — then ONE short closing line (why it filters rubbish, or the real stat if provided). No lists, no headers, no lecture. Sound like a sharp friend sharing what's working, not a bot writing an essay.`;
+
+  let body = "";
+  try {
+    body = await draft(instruction, facts);
+    if (BANNED.test(body)) body = await draft(instruction + " IMPORTANT: do not use any language implying a guaranteed or certain outcome.", facts);
+  } catch { /* static fallback below */ }
+  if (!body || BANNED.test(body)) {
+    body = `You wan rule for ${tip.name}? Try this one 👇\n\n"${rule}"\n\nDrop am inside your agent word for word — the engine sabi read am.`;
+  }
+
+  const text = body.slice(0, 700) + FOOTER;
+  if (dry) {
+    return new Response(JSON.stringify({ status: "dry", slot: "rule_tip", family: tip.key, text }), { status: 200, headers: { "content-type": "application/json" } });
+  }
+  const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "rule_tip", theme: `rule_tip:${tip.key}`, body: text,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { family: tip.key, rule } : { family: tip.key, rule, telegram: sent },
+  });
+  return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "rule_tip", family: tip.key }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
 // Afternoon slot when there IS a perfect card: post the flyer image + a short Claude caption.
 // Returns a Response once handled; returns null when there's no sweep so the caller can fall back.
 async function perfectAgentPost(): Promise<Response | null> {
@@ -320,9 +475,16 @@ async function runTextSlot(slot: string): Promise<Response> {
 
 Deno.serve(async (req) => {
   let slot = "education";
-  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); } catch { /* default */ }
+  let dry = false;
+  try { const b = await req.json(); if (b?.slot) slot = String(b.slot); dry = b?.dry === true; } catch { /* default */ }
+
+  // Morning: the target-hit flyer carousel (or the honest day-record flyer when no agent swept).
+  if (slot === "agent_hits") return await agentHitsPost(dry);
+  // Night: one short rule tip, rotating across the glossary's market families.
+  if (slot === "rule_tip") return await ruleTipPost(dry);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
+  // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
   if (slot === "perfect_agent") {
     const posted = await perfectAgentPost();
     if (posted) return posted;

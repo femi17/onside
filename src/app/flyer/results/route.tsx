@@ -19,6 +19,10 @@ const PITCH = "#0e1a1b", CHALK = "#f6f2e9", INK = "#13201d", INK_MUTE = "#5e6e68
 
 export async function GET(req: NextRequest) {
   const story = (req.nextUrl.searchParams.get("size") ?? "story") !== "feed";
+  // ?sweep=N renders the Nth perfect sweep of the day as a standalone "target hit" card —
+  // the morning channel carousel posts one per agent that swept its full card.
+  const sweepParam = req.nextUrl.searchParams.get("sweep");
+  const sweepIdx = sweepParam == null ? null : Math.max(0, parseInt(sweepParam, 10) || 0);
   const W = 1080, H = story ? 1920 : 1350;
 
   let r: RecordData | null = null;
@@ -45,9 +49,71 @@ export async function GET(req: NextRequest) {
   const dayLabel = day
     ? new Date(day.day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })
     : "";
-  const sweep = r?.perfect_details?.find((p) => p.day === day?.day)?.sweeps?.[0] ?? null;
+  const daySweeps = r?.perfect_details?.find((p) => p.day === day?.day)?.sweeps ?? [];
+  const sweep = sweepIdx != null ? (daySweeps[sweepIdx] ?? daySweeps[0] ?? null) : (daySweeps[0] ?? null);
   const legs = (sweep?.legs ?? []).slice(0, story ? 5 : 4);
   const allPct = r && r.all_time.graded > 0 ? Math.round((r.all_time.won / r.all_time.graded) * 100) : 0;
+
+  // ---- target-hit card (?sweep=N): one agent's perfect card as the hero, no day-stats bloat ----
+  if (sweepIdx != null && sweep) {
+    const tLegs = sweep.legs.slice(0, story ? 6 : 5);
+    return new ImageResponse(
+      (
+        <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: PITCH, padding: story ? "88px 72px" : "64px 72px", fontFamily: "sans-serif" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", fontSize: 52, fontWeight: 800, color: CHALK }}>
+              ON<span style={{ color: FLOOD }}>SIDE</span>
+            </div>
+            <div style={{ display: "flex", fontSize: 26, fontWeight: 700, color: ONPITCH, letterSpacing: 4 }}>{dayLabel.toUpperCase()}</div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", marginTop: story ? 80 : 48 }}>
+            <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: FLOOD, letterSpacing: 6 }}>🎯 TARGET HIT</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginTop: 12 }}>
+              <span style={{ fontSize: story ? 160 : 130, fontWeight: 800, color: GRASS }}>{sweep.n}/{sweep.n}</span>
+              <span style={{ fontSize: 42, fontWeight: 800, color: CHALK }}>full card swept</span>
+            </div>
+            <div style={{ display: "flex", fontSize: 34, fontWeight: 700, color: ONPITCH, marginTop: 4 }}>
+              One AI agent. Every single pick landed.
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", background: CHALK, borderRadius: 34, padding: "40px 48px", marginTop: story ? 70 : 42 }}>
+            {tLegs.map((l, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: i === 0 ? 0 : 22, paddingBottom: 4 }}>
+                <div style={{ display: "flex", flexDirection: "column", maxWidth: 700 }}>
+                  <span style={{ fontSize: 34, fontWeight: 700, color: INK }}>{l.home} v {l.away}</span>
+                  <span style={{ fontSize: 25, color: INK_MUTE, marginTop: 2 }}>{l.market}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+                  {l.score ? <span style={{ fontSize: 34, fontWeight: 800, color: INK }}>{l.score}</span> : null}
+                  <span style={{ display: "flex", fontSize: 22, fontWeight: 800, color: GRASS_DEEP, background: "#57a77326", borderRadius: 999, padding: "8px 18px" }}>WON</span>
+                </div>
+              </div>
+            ))}
+            {sweep.legs.length > tLegs.length ? (
+              <div style={{ display: "flex", fontSize: 25, color: INK_MUTE, marginTop: 16 }}>…and {sweep.legs.length - tLegs.length} more, all landed</div>
+            ) : null}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", marginTop: "auto" }}>
+            <div style={{ display: "flex", fontSize: 28, fontWeight: 700, color: ONPITCH, marginBottom: 22 }}>
+              Every pick graded in public — wins AND misses → onside.com.ng/record
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: FLOOD, borderRadius: 26, padding: "30px 40px" }}>
+              <span style={{ fontSize: 36, fontWeight: 800, color: INK }}>Build your own AI agent — free</span>
+              <span style={{ fontSize: 34, fontWeight: 800, color: INK }}>onside.com.ng</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 26 }}>
+              <span style={{ display: "flex", fontSize: 24, color: ONPITCH }}>Onside — Track better, bet better</span>
+              <span style={{ display: "flex", fontSize: 24, color: ONPITCH }}>18+ · Bet responsibly</span>
+            </div>
+          </div>
+        </div>
+      ),
+      { width: W, height: H },
+    );
+  }
 
   return new ImageResponse(
     (
