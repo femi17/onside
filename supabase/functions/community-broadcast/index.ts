@@ -382,10 +382,68 @@ const RULE_TIPS: { key: string; name: string; stat: string[]; rules: string[] }[
   ]},
 ];
 
+// One-time opener for the rule_tip slot (owner-directed): lead with the live ruled-vs-unruled
+// hit rates — the strongest argument for writing a rule — then hand a copyable starter rule.
+// Runs once (theme rule_tip:why_rules); numbers are computed at post time and the edition is
+// skipped entirely if the live data doesn't clearly back the claim.
+async function whyRulesEdition(): Promise<{ facts: string; instruction: string } | null> {
+  try {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    const { data } = await sb.from("deliveries")
+      .select("result, strategies!inner(rule_text)")
+      .in("result", ["won", "lost"]).gte("settled_at", since).limit(5000);
+    let ruledW = 0, ruledN = 0, freeW = 0, freeN = 0;
+    for (const r of (data ?? []) as any[]) {
+      const st = Array.isArray(r.strategies) ? r.strategies[0] : r.strategies;
+      const hasRule = !!(st?.rule_text && String(st.rule_text).trim());
+      if (hasRule) { ruledN++; if (r.result === "won") ruledW++; }
+      else { freeN++; if (r.result === "won") freeW++; }
+    }
+    if (ruledN < 100 || freeN < 100) return null;
+    const ruledPct = (ruledW / ruledN) * 100, freePct = (freeW / freeN) * 100;
+    if (ruledPct < freePct + 5) return null; // only post it while the data clearly backs it
+    const starter = "Only take games where the home team's form is at least 1.8 points per game";
+    return {
+      facts: `Real 30-day numbers from Onside's settled picks: agents WITH a written rule landed ${ruledPct.toFixed(0)}% of ${ruledN} picks; agents with NO rule landed ${freePct.toFixed(0)}% of ${freeN}. Same engine, same games — the rule is the difference.\nA starter rule, written exactly how the agent engine understands it: "${starter}"`,
+      instruction: `Write a SHORT post: 3-4 lines MAXIMUM, under 320 characters. Lead with the two hit rates as the hook (rules ${ruledPct.toFixed(0)}% vs no rules ${freePct.toFixed(0)}% — real numbers, plain variance disclaimer not needed but NEVER imply certainty). Then the starter rule QUOTED VERBATIM, then one line telling readers to drop it into their agent word for word. Sharp friend energy, not an essay.`,
+    };
+  } catch { return null; }
+}
+
 async function ruleTipPost(dry: boolean, dmChats: number[] | null = null): Promise<Response> {
   // rotation: skip families covered in the recent posts so the tips keep changing
   const { data: recent } = await sb.from("channel_posts").select("theme").eq("slot", "rule_tip").eq("status", "posted").order("created_at", { ascending: false }).limit(RULE_TIPS.length - 1);
   const covered = new Set((recent ?? []).map((r: any) => String(r.theme)));
+
+  // the one-time "why rules" opener goes first, before the family rotation begins
+  if (!covered.has("rule_tip:why_rules")) {
+    const special = await whyRulesEdition();
+    if (special) {
+      let body = "";
+      try {
+        body = await draft(special.instruction, special.facts);
+        if (BANNED.test(body)) body = await draft(special.instruction + " IMPORTANT: do not use any language implying a guaranteed or certain outcome.", special.facts);
+      } catch { /* fall through to rotation below */ }
+      if (body && !BANNED.test(body)) {
+        const text = body.slice(0, 700) + FOOTER;
+        if (dry) return new Response(JSON.stringify({ status: "dry", slot: "rule_tip", family: "why_rules", text }), { status: 200, headers: { "content-type": "application/json" } });
+        if (dmChats && dmChats.length) {
+          for (const chat of dmChats) await tg("sendMessage", { chat_id: chat, text, disable_web_page_preview: true });
+          return new Response(JSON.stringify({ status: "dm_sent", slot: "rule_tip", family: "why_rules" }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+        const ok = sent?.ok === true;
+        await sb.from("channel_posts").insert({
+          slot: "rule_tip", theme: "rule_tip:why_rules", body: text,
+          telegram_message_id: ok ? sent.result?.message_id : null,
+          status: ok ? "posted" : "failed",
+          meta: ok ? null : { telegram: sent },
+        });
+        return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "rule_tip", family: "why_rules" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+    }
+  }
+
   const tip = RULE_TIPS.find((t) => !covered.has(`rule_tip:${t.key}`)) ?? RULE_TIPS[0];
   // vary WHICH example rule within the family by day, so a family's second outing reads fresh
   const rule = tip.rules[Math.floor(Date.now() / 86400000) % tip.rules.length];
