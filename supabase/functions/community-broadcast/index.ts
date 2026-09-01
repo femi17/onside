@@ -288,10 +288,10 @@ async function agentHitsPost(dry: boolean, dmChats: number[] | null = null): Pro
   if (sweeps.length) {
     const cards = sweeps.slice(0, 5).map((s, i) => `Agent ${i + 1}: ${s.n}/${s.n} — ${s.legs.slice(0, 3).map((l: any) => `${l.home} v ${l.away} (${l.market}${l.score ? `, ${l.score}` : ""})`).join("; ")}${s.legs.length > 3 ? " …" : ""}`).join("\n");
     facts = `${sweeps.length} Onside agent${sweeps.length > 1 ? "s" : ""} hit ${sweeps.length > 1 ? "their" : "its"} FULL target yesterday — every pick on the card landed:\n${cards}\nThe flyer image(s) attached show each full card. The public record page shows every pick ever, wins and misses.`;
-    instruction = `Write a short caption for ${sweeps.length > 1 ? "a carousel of flyer images, one per agent that swept its full card" : "a flyer image of an agent that swept its full card"} yesterday. Celebrate the target hit as a great day (variance, never certainty), tell readers the full public record is open for anyone to check, and nudge them to build their own agent. 2-3 short beats.`;
+    instruction = `Write a VERY short caption for ${sweeps.length > 1 ? "a carousel of flyer images, one per agent that swept its full card" : "a flyer image of an agent that swept its full card"} yesterday — the images carry the details, the caption only sparks the scroll. HARD LIMIT: under 280 characters total, 2-3 beats of ONE short sentence each. Celebrate the target hit (variance, never certainty) and nudge building your own agent.`;
   } else {
     facts = "No agent swept a full card yesterday. The attached flyer shows yesterday's honest day record (wins and losses) from the public record, which anyone can check.";
-    instruction = "Write a short caption for yesterday's record flyer. Honest tone: some days agents eat, some days the market wins — the record stays public either way. Nudge readers to check the record and build their own agent. 2-3 short beats.";
+    instruction = "Write a VERY short caption for yesterday's record flyer — under 280 characters, 2-3 one-sentence beats. Honest tone: some days agents eat, some days the market wins — the record stays public. Nudge building your own agent.";
   }
 
   let body = "";
@@ -401,7 +401,7 @@ async function ruleTipPost(dry: boolean, dmChats: number[] | null = null): Promi
   } catch { /* stat is garnish */ }
 
   const facts = `Market family: ${tip.name}.\nA rule that works, written exactly how the Onside agent engine understands it: "${rule}"${statLine}`;
-  const instruction = `Write a SHORT rule tip: 3-4 lines MAXIMUM, total under 400 characters. Shape: one hook line like "You wan rule for ${tip.name}?" — then the rule QUOTED VERBATIM exactly as given in the facts — then ONE short closing line (why it filters rubbish, or the real stat if provided). No lists, no headers, no lecture. Sound like a sharp friend sharing what's working, not a bot writing an essay.`;
+  const instruction = `Write a SHORT rule tip: 3-4 lines MAXIMUM, total under 320 characters. Shape: one hook line like "You wan rule for ${tip.name}?" — then the rule QUOTED VERBATIM exactly as given in the facts — then ONE short closing line (why it filters rubbish, or the real stat if provided). No lists, no headers, no lecture, no extra beats. Sound like a sharp friend sharing what's working, not a bot writing an essay.`;
 
   let body = "";
   try {
