@@ -962,6 +962,11 @@ function handicapLabel(side: string | null, line: number | null): string {
 // a wide per-run room (the pool must feed up to 24-leg slips), and the free plan's
 // monthly-delivery-days wall yields — the quickrun quota governs quiet spend instead.
 let QUIET_RUN = false;
+// Paper mode (owner-directed 2026-09-02): the demo-owned "📄 Paper ·" draft strategies bet the
+// common markets daily so the proven-rules library grows its samples without waiting for users.
+// This user is exempt from the quickrun quota; the picks are invisible everywhere but the
+// learning surfaces (drafts are excluded from feed/record/celebrations by design).
+const PAPER_USER = "85a7776e-7c86-4c82-8f53-f8aa81f0bd0b"; // demo@onside.com.ng
 
 const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob","home_score_prob","away_score_prob","btts_prob","home_goals_blend","away_goals_blend","goals_blend","min_goals_blend","home_goals_avg","away_goals_avg","h2h_n","h2h_over25","h2h_over35","h2h_avg_goals","h2h_btts","h2h_home_wins","h2h_away_wins","h2h_home_scored","h2h_away_scored","home_corners_avg","away_corners_avg","corners_avg"];
 const RULE_MARKETS = ["home_win","away_win","draw","double_chance_1x","double_chance_x2","double_chance_12","over_1_5","over_2_5","over_3_5","under_2_5","under_3_5","btts","home_to_score","away_to_score"];
@@ -2433,7 +2438,23 @@ Deno.serve(async (req) => {
     let strategyId: string | null = null;
     let shard = -1, shards = 0;
     let parseOnly: { text?: unknown; market_key?: unknown; side?: unknown; market_label?: unknown } | null = null;
-    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); parseOnly = b?.parse_rule ?? null; QUIET_RUN = b?.quiet === true && !!strategyId; } catch { QUIET_RUN = false; /* cron */ }
+    let paperTick = false;
+    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); parseOnly = b?.parse_rule ?? null; QUIET_RUN = b?.quiet === true && !!strategyId; paperTick = b?.paper === true; } catch { QUIET_RUN = false; /* cron */ }
+
+    // Paper tick: {paper:true} runs the least-recently-run "📄 Paper ·" strategy quietly — ONE
+    // per cron tick. (Day-one lesson: a 10-post pg_net burst DNS-starved itself, and one edge
+    // invocation can't fit ten cold all-league runs inside the idle limit. Ten spaced ticks
+    // each doing one run is boring and works.) last_run_at is stamped at selection so a failed
+    // run doesn't wedge the rotation — it just waits for tomorrow.
+    if (paperTick) {
+      const { data: ps } = await sb.from("strategies").select("id")
+        .eq("user_id", PAPER_USER).eq("status", "draft").like("name", "📄 Paper ·%")
+        .order("last_run_at", { ascending: true, nullsFirst: true }).limit(1);
+      if (!ps?.length) return json({ paper: "no paper strategies" });
+      strategyId = ps[0].id as string;
+      QUIET_RUN = true;
+      await sb.from("strategies").update({ last_run_at: new Date().toISOString() }).eq("id", strategyId);
+    }
 
     // Quick-spec quota (quiet runs only): every quiet run is a real odds-API spend the user
     // triggers on demand from the generator, so it gets its own per-user daily allowance
@@ -2442,12 +2463,6 @@ Deno.serve(async (req) => {
     if (QUIET_RUN && strategyId) {
       const { data: qs } = await sb.from("strategies").select("user_id").eq("id", strategyId).maybeSingle();
       if (!qs) return json({ error: "not_found" }, 404);
-      // Paper mode (owner-directed 2026-09-02): the demo-owned "📄 Paper ·" draft strategies run
-      // daily by cron across the common markets so the proven-rules library grows its samples
-      // without waiting for users to bet them. Exempt from the per-user quota — they are the
-      // only quiet runs that account ever makes, and their picks are invisible everywhere but
-      // the learning surfaces (drafts are excluded from feed/record/celebrations by design).
-      const PAPER_USER = "85a7776e-7c86-4c82-8f53-f8aa81f0bd0b"; // demo@onside.com.ng
       if (qs.user_id !== PAPER_USER) {
         const { data: qp } = await sb.from("profiles").select("plan").eq("id", qs.user_id).maybeSingle();
         const qlimit = qp?.plan === "pro_max" ? 20 : qp?.plan === "pro" ? 10 : 3;
