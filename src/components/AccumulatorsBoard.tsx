@@ -829,14 +829,24 @@ export default function AccumulatorsBoard({ accas, plan = "free", cap = null, up
         </h1>
       </div>
       {/* icon-only on mobile so it rides the heading line; full label from sm up */}
-      <Link
-        href="/add"
-        aria-label="Add to tracker"
-        className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-flood font-bold text-ink transition-transform hover:-translate-y-0.5 sm:h-auto sm:w-auto sm:px-4 sm:py-3"
-      >
-        <span className="text-2xl leading-none sm:hidden">+</span>
-        <span className="hidden sm:inline">+ Add to tracker</span>
-      </Link>
+      <div className="flex flex-none items-center gap-2">
+        <Link
+          href="/generator"
+          aria-label="Generate a slip from your agents' picks"
+          className="grid h-11 w-11 flex-none place-items-center rounded-xl border border-white/15 font-bold text-chalk transition-colors hover:border-white/30 sm:h-auto sm:w-auto sm:px-4 sm:py-3"
+        >
+          <span className="text-xl leading-none sm:hidden">⚡</span>
+          <span className="hidden sm:inline">⚡ Generate</span>
+        </Link>
+        <Link
+          href="/add"
+          aria-label="Add to tracker"
+          className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-flood font-bold text-ink transition-transform hover:-translate-y-0.5 sm:h-auto sm:w-auto sm:px-4 sm:py-3"
+        >
+          <span className="text-2xl leading-none sm:hidden">+</span>
+          <span className="hidden sm:inline">+ Add to tracker</span>
+        </Link>
+      </div>
       </div>
     </StickyHeader>
   );
