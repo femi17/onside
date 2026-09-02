@@ -290,7 +290,9 @@ export default function GeneratorBoard({
   const singleChipKey = chips.size === 1 ? Array.from(chips)[0] : null;
   const provenRow = singleChipKey ? proven[singleChipKey] ?? null : null;
   const selChips = useMemo(() => QUICK_CHIPS.filter((c) => chips.has(c.key)), [chips]);
-  const allProven = selChips.length > 1 && selChips.every((c) => proven[c.key]);
+  // multi-select surfaces the per-outcome list whenever ANY selected outcome has a proven rule;
+  // zero ruled outcomes → a one-line honest note and a single mix run instead
+  const anyProvenSel = selChips.length > 1 && selChips.some((c) => proven[c.key]);
 
   // pool: the user's own pending picks whose game is still ≥10 min from kickoff (re-checked
   // every minute so a slip can't be tracked onto a game that just started). Quick mode swaps in
@@ -469,15 +471,17 @@ export default function GeneratorBoard({
   // run each quietly via run-strategies, then re-query the pool scoped to those strategy ids and
   // hand it to the exact same assembly pipeline the agents mode uses.
   //
-  // With SEVERAL outcomes selected and every one carrying a proven rule (toggle ON), the spec
-  // runs PER OUTCOME — and each outcome gets its OWN draft row ("⚡ Quick acca · <label>").
-  // Separate strategy ids matter: deliveries dedup on unique(strategy_id, fixture_id), so under
-  // ONE shared row outcome A's run would claim the qualifying fixtures and block outcome B
-  // (often carrying the identical proven rule → the same fixtures) from delivering them at all
-  // (the owner's 14-leg Over1.5+1X spec came back all-Over1.5 for exactly this reason).
-  // Distinct ids let both outcomes deliver the same fixture; the assembler stays
-  // one-leg-per-fixture. Single-outcome and rule-less mix keep the single "⚡ Quick acca" row.
-  // Draft rows are exempt from plan caps by DB design, so N drafts per user is fine.
+  // With SEVERAL outcomes selected and at least ONE carrying a proven rule (toggle ON), the spec
+  // runs PER OUTCOME — each outcome gets its OWN draft row ("⚡ Quick acca · <label>"): ruled
+  // outcomes apply their rule, unruled ones run rule-less (the engine's model floors/screens
+  // still apply). Separate strategy ids matter: deliveries dedup on unique(strategy_id,
+  // fixture_id), so under ONE shared row outcome A's run would claim the qualifying fixtures and
+  // block outcome B (often carrying the identical proven rule → the same fixtures) from
+  // delivering them at all (the owner's 14-leg Over1.5+1X spec came back all-Over1.5 for exactly
+  // this reason). Distinct ids let both outcomes deliver the same fixture; the assembler stays
+  // one-leg-per-fixture. Single-outcome — and multi where NO outcome has a rule or the toggle is
+  // off (per-outcome would cost N daily runs for zero rule benefit) — keeps the single
+  // "⚡ Quick acca" row. Draft rows are exempt from plan caps by DB design, so N drafts is fine.
   async function runQuickSpec() {
     if (hunting || chips.size === 0) return;
     setHunting(true);
@@ -490,7 +494,7 @@ export default function GeneratorBoard({
     setRanWindow(quickWindow);
 
     const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
-    const perOutcome = sel.length > 1 && applyProven && sel.every((c) => proven[c.key]);
+    const perOutcome = sel.length > 1 && applyProven && sel.some((c) => proven[c.key]);
 
     // kick-off window → the engine's INCLUSIVE local-time kickoff_at/until pair, computed ONCE
     // so every aim this run shares the same window. Plain local Date math is correct here: the
@@ -841,9 +845,10 @@ export default function GeneratorBoard({
                   </button>
                 </div>
               </div>
-            ) : allProven ? (
-              // every selected outcome is mastered → offer to run the spec PER OUTCOME, each
-              // with its own proven rule (one shared toggle; each outcome costs a spec run)
+            ) : anyProvenSel ? (
+              // at least one selected outcome is mastered → the spec runs PER OUTCOME (toggle
+              // ON): ruled outcomes apply their rule, unruled ones run on model screening only.
+              // One shared toggle governs the ruled subset; each outcome costs a spec run.
               <div className="mt-3.5 rounded-xl border border-flood/30 bg-pitch p-3.5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -851,12 +856,12 @@ export default function GeneratorBoard({
                     <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">Apply proven rules per outcome?</p>
                     <div className="mt-1.5 flex flex-col gap-1">
                       {selChips.map((c) => {
-                        const r = proven[c.key];
+                        const r = proven[c.key] as ProvenRule | undefined;
                         return (
                           <p key={c.key} className="text-[12.5px] font-bold leading-snug text-chalk">
                             {c.label}{" "}
                             <span className="font-mono text-[11px] font-normal text-onpitch-mute">
-                              · landed {hitPct(r)}% of {r.n}
+                              {r ? <>· landed {hitPct(r)}% of {r.n}</> : <>· no proven rule yet — model screening only</>}
                             </span>
                           </p>
                         );
@@ -881,9 +886,12 @@ export default function GeneratorBoard({
                   </button>
                 </div>
               </div>
-            ) : chips.size > 1 && Array.from(chips).some((k) => proven[k]) ? (
-              // some (not all) outcomes have a rule — per-market rules can't combine in one mix
-              <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">Tip: pick one market to use its proven rule.</p>
+            ) : chips.size > 1 ? (
+              // no selected outcome has a proven rule yet — one mix run, model screening only
+              // (per-outcome would cost extra daily runs for zero rule benefit)
+              <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">
+                No proven rules for these outcomes yet — they run as one spec on model screening.
+              </p>
             ) : null}
 
             {/* kick-off window — narrows the engine hunt to games starting inside it */}
