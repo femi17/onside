@@ -957,6 +957,12 @@ function handicapLabel(side: string | null, line: number | null): string {
   return `Handicap ${side ?? ""} ${line != null && line > 0 ? "+" : ""}${line ?? ""}`.trim();
 }
 
+// Quick-spec "quiet" run (the acca generator): explicit strategy_id + quiet:true in the body.
+// One isolate serves one request, so a module flag is safe. Effects: no push/telegram noise,
+// a wide per-run room (the pool must feed up to 24-leg slips), and the free plan's
+// monthly-delivery-days wall yields — the quickrun quota governs quiet spend instead.
+let QUIET_RUN = false;
+
 const RULE_FIELDS = ["home_odds","draw_odds","away_odds","fav_odds","dog_odds","over_1_5_odds","over_2_5_odds","under_2_5_odds","btts_yes_odds","market_odds","model_prob","market_prob","edge","home_wins_last5","away_wins_last5","home_form_ppg","away_form_ppg","home_win_prob","away_win_prob","home_score_prob","away_score_prob","btts_prob","home_goals_blend","away_goals_blend","goals_blend","min_goals_blend","home_goals_avg","away_goals_avg","h2h_n","h2h_over25","h2h_over35","h2h_avg_goals","h2h_btts","h2h_home_wins","h2h_away_wins","h2h_home_scored","h2h_away_scored","home_corners_avg","away_corners_avg","corners_avg"];
 const RULE_MARKETS = ["home_win","away_win","draw","double_chance_1x","double_chance_x2","double_chance_12","over_1_5","over_2_5","over_3_5","under_2_5","under_3_5","btts","home_to_score","away_to_score"];
 const MK_LABEL: Record<string, string> = {
@@ -2126,7 +2132,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const { data: existing } = await sb.from("deliveries").select("fixture_id, delivered_at").eq("strategy_id", strategy.id);
   const takenToday = new Set((existing ?? []).filter((d: any) => d.delivered_at && tzDay(d.delivered_at, tz) === today).map((d: any) => d.fixture_id));
   const takenAll = new Set((existing ?? []).map((d: any) => d.fixture_id));
-  const strategyRoom = (strategy.max_per_prediction ?? 3) - takenToday.size;
+  const strategyRoom = QUIET_RUN ? 30 : (strategy.max_per_prediction ?? 3) - takenToday.size;
   if (strategyRoom <= 0) return 0;
 
   let room = strategyRoom;
@@ -2148,13 +2154,13 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       const { data: mdel } = await sb.from("deliveries").select("delivered_at").eq("user_id", strategy.user_id).gte("delivered_at", ms.toISOString()).limit(1000);
       const runDays = new Set((mdel ?? []).map((d: any) => String(d.delivered_at).slice(0, 10)));
       const todayUtc = new Date().toISOString().slice(0, 10);
-      if (!runDays.has(todayUtc) && runDays.size >= Number(lim.monthly_agent_runs)) return 0;
+      if (!QUIET_RUN && !runDays.has(todayUtc) && runDays.size >= Number(lim.monthly_agent_runs)) return 0;
     }
     const dailyCap = (lim?.max_agents ?? 1) * (lim?.max_games_per_prediction ?? 8);
     const [dayStart] = tzDayBoundsISO(tz, 0);
     const { count: userToday } = await sb.from("deliveries").select("id", { count: "exact", head: true })
       .eq("user_id", strategy.user_id).gte("delivered_at", dayStart);
-    room = Math.min(strategyRoom, Math.max(0, dailyCap - (userToday ?? 0)));
+    room = QUIET_RUN ? strategyRoom : Math.min(strategyRoom, Math.max(0, dailyCap - (userToday ?? 0)));
   } catch { /* fall back to per-strategy cap */ }
   if (room <= 0) return 0;
 
@@ -2364,7 +2370,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // per-run push summary to the user's devices — one notification per run, tagged so the next run
   // replaces it rather than stacking. Independent of the agent's app/telegram channels (push is a
   // separate per-device opt-in set in Profile).
-  if (delivered.length) {
+  if (delivered.length && !QUIET_RUN) {
     await sendPush(
       strategy.user_id,
       `🤖 ${strategy.name}`,
@@ -2377,7 +2383,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // NOTE: agent picks are NOT auto-posted to the community feed (removed by request — the
   // "Publish my agents here" toggle now only feeds the aggregate leaderboard, never game lists).
 
-  if (delivered.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+  if (delivered.length && !QUIET_RUN && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
     const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
     const chatId = prof?.telegram_chat_id;
     if (chatId) {
@@ -2409,7 +2415,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   }
 
   // Friendly "no games" note so users know the agent ran and just found nothing (not broken).
-  if (!rows.length && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+  if (!rows.length && !QUIET_RUN && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
     const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
     if (prof?.telegram_chat_id) {
       await sendTelegram(prof.telegram_chat_id,
@@ -2427,7 +2433,22 @@ Deno.serve(async (req) => {
     let strategyId: string | null = null;
     let shard = -1, shards = 0;
     let parseOnly: { text?: unknown; market_key?: unknown; side?: unknown; market_label?: unknown } | null = null;
-    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); parseOnly = b?.parse_rule ?? null; } catch { /* cron */ }
+    try { const b = await req.json(); strategyId = b?.strategy_id ?? null; shard = Number(b?.shard ?? -1); shards = Number(b?.shards ?? 0); parseOnly = b?.parse_rule ?? null; QUIET_RUN = b?.quiet === true && !!strategyId; } catch { QUIET_RUN = false; /* cron */ }
+
+    // Quick-spec quota (quiet runs only): every quiet run is a real odds-API spend the user
+    // triggers on demand from the generator, so it gets its own per-user daily allowance
+    // (free 3 / pro 10 / pro_max 20 — rides api_cache like the rule-parse cap). The normal
+    // cron path is untouched.
+    if (QUIET_RUN && strategyId) {
+      const { data: qs } = await sb.from("strategies").select("user_id").eq("id", strategyId).maybeSingle();
+      if (!qs) return json({ error: "not_found" }, 404);
+      const { data: qp } = await sb.from("profiles").select("plan").eq("id", qs.user_id).maybeSingle();
+      const qlimit = qp?.plan === "pro_max" ? 20 : qp?.plan === "pro" ? 10 : 3;
+      const qck = `quickrun:${qs.user_id}:${dayKey()}`;
+      const qused = (await sharedCacheGet<number>(qck)) ?? 0;
+      if (qused >= qlimit) return json({ error: "quick_run_limit", used: qused, limit: qlimit }, 429);
+      await sharedCachePut(qck, qused + 1);
+    }
 
     // Parse-only mode: the builder reads a rule back to the user BEFORE saving, so a rule that
     // mistranslates (or translates to nothing) is caught at creation time, not after wrong picks.
