@@ -2442,12 +2442,20 @@ Deno.serve(async (req) => {
     if (QUIET_RUN && strategyId) {
       const { data: qs } = await sb.from("strategies").select("user_id").eq("id", strategyId).maybeSingle();
       if (!qs) return json({ error: "not_found" }, 404);
-      const { data: qp } = await sb.from("profiles").select("plan").eq("id", qs.user_id).maybeSingle();
-      const qlimit = qp?.plan === "pro_max" ? 20 : qp?.plan === "pro" ? 10 : 3;
-      const qck = `quickrun:${qs.user_id}:${dayKey()}`;
-      const qused = (await sharedCacheGet<number>(qck)) ?? 0;
-      if (qused >= qlimit) return json({ error: "quick_run_limit", used: qused, limit: qlimit }, 429);
-      await sharedCachePut(qck, qused + 1);
+      // Paper mode (owner-directed 2026-09-02): the demo-owned "📄 Paper ·" draft strategies run
+      // daily by cron across the common markets so the proven-rules library grows its samples
+      // without waiting for users to bet them. Exempt from the per-user quota — they are the
+      // only quiet runs that account ever makes, and their picks are invisible everywhere but
+      // the learning surfaces (drafts are excluded from feed/record/celebrations by design).
+      const PAPER_USER = "85a7776e-7c86-4c82-8f53-f8aa81f0bd0b"; // demo@onside.com.ng
+      if (qs.user_id !== PAPER_USER) {
+        const { data: qp } = await sb.from("profiles").select("plan").eq("id", qs.user_id).maybeSingle();
+        const qlimit = qp?.plan === "pro_max" ? 20 : qp?.plan === "pro" ? 10 : 3;
+        const qck = `quickrun:${qs.user_id}:${dayKey()}`;
+        const qused = (await sharedCacheGet<number>(qck)) ?? 0;
+        if (qused >= qlimit) return json({ error: "quick_run_limit", used: qused, limit: qlimit }, 429);
+        await sharedCachePut(qck, qused + 1);
+      }
     }
 
     // Parse-only mode: the builder reads a rule back to the user BEFORE saving, so a rule that
