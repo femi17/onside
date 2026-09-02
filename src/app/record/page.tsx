@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { createClient as createAnonClient } from "@supabase/supabase-js";
 import Footer from "@/components/Footer";
 import BackButton from "@/components/BackButton";
+
+// The record is a PUBLIC marketing lander (Meta ads point here). The cookie-bound server client
+// forced dynamic rendering — every ad click recomputed the whole platform record (~800ms TTFB
+// before network). public_record() needs no auth, so a cookie-less anon client lets Next render
+// this statically and revalidate every 5 minutes: ad clicks now hit the edge cache like the
+// homepage does. 5-minute staleness on a records page is honest — the numbers only move as
+// games settle.
+export const revalidate = 300;
 
 // The public transparency page — the "honest record" the ads point at. Everything here
 // comes from public_record(), an aggregates-only RPC (no user, agent, or pick identities),
@@ -28,7 +36,10 @@ type RecordData = {
 
 async function loadRecord(): Promise<RecordData | null> {
   try {
-    const supabase = await createClient();
+    const supabase = createAnonClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
     const { data } = await supabase.rpc("public_record");
     return (data as RecordData | null) ?? null;
   } catch {
