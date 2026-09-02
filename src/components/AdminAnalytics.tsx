@@ -4,10 +4,12 @@
 
 import type { AnthropicCredit } from "@/lib/anthropicCost";
 
+type DaySeries = { day: string; n: number }[];
+
 export type AdminStats = {
-  users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; active_by_day?: { day: string; n: number }[]; telegram_linked: number };
+  users: { total: number; new_today: number; new_7d: number; new_30d: number; active_7d: number; active_by_day?: DaySeries; telegram_by_day?: DaySeries; telegram_linked: number };
   // may be absent while an older RPC is cached — render guards on it
-  funnel?: { onboarded: number; with_bet: number; with_agent: number; push_enabled: number };
+  funnel?: { onboarded: number; with_bet: number; with_agent: number; push_enabled: number; onboarded_by_day?: DaySeries; first_bet_by_day?: DaySeries; first_agent_by_day?: DaySeries; push_by_day?: DaySeries };
   revenue: { free: number; pro: number; pro_max: number; active_subs: number; mrr_naira: number; collected_naira: number };
   agents: {
     total: number; running: number; learning: number; new_7d: number;
@@ -72,6 +74,18 @@ export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedba
   const maxSignup = Math.max(1, ...s.signups_daily.map((d) => d.n));
   const marketMax = Math.max(1, ...s.agents.top_markets.map((m) => m.n));
 
+  // 7-day mini-bar series for the top cards. active_by_day is RPC-zero-filled, so it is the
+  // canonical 7-day axis; signups slice onto it from the 30-day set. Total users bars show the
+  // cumulative count at each day's close (total now minus signups after that day).
+  const axis = s.users.active_by_day ?? [];
+  const sigMap = new Map(s.signups_daily.map((x) => [x.day, x.n]));
+  const newByDay = axis.length ? axis.map((a) => ({ day: a.day, n: sigMap.get(a.day) ?? 0 })) : undefined;
+  let after = 0;
+  const totalByDay = axis.length
+    ? [...axis].reverse().map((a) => { const v = s.users.total - after; after += sigMap.get(a.day) ?? 0; return { day: a.day, n: v }; }).reverse()
+    : undefined;
+  const activeToday = axis.length ? axis[axis.length - 1].n : 0;
+
   const mix = [
     { label: "Won", v: s.agents.won, c: "bg-grass" },
     { label: "Lost", v: s.agents.lost, c: "bg-brick" },
@@ -94,22 +108,24 @@ export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedba
       {/* Users & growth */}
       <Section label="Users & growth">
         <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
-          <Kpi k="Total users" v={n(s.users.total)} d={`+${s.users.new_today} today`} />
-          <Kpi k="New · 7 days" v={n(s.users.new_7d)} d={`${n(s.users.new_30d)} in 30d`} tone="up" />
-          {s.users.active_by_day?.length ? (
-            <ActiveKpi total={s.users.active_7d} days={s.users.active_by_day} users={s.users.total} />
-          ) : (
-            <Kpi k="Active · 7 days" v={n(s.users.active_7d)} d={`${pct(s.users.active_7d, s.users.total)} of users`} />
-          )}
-          <Kpi k="Telegram linked" v={n(s.users.telegram_linked)} d={`${pct(s.users.telegram_linked, s.users.total)} of users`} />
+          <Kpi k="Total users" v={n(s.users.total)} d={`+${s.users.new_today} today`} days={totalByDay} />
+          <Kpi k="New · 7 days" v={n(s.users.new_7d)} d={`${n(s.users.new_30d)} in 30d`} tone="up" days={newByDay} />
+          <Kpi
+            k="Active · 7 days"
+            v={n(s.users.active_7d)}
+            d={`${n(activeToday)} active today · ${pct(s.users.active_7d, s.users.total)} of users`}
+            days={s.users.active_by_day}
+          />
+          <Kpi k="Telegram linked" v={n(s.users.telegram_linked)} d={`${pct(s.users.telegram_linked, s.users.total)} of users`} days={s.users.telegram_by_day} />
         </div>
-        {/* the activation ladder the launch phase is driving — each step as share of all users */}
+        {/* the activation ladder the launch phase is driving — each step as share of all users.
+            Bars = users clearing that step for the FIRST time, per day */}
         {s.funnel && (
           <div className="grid grid-cols-2 gap-3.5 md:grid-cols-4">
-            <Kpi k="Onboarded" v={n(s.funnel.onboarded)} d={`${pct(s.funnel.onboarded, s.users.total)} of users`} />
-            <Kpi k="Placed a bet" v={n(s.funnel.with_bet)} d={`${pct(s.funnel.with_bet, s.users.total)} · the activation bar`} tone="amber" />
-            <Kpi k="Built an agent" v={n(s.funnel.with_agent)} d={`${pct(s.funnel.with_agent, s.users.total)} of users`} tone="amber" />
-            <Kpi k="Push enabled" v={n(s.funnel.push_enabled)} d={`${pct(s.funnel.push_enabled, s.users.total)} reachable by push`} />
+            <Kpi k="Onboarded" v={n(s.funnel.onboarded)} d={`${pct(s.funnel.onboarded, s.users.total)} of users`} days={s.funnel.onboarded_by_day} />
+            <Kpi k="Tracked a bet" v={n(s.funnel.with_bet)} d={`${pct(s.funnel.with_bet, s.users.total)} · the activation bar`} tone="amber" days={s.funnel.first_bet_by_day} />
+            <Kpi k="Built an agent" v={n(s.funnel.with_agent)} d={`${pct(s.funnel.with_agent, s.users.total)} of users`} tone="amber" days={s.funnel.first_agent_by_day} />
+            <Kpi k="Push enabled" v={n(s.funnel.push_enabled)} d={`${pct(s.funnel.push_enabled, s.users.total)} reachable by push`} days={s.funnel.push_by_day} />
           </div>
         )}
         <Panel title="Signups · last 30 days" sub="New accounts per day">
@@ -446,38 +462,27 @@ function Hero({ k, v, d, tone }: { k: string; v: string; d: string; tone?: "up" 
   );
 }
 
-// "Active · 7 days" with its per-day rhythm: seven mini bars (oldest → today, today highlighted).
-// The bars count USER-INITIATED actions that day (bet tracked, slip, post, comment, reaction,
-// agent built, payment, question answered) — agent auto-runs deliberately don't count, so the
-// headline 7d number (which includes them) can read higher than the bars suggest.
-function ActiveKpi({ total, days, users }: { total: number; days: { day: string; n: number }[]; users: number }) {
-  const today = days[days.length - 1]?.n ?? 0;
-  const max = Math.max(1, ...days.map((d) => d.n));
-  return (
-    <div className="rounded-2xl bg-chalk p-4 text-ink shadow-xl md:p-5">
-      <div className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Active · 7 days</div>
-      <div className="mt-1.5 font-disp text-[24px] font-extrabold leading-none tracking-tight text-ink md:text-[28px]">{n(total)}</div>
-      <div className="mt-2 flex h-6 items-end gap-1">
-        {days.map((d, i) => (
-          <div
-            key={d.day}
-            title={`${dayLabel(d.day)}: ${n(d.n)} active`}
-            className={`flex-1 rounded-t ${i === days.length - 1 ? "bg-flood-deep" : "bg-ink/25"}`}
-            style={{ height: `${Math.max(12, (d.n / max) * 100)}%` }}
-          />
-        ))}
-      </div>
-      <div className="mt-1.5 font-mono text-[11px] text-ink-mute">{`${n(today)} active today · ${pct(total, users)} of users`}</div>
-    </div>
-  );
-}
-
-function Kpi({ k, v, d, tone }: { k: string; v: string; d: string; tone?: "up" | "down" | "amber" }) {
+// KPI card, optionally with a 7-day mini bar row (oldest → today, today highlighted) so every
+// card in a grid row shares the same height and shows its own daily rhythm.
+function Kpi({ k, v, d, tone, days }: { k: string; v: string; d: string; tone?: "up" | "down" | "amber"; days?: DaySeries }) {
   const vc = tone === "up" ? "text-grass-deep" : tone === "down" ? "text-brick" : tone === "amber" ? "text-flood-deep" : "text-ink";
+  const max = days?.length ? Math.max(1, ...days.map((x) => x.n)) : 1;
   return (
     <div className="rounded-2xl bg-chalk p-4 text-ink shadow-xl md:p-5">
       <div className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">{k}</div>
       <div className={`mt-1.5 font-disp text-[24px] font-extrabold leading-none tracking-tight md:text-[28px] ${vc}`}>{v}</div>
+      {days && days.length > 0 && (
+        <div className="mt-2 flex h-6 items-end gap-1">
+          {days.map((x, i) => (
+            <div
+              key={x.day}
+              title={`${dayLabel(x.day)}: ${n(x.n)}`}
+              className={`flex-1 rounded-t ${i === days.length - 1 ? "bg-flood-deep" : "bg-ink/25"}`}
+              style={{ height: `${Math.max(12, (x.n / max) * 100)}%` }}
+            />
+          ))}
+        </div>
+      )}
       <div className="mt-1.5 font-mono text-[11px] text-ink-mute">{d}</div>
     </div>
   );
