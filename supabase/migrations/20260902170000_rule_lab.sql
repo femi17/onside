@@ -38,7 +38,22 @@ drop policy if exists rule_lab_read on public.rule_lab;
 create policy rule_lab_read on public.rule_lab for select to authenticated using (true);
 -- writes only via the definer miner below
 
+-- The public entry point wraps the worker with a widened statement_timeout: the grid insert
+-- legitimately runs past the platform's 2-minute session default (33 conditions x 14 outcomes
+-- over ~700K matches) — the first seed attempt died on exactly that (2026-09-02, canceling
+-- statement due to statement timeout under pg_cron).
 create or replace function public.mine_rule_lab()
+returns integer
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+begin
+  perform set_config('statement_timeout', '900000', true);
+  return public.mine_rule_lab_inner();
+end $function$;
+
+create or replace function public.mine_rule_lab_inner()
 returns integer
 language plpgsql
 security definer
@@ -282,6 +297,9 @@ end $function$;
 revoke all on function public.mine_rule_lab() from public;
 revoke all on function public.mine_rule_lab() from anon;
 revoke all on function public.mine_rule_lab() from authenticated;
+revoke all on function public.mine_rule_lab_inner() from public;
+revoke all on function public.mine_rule_lab_inner() from anon;
+revoke all on function public.mine_rule_lab_inner() from authenticated;
 
 -- receipts honesty: where did a proven rule's record come from?
 -- 'picks' = graded agent picks (deliveries) · 'fixtures' = the rule-lab fixtures backtest
@@ -409,6 +427,6 @@ exception when others then null;
 end $$;
 select cron.schedule('rule-lab-nightly', '15 3 * * *', $$select public.mine_rule_lab()$$);
 
--- seed: mine the lab once now, then refresh the library so fixtures-backed rows appear today
-select public.mine_rule_lab();
-select public.refresh_proven_rules();
+-- Seeding note: the inline seed exceeded the migration API's timeout — the first mine was run
+-- via a one-shot pg_cron ('rule-lab-seed', removed after success). The nightly cron owns it
+-- from here.
