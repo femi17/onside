@@ -14,6 +14,9 @@ export default async function StrategiesPage() {
       .from("strategies")
       .select("id, name, market_label, league_ids, status, rule_text, deliver_at, target_day, last_run_at")
       .eq("user_id", user.id)
+      // the acca generator's throwaway "⚡ Quick acca" drafts are scaffolding, not agents —
+      // they only become agents via the generator's explicit save-as-agent (owner-ruled)
+      .not("name", "like", "⚡ Quick acca%")
       .order("created_at", { ascending: false }),
     supabase
       .from("deliveries")

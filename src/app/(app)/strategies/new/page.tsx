@@ -15,7 +15,8 @@ export default async function NewStrategyPage({ searchParams }: { searchParams: 
     // curated (tiered) leagues first so the big competitions are in the default list; the search
     // box queries the full table for everything else
     supabase.from("leagues").select("id, name, country, flag_url, tier").order("tier", { ascending: true, nullsFirst: false }).order("name", { ascending: true }).limit(400),
-    supabase.from("strategies").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+    // generator "⚡ Quick acca" drafts must never count toward the plan's agent cap
+    supabase.from("strategies").select("id", { count: "exact", head: true }).eq("user_id", user.id).not("name", "like", "⚡ Quick acca%"),
   ]);
 
   const plan = profile?.plan ?? "free";

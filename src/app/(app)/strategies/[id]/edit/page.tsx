@@ -20,7 +20,8 @@ export default async function EditStrategyPage({ params }: { params: Promise<{ i
       .order("tier", { ascending: true, nullsFirst: false })
       .order("name", { ascending: true })
       .limit(400),
-    supabase.from("strategies").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+    // generator "⚡ Quick acca" drafts must never count toward the plan's agent cap
+    supabase.from("strategies").select("id", { count: "exact", head: true }).eq("user_id", user.id).not("name", "like", "⚡ Quick acca%"),
     supabase
       .from("strategies")
       .select(
