@@ -408,5 +408,71 @@ Deno.serve(async (_req) => {
     }
   }
 
+  // ---- one-shot billing rescue (2026-09-02, owner-directed) ----
+  // These 12 users reached checkout and typed a REAL card into the test-mode gateway — it can
+  // never complete, so they abandoned wanting to pay. Until live billing switches on, the email
+  // hands them the access card that unlocks the plan at no charge (the standing conversion
+  // play). Hardcoded list on purpose: no request-controlled input, so this can never be turned
+  // into a spam vector; once-EVER via the nudge: claim; bypasses the weekly cap like perfect
+  // days (it answers the user's own action) but stamps the cooldown after.
+  const BILLING_RESCUE: { user_id: string; email: string }[] = [
+    { user_id: "edd61211-d0b8-49c7-9a92-4b931a6b4cd1", email: "adegokeluqman997@gmail.com" },
+    { user_id: "f5c91648-9fe5-4e28-bf03-a811aef0afb9", email: "ezragamboemmanuel@gmail.com" },
+    { user_id: "e0b4380a-f11d-4e4b-8fe3-081dea9e3e1d", email: "iifechukwu655@gmail.com" },
+    { user_id: "7b575206-2b50-4544-b21c-cc25c53f129d", email: "naallahmudashir@gmail.com" },
+    { user_id: "d1ab7261-70b3-49f8-92e9-e79d124c03da", email: "onyiiemma08@gmail.com" },
+    { user_id: "0f4d7bec-9201-449f-b992-d01dae3093f3", email: "philiphassan65@gmail.com" },
+    { user_id: "2a29cea7-ad05-4c75-9ce0-791bbf682fa6", email: "sannikb64@gmail.com" },
+    { user_id: "5712342d-d5b2-4fd0-a899-a2c0e3c61007", email: "soteemmanuel3@gmail.com" },
+    { user_id: "bc2b75d9-570f-4c0d-bb51-b127fcb9ae90", email: "sundaywisdom440@gmail.com" },
+    { user_id: "df688463-1f5c-4c27-b106-279d18c535f6", email: "troyberlin62@gmail.com" },
+    { user_id: "a6a65791-4cd5-4699-b12b-9e75bd359db9", email: "wamebankchiedupeters@gmail.com" },
+    { user_id: "f98284de-8aa0-41f2-ae64-00598f2d6ee9", email: "www.mandynichole21@gmail.com" },
+  ];
+  const cardBox = `<div style="background:#16211f;border:1px solid #2a3d3a;border-radius:12px;padding:16px 18px;margin:16px 0;">
+    <div style="color:#7d8f8a;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">Access card — free, no naira moves</div>
+    <div style="color:#f3f6f4;font-family:monospace;font-size:16px;letter-spacing:1px;">4084 0840 8408 4081</div>
+    <div style="color:#c9d6d2;font-family:monospace;font-size:12.5px;margin-top:6px;">CVV 408 · any future expiry · PIN 0000 · OTP 123456</div>
+  </div>`;
+  for (const r of BILLING_RESCUE) {
+    // still on free? a user who since got a plan another way needs nothing
+    const { data: prof } = await sb.from("profiles").select("plan").eq("id", r.user_id).maybeSingle();
+    if (prof?.plan && prof.plan !== "free") { skipped.push(`billing:already-paid:${r.email}`); continue; }
+    const claimKey = `nudge:billing:${r.user_id}`;
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { email: r.email, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`billing:${r.email}`); continue; }
+
+    let link = `${SITE}/login`;
+    try {
+      const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
+        type: "magiclink", email: r.email, options: { redirectTo: `${SITE}/profile` },
+      });
+      if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
+    } catch { /* plain login link fallback stays */ }
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+      body: JSON.stringify({
+        from: FROM, to: r.email,
+        subject: "Your Onside upgrade didn't go through — that was us, not your bank",
+        html: shell(
+          para("You tried to upgrade on Onside and the payment wouldn't complete. Nothing was wrong with your card — <b style=\"color:#f3f6f4;\">that was on us</b>.") +
+          para("Billing is still in its free early-access phase, so the checkout only accepts a special access card — real cards hit a wall we should have caught. Sorry you ran into it.") +
+          para("Until live billing launches, this card unlocks your plan <b style=\"color:#f3f6f4;\">at no charge</b>:") +
+          cardBox +
+          para("Pick your plan, enter the card exactly as above, and you're in. When real payments switch on, nothing gets charged without asking you properly first.") +
+          button(link, "Unlock my plan →")
+        ),
+      }),
+    });
+    if (resp.ok) { sent.push(`billing:email:${r.email}`); await touched(r.user_id); }
+    else {
+      failed.push(`billing:${r.email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey); // release for a retry run
+    }
+  }
+
   return Response.json({ candidates: targets.length + (pdRows?.length ?? 0) + (tgRows?.length ?? 0), sent, skipped, failed });
 });
