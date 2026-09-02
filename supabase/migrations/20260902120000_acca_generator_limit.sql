@@ -2,10 +2,11 @@
 --
 -- The generator assembles accumulators purely from the signed-in user's OWN agents' pending
 -- deliveries — Onside never presents platform-picked bets (legal/positioning ruling). Generated
--- slips are marked with accumulators.source = 'generated': no new column — `source` is the same
--- free-text discriminator the existing flows already write ('screenshot' | 'manual' | 'agent'),
--- and the existing enforce_acca_daily_limit trigger only gates source = 'screenshot', so a new
--- value passes it untouched. Generated slips get their own server-side gate here:
+-- slips are marked with accumulators.source = 'generated'. The live schema has a CHECK
+-- constraint accumulators_source_check limited to ('manual','screenshot','agent') — widened
+-- here to admit 'generated' (verified: no enum, just the check). The existing
+-- enforce_acca_daily_limit trigger only gates source = 'screenshot', so the new value passes
+-- it untouched. Generated slips get their own server-side gate here:
 --
 --   free          → 1 generated slip per day (profile-timezone day), max 3 legs
 --   pro / pro_max → unlimited generated slips, max 5 legs
@@ -13,6 +14,10 @@
 -- Enforced by a BEFORE INSERT trigger so the client-side mirror can't be bypassed. Soft-deleted
 -- slips still count (deleted_at is ignored) — same semantics as the screenshot quota: deleting
 -- a slip never hands the day's slot back. Any unknown/future plan falls back to the free limits.
+
+alter table public.accumulators drop constraint if exists accumulators_source_check;
+alter table public.accumulators add constraint accumulators_source_check
+  check (source = any (array['manual'::text, 'screenshot'::text, 'agent'::text, 'generated'::text]));
 
 create or replace function public.enforce_generated_acca_limit()
 returns trigger
