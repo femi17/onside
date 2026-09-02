@@ -8,8 +8,11 @@ import ConnectTelegram from "@/components/ConnectTelegram";
 import StickyHeader from "@/components/StickyHeader";
 import { PLAN_PRICING, isPaidPlan } from "@/lib/plans";
 import { pixelTrack } from "@/lib/metaPixel";
+import { provableRecipes, recipeHref, type StarterRecipe } from "@/components/RecipeRail";
 
-// 3-step first-run setup: choose a plan -> connect Telegram (optional) -> build first agent.
+// First-run setup: choose a plan -> connect Telegram (optional) -> upload a slip -> start
+// with a proven agent (the starter-recipe step only shows when a recipe clears its live
+// evidence bar, so it disappears rather than showing empty cards).
 // New sign-ups land here (profiles.onboarded=false); leaving via any exit marks them onboarded.
 const PLANS = [
   {
@@ -33,15 +36,22 @@ export default function OnboardingPage() {
   const [plan, setPlan] = useState("free");
   const [linked, setLinked] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [recipes, setRecipes] = useState<StarterRecipe[]>([]);
 
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.replace("/login"); return; }
       setUid(user.id);
-      const { data: p } = await supabase.from("profiles").select("plan, telegram_linked_at, onboarded").eq("id", user.id).maybeSingle();
+      const [{ data: p }, { data: rec }] = await Promise.all([
+        supabase.from("profiles").select("plan, telegram_linked_at, onboarded").eq("id", user.id).maybeSingle(),
+        // live receipts for the starter-recipe step; provableRecipes applies the evidence
+        // bar (>=15 graded, >=60% hit, 14d) so a cold/empty result just hides the step
+        supabase.rpc("starter_recipes"),
+      ]);
       if (p?.plan) setPlan(p.plan);
       setLinked(!!p?.telegram_linked_at);
+      setRecipes(provableRecipes(rec ?? null));
       setLoading(false);
       // Meta ads conversion: every new account (email or Google) lands here exactly once
       // with onboarded=false — that makes this the registration signal for BOTH auth
@@ -65,7 +75,9 @@ export default function OnboardingPage() {
     router.refresh();
   }
 
-  const steps = [true, linked, false]; // plan always "done", telegram when linked, agent pending
+  // plan always "done", telegram when linked, slip + agent pending; the agent dot only
+  // exists when the starter-recipe step is on screen
+  const steps = [true, linked, false, ...(recipes.length > 0 ? [false] : [])];
 
   return (
     <div className="mx-auto w-full max-w-2xl flex-1 px-5 pb-24 pt-2 md:px-8">
@@ -123,11 +135,53 @@ export default function OnboardingPage() {
       </section>
 
       {/* Step 3 - upload accumulator (the natural first action for a new user) */}
-      <section className="mb-6 rounded-2xl bg-chalk p-6 text-ink shadow-xl">
+      <section className={`${recipes.length > 0 ? "mb-4" : "mb-6"} rounded-2xl bg-chalk p-6 text-ink shadow-xl`}>
         <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-flood-deep">Step 3 &middot; Upload your accumulator</p>
         <h2 className="mt-2 font-disp text-[23px] font-bold tracking-tight">Bring your slip in.</h2>
         <p className="mt-1.5 text-[14px] text-ink-mute">Snap or upload your betslip and Onside reads every leg, then tracks them live through to settlement. You can build an agent anytime after.</p>
       </section>
+
+      {/* Step 4 - start with a proven agent. Only renders when starter_recipes() clears the
+          evidence bar; taps must route through leave() because the (app) layout bounces any
+          onboarded=false account straight back here. */}
+      {recipes.length > 0 && (
+        <section className="mb-6 rounded-2xl bg-chalk p-6 text-ink shadow-xl">
+          <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-flood-deep">Step 4 &middot; Start with a proven agent</p>
+          <h2 className="mt-2 font-disp text-[23px] font-bold tracking-tight">Or tap a recipe that&rsquo;s landing right now.</h2>
+          <p className="mt-1.5 text-[14px] text-ink-mute">
+            Three ready-made agents with their live 14-day record. One tap and it&rsquo;s hunting your leagues every day
+            &mdash; on Free that&rsquo;s your one agent, locked as built.
+          </p>
+          <div className="mt-4 flex flex-col gap-2.5">
+            {recipes.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => leave(recipeHref(r))}
+                className="group flex items-center gap-3 rounded-xl border border-ink/15 bg-white px-4 py-3.5 text-left transition hover:border-flood-deep/60"
+              >
+                <span className="text-xl">{r.emoji}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-disp text-[15px] font-extrabold">{r.name}</span>
+                    <span className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">{r.marketLabel}</span>
+                  </span>
+                  <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-mute">{r.rule}</span>
+                  <span className="mt-1 block font-mono text-[11px] font-bold text-grass-deep">
+                    landed {r.won} of {r.graded} &middot; {r.hit}% &middot; last 14 days
+                  </span>
+                </span>
+                <span className="flex-none text-ink-mute transition-transform group-hover:translate-x-0.5">&rarr;</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <button onClick={() => leave("/strategies/new")} className="text-[13px] text-ink-mute underline-offset-2 hover:text-ink hover:underline">
+              I&rsquo;ll build my own &rarr;
+            </button>
+            <span className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">Live platform record &middot; not a guarantee</span>
+          </p>
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button onClick={() => leave("/tracker")} className="text-[13px] text-onpitch-mute hover:text-chalk">&larr; Do this later</button>
