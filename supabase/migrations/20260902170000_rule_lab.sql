@@ -425,7 +425,10 @@ begin
   perform cron.unschedule('rule-lab-nightly');
 exception when others then null;
 end $$;
-select cron.schedule('rule-lab-nightly', '15 3 * * *', $$select public.mine_rule_lab()$$);
+-- statement_timeout must be raised as its OWN statement before the call: a timeout change
+-- cannot affect a statement already running, so setting it inside the function (or in the same
+-- statement) does nothing — two seed attempts died at exactly 2:00 proving it (2026-09-02).
+select cron.schedule('rule-lab-nightly', '15 3 * * *', $$set statement_timeout = '900000'; select public.mine_rule_lab();$$);
 
 -- Seeding note: the inline seed exceeded the migration API's timeout — the first mine was run
 -- via a one-shot pg_cron ('rule-lab-seed', removed after success). The nightly cron owns it
