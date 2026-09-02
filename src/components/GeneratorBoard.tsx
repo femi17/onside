@@ -151,6 +151,7 @@ type ProvenRule = {
   won: number;
   hit: number;
   computed_at: string;
+  source: string | null;
 };
 // hit is a percentage; tolerate a 0..1 fraction just in case the miner ever writes one
 const hitPct = (r: ProvenRule) => Math.round(r.hit <= 1 ? r.hit * 100 : r.hit);
@@ -270,7 +271,7 @@ export default function GeneratorBoard({
     (async () => {
       const { data } = await supabase
         .from("proven_rules")
-        .select("market_key, market_label, rule_text, filters, n, won, hit, computed_at")
+        .select("market_key, market_label, rule_text, filters, n, won, hit, computed_at, source")
         .in("market_key", QUICK_CHIPS.map((c) => c.key));
       if (cancelled || !data) return;
       const m: Record<string, ProvenRule> = {};
@@ -818,12 +819,16 @@ export default function GeneratorBoard({
                   <div className="min-w-0">
                     <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-flood">Proven rule</p>
                     <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">
-                      Landed {hitPct(provenRow)}% of {provenRow.n} graded picks — apply it?
+                      Landed {hitPct(provenRow)}% of {provenRow.n} {provenRow.source === "fixtures" ? "backtested matches" : "graded picks"} — apply it?
                     </p>
                     {provenRow.rule_text && (
                       <p className="mt-1 text-[12px] leading-relaxed text-onpitch-mute">{provenRow.rule_text}</p>
                     )}
-                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Past record, not a promise.</p>
+                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
+                      {provenRow.source === "fixtures"
+                        ? "Backtested on the full match history · past record, not a promise"
+                        : "Past record, not a promise."}
+                    </p>
                   </div>
                   <button
                     onClick={() => setApplyProven((v) => !v)}
