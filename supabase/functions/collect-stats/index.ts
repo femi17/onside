@@ -147,10 +147,30 @@ Deno.serve(async (req) => {
           continue;
         }
         if (ch != null) withCorners++;
+        // 1UP lead-path flags ride the same payload free: walk the goal events in order and
+        // record whether each side EVER led — path markets (1UP/2UP/never-down) can't be mined
+        // from final scores, and these fixtures are marked attempted-once, so skipping this
+        // would discard the data forever. Event feeds lie (own-goal sides, mis-sequencing —
+        // see CLAUDE.md), so the flags are stored ONLY when the event-derived final matches
+        // the official final score.
+        let led: [number, number] | null = null;
+        {
+          const evs = (it?.events ?? []).filter((e: any) => e?.type === "Goal" && e?.detail !== "Missed Penalty");
+          let gh = 0, ga = 0, ledH = false, ledA = false;
+          for (const e of evs) {
+            const own = e?.detail === "Own Goal";
+            const scoredByHome = (e?.team?.id === it?.teams?.home?.id) !== own;
+            if (scoredByHome) gh++; else ga++;
+            if (gh > ga) ledH = true;
+            if (ga > gh) ledA = true;
+          }
+          const fh = it?.goals?.home, fa = it?.goals?.away;
+          if (fh != null && fa != null && gh === Number(fh) && ga === Number(fa)) led = [ledH ? 1 : 0, ledA ? 1 : 0];
+        }
         // stat names match the live poll's team-stats map format (name -> [home, away])
         rows.push({
           fixture_id: fid, corners_home: ch, corners_away: ca,
-          stats: { ...(hasCards ? { "Yellow Cards": [yh, ya], "Red Cards": [rh, ra] } : {}), ...extra },
+          stats: { ...(hasCards ? { "Yellow Cards": [yh, ya], "Red Cards": [rh, ra] } : {}), ...extra, ...(led ? { led } : {}) },
           updated_at: new Date().toISOString(),
         });
       }
