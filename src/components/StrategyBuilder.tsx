@@ -1505,7 +1505,7 @@ export default function StrategyBuilder({
                 </>
               ) : (
                 <span className="text-[12px] text-ink-mute">
-                  {kickUntil ? "set a start time too — the window needs both" : "optional — leave empty for any kickoff time"}
+                  {kickUntil ? "set a start time too — the window needs both" : "optional — set both for a kick-off window: only games starting between these times count (your timezone)"}
                 </span>
               )}
             </div>
