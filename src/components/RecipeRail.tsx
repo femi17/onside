@@ -1,7 +1,9 @@
 import Link from "next/link";
 
 // Starter-recipe rail — the one-tap "first agent" links with LIVE receipts, shared by the
-// tracker's activation card (dark) and the /strategies empty state (light chalk). Pure JSX,
+// tracker's activation card (dark) and the /strategies empty state (light chalk). The recipe
+// list + evidence bar are exported so the onboarding "proven agent" step renders the same
+// truth (it can't use these <Link>s — it must mark onboarded before routing). Pure JSX,
 // no client hooks, so it renders in both server and client trees. Each recipe deep-links the
 // builder's existing prefill rail (name + market + a model-probability rule the read-back
 // verifies); a recipe only renders when it clears its evidence bar (>=15 graded, >=60% hit
@@ -9,13 +11,14 @@ import Link from "next/link";
 
 export type RecipeStats = Record<string, { graded: number; won: number } | null>;
 
-const RECIPES = [
+export const RECIPES = [
   {
     key: "safe_double",
     emoji: "🛡️",
     name: "Safe Double",
     what: "The agent picks the strongest double-chance angle per game.",
     market: "dc_best",
+    marketLabel: "Double chance",
     rule: "Only send picks with a model probability of 75% or higher.",
   },
   {
@@ -24,6 +27,7 @@ const RECIPES = [
     name: "Goals Banker",
     what: "Over 1.5 goals, only when the model rates it highly.",
     market: "over_1_5",
+    marketLabel: "Over 1.5 goals",
     rule: "Only send picks with a model probability of 82% or higher.",
   },
   {
@@ -32,22 +36,31 @@ const RECIPES = [
     name: "Home Scorers",
     what: "Home team to score, screened by the model.",
     market: "home_to_score",
+    marketLabel: "Home team to score",
     rule: "Only send picks with a model probability of 85% or higher.",
   },
 ];
 
-function recipeHref(r: (typeof RECIPES)[number]): string {
+export type StarterRecipe = (typeof RECIPES)[number] & { graded: number; won: number; hit: number };
+
+export function recipeHref(r: (typeof RECIPES)[number]): string {
   const q = new URLSearchParams({ name: r.name, market: r.market, rule: r.rule });
   return `/strategies/new?${q.toString()}`;
 }
 
-export default function RecipeRail({ recipes, tone = "dark" }: { recipes?: RecipeStats | null; tone?: "dark" | "light" }) {
-  const provable = RECIPES.map((r) => {
+// The shared evidence bar: a recipe only surfaces with >=15 graded picks and a >=60% hit
+// rate over the last 14 days — a cold recipe never advertises itself, anywhere.
+export function provableRecipes(recipes?: RecipeStats | null): StarterRecipe[] {
+  return RECIPES.map((r) => {
     const s = recipes?.[r.key];
     if (!s || s.graded < 15) return null;
     const hit = Math.round((s.won / s.graded) * 100);
     return hit >= 60 ? { ...r, graded: s.graded, won: s.won, hit } : null;
-  }).filter((r): r is NonNullable<typeof r> => r !== null);
+  }).filter((r): r is StarterRecipe => r !== null);
+}
+
+export default function RecipeRail({ recipes, tone = "dark" }: { recipes?: RecipeStats | null; tone?: "dark" | "light" }) {
+  const provable = provableRecipes(recipes);
   if (provable.length === 0) return null;
 
   const dark = tone === "dark";
