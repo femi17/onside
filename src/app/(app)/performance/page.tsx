@@ -54,8 +54,9 @@ async function PerfData() {
     // which agents have Learning ON — so an empty tuning log reads as "collecting samples",
     // never as "you haven't turned learning on"
     supabase.from("strategies").select("name").eq("learning", true).eq("status", "running"),
-    // the user's agents (id + shield) so the per-agent tab can show + toggle the Onside Shield
-    supabase.from("strategies").select("id, name, shield, status"),
+    // the user's agents (id + shield) so the per-agent tab can show + toggle the Onside Shield.
+    // Drafts (the generator's quick-spec rows) are not agents — no tab (owner-ruled 2026-09-02)
+    supabase.from("strategies").select("id, name, shield, status").neq("status", "draft"),
   ]);
   // 🔎 the insight miner's validated suggestions (weekly sweep, holdout-gated) — see mine_discoveries()
   const { data: discoveries } = await supabase
