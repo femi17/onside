@@ -242,6 +242,11 @@ export default function GeneratorBoard({
   const quickMaxLegs = free ? 3 : 24; // client mirror of the GEN_ACCA_LEGS trigger caps
   const [chips, setChips] = useState<Set<string>>(new Set()); // NO defaults — owner ruling
   const [quickLegs, setQuickLegs] = useState(Math.min(3, free ? 3 : 24));
+  // kick-off window in hours from now (0 = anytime today) — maps onto the engine's inclusive
+  // local-time kickoff_at/kickoff_until window on the strategy row. ranWindow snapshots the
+  // value the LAST run actually used, so the empty-state copy can't drift if chips change after.
+  const [quickWindow, setQuickWindow] = useState<0 | 3 | 6>(0);
+  const [ranWindow, setRanWindow] = useState<0 | 3 | 6>(0);
   const [quickPicks, setQuickPicks] = useState<GenPick[]>([]);
   const [quickId, setQuickId] = useState<string | null>(null);
   const [hunting, setHunting] = useState(false);
@@ -436,9 +441,21 @@ export default function GeneratorBoard({
     setSaveOpen(false);
     setSaveMsg(null);
     setSavedName(null);
+    setRanWindow(quickWindow);
 
     const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
     const perOutcome = sel.length > 1 && applyProven && sel.every((c) => proven[c.key]);
+
+    // kick-off window → the engine's INCLUSIVE local-time kickoff_at/until pair, computed ONCE
+    // so every aim this run shares the same window. Plain local Date math is correct here: the
+    // row's timezone field IS the browser timezone. HH:MM:00 — engine compares "HH:MM" strings
+    // (an until before at wraps past midnight; same_day scoping truncates that at midnight).
+    const kickWin = (() => {
+      if (!quickWindow) return { kickoff_at: null as string | null, kickoff_until: null as string | null };
+      const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:00`;
+      const now = new Date();
+      return { kickoff_at: hm(now), kickoff_until: hm(new Date(now.getTime() + quickWindow * 3600 * 1000)) };
+    })();
 
     // shared row fields; a proven rule applies its stored engine-ready filters DIRECTLY — no
     // LLM parse. Without one, rule_text stays null so the empty parse is never re-parsed.
@@ -454,8 +471,8 @@ export default function GeneratorBoard({
       max_per_prediction: free ? 8 : 24, // plan pick ceilings (plan_limits mirror)
       deliver_at: nowDeliverAt(),
       target_day: "same_day", // hunt today's remaining games, like a same-day agent
-      kickoff_at: null,
-      kickoff_until: null,
+      kickoff_at: kickWin.kickoff_at,
+      kickoff_until: kickWin.kickoff_until,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
       channels: ["app"],
       learning: false,
@@ -794,6 +811,24 @@ export default function GeneratorBoard({
               <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">Tip: pick one market to use its proven rule.</p>
             ) : null}
 
+            {/* kick-off window — narrows the engine hunt to games starting inside it */}
+            <div className="mt-4">
+              <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Kick-off</p>
+              <div className="no-scrollbar mt-1.5 flex gap-1.5 overflow-x-auto">
+                {([[0, "Anytime today"], [3, "Next 3 hours"], [6, "Next 6 hours"]] as const).map(([h, l]) => (
+                  <button
+                    key={h}
+                    onClick={() => { setQuickWindow(h); setQuickMsg(null); }}
+                    className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
+                      quickWindow === h ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-chalk hover:border-white/30"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-3">
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Legs · 2–{quickMaxLegs}</p>
@@ -861,9 +896,15 @@ export default function GeneratorBoard({
           )}
           {!hunting && quickRan && upcoming.length === 0 && (
             <div className="mt-4 rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-8 text-center">
-              <p className="text-sm font-bold text-chalk">Your spec found nothing still upcoming today.</p>
+              <p className="text-sm font-bold text-chalk">
+                {ranWindow
+                  ? `Your spec found nothing in the next ${ranWindow} hours.`
+                  : "Your spec found nothing still upcoming today."}
+              </p>
               <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-onpitch-mute">
-                Loosen it or try more markets — the pool is only today&apos;s games that haven&apos;t kicked off.
+                {ranWindow
+                  ? "Widen the window or loosen the spec — the pool is only today's games that haven't kicked off."
+                  : "Loosen it or try more markets — the pool is only today's games that haven't kicked off."}
               </p>
             </div>
           )}
