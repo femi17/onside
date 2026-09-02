@@ -209,7 +209,7 @@ export type MixItem = {
 
 // A backtested, owner-refreshed rule for a popular market (proven_rules table). Rows come and go
 // as the weekly refresh re-qualifies them, so nothing here is hardcoded — we match at runtime.
-type ProvenRule = { market_key: string; market_label: string; rule_text: string; n: number; hit: number };
+type ProvenRule = { market_key: string; market_label: string; rule_text: string; n: number; hit: number; source: string | null };
 
 // which concrete proven-rule markets a FAMILY base can stand in for — a family lets the agent
 // pick any member per game, so a rule proven on a member is a fair suggestion for the family
@@ -405,7 +405,7 @@ export default function StrategyBuilder({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("proven_rules").select("market_key, market_label, rule_text, n, hit");
+      const { data } = await supabase.from("proven_rules").select("market_key, market_label, rule_text, n, hit, source");
       if (!cancelled && data?.length) setProvenRules(data as ProvenRule[]);
     })();
     return () => { cancelled = true; };
@@ -1342,7 +1342,7 @@ export default function StrategyBuilder({
             {!rule.trim() && provenSuggestion && (
               <div className="mb-3 rounded-xl border border-flood-deep/40 bg-flood/[0.08] p-3.5">
                 <div className="font-mono text-[10.5px] font-bold uppercase tracking-wide text-flood-deep">
-                  ✨ Proven rule for {provenSuggestion.market_label} — landed {Number(provenSuggestion.hit).toFixed(1).replace(/\.0$/, "")}% of {provenSuggestion.n} graded picks
+                  ✨ Proven rule for {provenSuggestion.market_label} — landed {Number(provenSuggestion.hit).toFixed(1).replace(/\.0$/, "")}% of {provenSuggestion.n} {provenSuggestion.source === "fixtures" ? "backtested matches" : "graded picks"}
                 </div>
                 <p className="mt-2 text-[12.5px] italic leading-relaxed text-ink">“{provenSuggestion.rule_text}”</p>
                 <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -1353,7 +1353,11 @@ export default function StrategyBuilder({
                   >
                     Use this rule
                   </button>
-                  <span className="font-mono text-[10px] leading-snug text-ink-mute">Backtested on settled agent picks · past record, not a promise</span>
+                  <span className="font-mono text-[10px] leading-snug text-ink-mute">
+                    {provenSuggestion.source === "fixtures"
+                      ? "Backtested on the full match history · past record, not a promise"
+                      : "Backtested on settled agent picks · past record, not a promise"}
+                  </span>
                 </div>
               </div>
             )}
