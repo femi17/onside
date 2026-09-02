@@ -273,11 +273,15 @@ export default function GeneratorBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // the suggestion only shows with EXACTLY one outcome selected (per-market rules can't combine);
-  // re-arm the default-ON toggle whenever that single market changes
+  // proven-rule surface: one selected outcome → its card; several where EVERY outcome has a
+  // proven row → the per-outcome list with one shared toggle. The default-ON toggle re-arms
+  // whenever the selection changes at all.
+  const chipsKey = useMemo(() => Array.from(chips).sort().join(","), [chips]);
+  useEffect(() => { setApplyProven(true); }, [chipsKey]);
   const singleChipKey = chips.size === 1 ? Array.from(chips)[0] : null;
-  useEffect(() => { setApplyProven(true); }, [singleChipKey]);
   const provenRow = singleChipKey ? proven[singleChipKey] ?? null : null;
+  const selChips = useMemo(() => QUICK_CHIPS.filter((c) => chips.has(c.key)), [chips]);
+  const allProven = selChips.length > 1 && selChips.every((c) => proven[c.key]);
 
   // pool: the user's own pending picks whose game is still ≥10 min from kickoff (re-checked
   // every minute so a slip can't be tracked onto a game that just started). Quick mode swaps in
@@ -414,8 +418,15 @@ export default function GeneratorBoard({
   }
 
   // Quick spec run: upsert the user's SINGLE quick draft strategy (their own throwaway agent),
-  // run it once quietly via run-strategies, then re-query the pool scoped to that strategy and
-  // hand it to the exact same assembly pipeline the agents mode uses.
+  // run it quietly via run-strategies, then re-query the pool scoped to that strategy and hand
+  // it to the exact same assembly pipeline the agents mode uses.
+  //
+  // With SEVERAL outcomes selected and every one carrying a proven rule (toggle ON), the spec
+  // runs PER OUTCOME: the same draft row is re-aimed at each market in turn — single-market
+  // shape + THAT market's proven rule — and invoked sequentially. Deliveries accumulate under
+  // the one strategy id; unique(strategy_id, fixture_id) means a fixture taken by an earlier
+  // outcome won't re-deliver, which is fine — the assembler is one-leg-per-fixture anyway.
+  // Any outcome without a proven rule → today's behaviour exactly: one mix run, no rule.
   async function runQuickSpec() {
     if (hunting || chips.size === 0) return;
     setHunting(true);
@@ -427,13 +438,11 @@ export default function GeneratorBoard({
     setSavedName(null);
 
     const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
-    const pr = sel.length === 1 && applyProven ? proven[sel[0].key] ?? null : null;
+    const perOutcome = sel.length > 1 && applyProven && sel.every((c) => proven[c.key]);
 
-    // row shapes mirror StrategyBuilder's resolveMarket(): one outcome → that market's
-    // key/side/line; several → the mix shape (market_key 'mix', the list in `markets`).
-    const base: Record<string, unknown> = {
-      // a proven rule applies its stored engine-ready filters DIRECTLY — no LLM parse. Without
-      // one, rule_text stays null so the empty parse is never re-parsed into anything.
+    // shared row fields; a proven rule applies its stored engine-ready filters DIRECTLY — no
+    // LLM parse. Without one, rule_text stays null so the empty parse is never re-parsed.
+    const baseFor = (pr: ProvenRule | null): Record<string, unknown> => ({
       rule_text: pr?.rule_text ?? null,
       rule_parsed: pr ? { filters: pr.filters ?? [], select: [] } : { filters: [], select: [] },
       league_ids: [], // the spec states outcomes, not competitions — all upcoming leagues
@@ -450,29 +459,36 @@ export default function GeneratorBoard({
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
       channels: ["app"],
       learning: false,
+    });
+    // row shapes mirror StrategyBuilder's resolveMarket(): one outcome → that market's
+    // key/side/line; a rule-less multi → the mix shape (market_key 'mix', list in `markets`)
+    const singleRowFor = (c: (typeof QUICK_CHIPS)[number]): Record<string, unknown> => ({
+      market_key: c.key,
+      market_label: c.label,
+      custom_market: null,
+      side: c.side,
+      line: c.line,
+      period: "ft",
+      bet_value: null,
+      markets: null,
+    });
+    const mixRow: Record<string, unknown> = {
+      market_key: "mix",
+      market_label: `Mix · ${sel.length} outcomes`,
+      custom_market: null,
+      side: null,
+      line: null,
+      period: "ft",
+      bet_value: null,
+      markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
     };
-    const marketRow: Record<string, unknown> =
-      sel.length === 1
-        ? {
-            market_key: sel[0].key,
-            market_label: sel[0].label,
-            custom_market: null,
-            side: sel[0].side,
-            line: sel[0].line,
-            period: "ft",
-            bet_value: null,
-            markets: null,
-          }
-        : {
-            market_key: "mix",
-            market_label: `Mix · ${sel.length} outcomes`,
-            custom_market: null,
-            side: null,
-            line: null,
-            period: "ft",
-            bet_value: null,
-            markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
-          };
+
+    // every (re-)aim of the draft row this run will make, in order
+    const aims: Record<string, unknown>[] = perOutcome
+      ? sel.map((c) => ({ ...baseFor(proven[c.key] ?? null), ...singleRowFor(c) }))
+      : sel.length === 1
+        ? [{ ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) }]
+        : [{ ...baseFor(null), ...mixRow }];
 
     // ONE quick row per user, re-aimed on every run — drafts are exempt from free-plan locks,
     // so re-aiming works on every plan
@@ -487,43 +503,50 @@ export default function GeneratorBoard({
         .limit(1);
       id = found?.[0]?.id ?? null;
     }
-    if (id) {
-      const { error } = await supabase.from("strategies").update({ ...base, ...marketRow }).eq("id", id);
-      if (error) { setHunting(false); setQuickMsg(error.message); return; }
-    } else {
-      const { data: ins, error } = await supabase
-        .from("strategies")
-        .insert({ ...base, ...marketRow, user_id: userId, name: QUICK_NAME, status: "draft" })
-        .select("id")
-        .single();
-      if (error || !ins) { setHunting(false); setQuickMsg(error?.message ?? "Couldn't save your spec."); return; }
-      id = ins.id as string;
+
+    // aim → invoke → next aim. Each invoke costs one of the day's spec runs; hitting the limit
+    // (or any error) mid-sequence keeps every delivery already inserted and falls through to
+    // the pool re-query, so the slip still assembles from whatever the runs found.
+    for (const aim of aims) {
+      if (id) {
+        const { error } = await supabase.from("strategies").update(aim).eq("id", id);
+        if (error) { setQuickMsg(error.message); break; }
+      } else {
+        const { data: ins, error } = await supabase
+          .from("strategies")
+          .insert({ ...aim, user_id: userId, name: QUICK_NAME, status: "draft" })
+          .select("id")
+          .single();
+        if (error || !ins) { setHunting(false); setQuickMsg(error?.message ?? "Couldn't save your spec."); return; }
+        id = ins.id as string;
+        setQuickId(id);
+      }
+
+      // run this aim once, quietly — no push/telegram noise from a throwaway run
+      const { error: runErr } = await supabase.functions.invoke("run-strategies", { body: { strategy_id: id, quiet: true } });
+      if (runErr) {
+        // surface the function's real error body, not the generic "non-2xx" message
+        let body: { error?: string; used?: number; limit?: number } | null = null;
+        try {
+          body = await (runErr as { context?: Response }).context?.json?.();
+        } catch { /* keep generic message */ }
+        if (body?.error === "quick_run_limit") {
+          const limit = body.limit ?? 0;
+          setQuickMsg(
+            free
+              ? `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — upgrade for more.`
+              : `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — more tomorrow.`
+          );
+        } else {
+          setQuickMsg(body?.error ?? runErr.message ?? "Your spec couldn't run — try again.");
+        }
+        break;
+      }
     }
     setQuickId(id);
 
-    // run the spec once, quietly — no push/telegram noise from a throwaway run
-    const { error: runErr } = await supabase.functions.invoke("run-strategies", { body: { strategy_id: id, quiet: true } });
-    if (runErr) {
-      // surface the function's real error body, not the generic "non-2xx" message
-      let body: { error?: string; used?: number; limit?: number } | null = null;
-      try {
-        body = await (runErr as { context?: Response }).context?.json?.();
-      } catch { /* keep generic message */ }
-      setHunting(false);
-      if (body?.error === "quick_run_limit") {
-        const limit = body.limit ?? 0;
-        setQuickMsg(
-          free
-            ? `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — upgrade for more.`
-            : `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — more tomorrow.`
-        );
-      } else {
-        setQuickMsg(body?.error ?? runErr.message ?? "Your spec couldn't run — try again.");
-      }
-      return;
-    }
-
-    // re-query the pool: the page's exact pool query, scoped to the quick strategy
+    // re-query the pool ONCE after all runs: the page's exact pool query, scoped to the quick
+    // strategy (per-outcome deliveries all accumulated under this one id)
     const { data: dels, error: qErr } = await supabase
       .from("deliveries")
       .select(
@@ -565,15 +588,21 @@ export default function GeneratorBoard({
   const header = (
     <StickyHeader className="-mx-5 px-5 pb-4 pt-6 md:-mx-8 md:px-8">
       <MobileLogo />
-      <div className="min-w-0">
-        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Acca generator</p>
-        <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
-          {genMode === "quick" ? (
-            <>Your spec does the finding. <span className="text-onpitch-mute">We assemble.</span></>
-          ) : (
-            <>Your agents found them. <span className="text-onpitch-mute">We assemble.</span></>
-          )}
-        </h1>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Acca generator</p>
+          <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
+            {genMode === "quick" ? (
+              <>Your spec does the finding. <span className="text-onpitch-mute">We assemble.</span></>
+            ) : (
+              <>Your agents found them. <span className="text-onpitch-mute">We assemble.</span></>
+            )}
+          </h1>
+        </div>
+        {/* same back convention as the builder's StickyHeader — lands on the acca history */}
+        <Link href="/accumulators" className="flex-none font-mono text-xs text-onpitch-mute transition-colors hover:text-chalk">
+          ← Back
+        </Link>
       </div>
     </StickyHeader>
   );
@@ -720,8 +749,48 @@ export default function GeneratorBoard({
                   </button>
                 </div>
               </div>
+            ) : allProven ? (
+              // every selected outcome is mastered → offer to run the spec PER OUTCOME, each
+              // with its own proven rule (one shared toggle; each outcome costs a spec run)
+              <div className="mt-3.5 rounded-xl border border-flood/30 bg-pitch p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-flood">Proven rules</p>
+                    <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">Apply proven rules per outcome?</p>
+                    <div className="mt-1.5 flex flex-col gap-1">
+                      {selChips.map((c) => {
+                        const r = proven[c.key];
+                        return (
+                          <p key={c.key} className="text-[12.5px] font-bold leading-snug text-chalk">
+                            {c.label}{" "}
+                            <span className="font-mono text-[11px] font-normal text-onpitch-mute">
+                              · landed {hitPct(r)}% of {r.n}
+                            </span>
+                          </p>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Past record, not a promise.</p>
+                    {applyProven && (
+                      <p className="mt-1 font-mono text-[10.5px] text-flood">
+                        Runs each outcome as its own spec — uses {selChips.length} of your daily runs.
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setApplyProven((v) => !v)}
+                    aria-pressed={applyProven}
+                    aria-label="Apply proven rules per outcome"
+                    className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
+                      applyProven ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-onpitch-mute hover:border-white/30"
+                    }`}
+                  >
+                    {applyProven ? "Applied ✓" : "Off"}
+                  </button>
+                </div>
+              </div>
             ) : chips.size > 1 && Array.from(chips).some((k) => proven[k]) ? (
-              // per-market rules can't combine yet — the card hides itself with several outcomes
+              // some (not all) outcomes have a rule — per-market rules can't combine in one mix
               <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">Tip: pick one market to use its proven rule.</p>
             ) : null}
 
