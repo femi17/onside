@@ -207,6 +207,18 @@ export type MixItem = {
   bet_value: string | null;
 };
 
+// A backtested, owner-refreshed rule for a popular market (proven_rules table). Rows come and go
+// as the weekly refresh re-qualifies them, so nothing here is hardcoded — we match at runtime.
+type ProvenRule = { market_key: string; market_label: string; rule_text: string; n: number; hit: number };
+
+// which concrete proven-rule markets a FAMILY base can stand in for — a family lets the agent
+// pick any member per game, so a rule proven on a member is a fair suggestion for the family
+const PROVEN_FAMILY_MEMBERS: Record<string, string[]> = {
+  ou_best: ["over_1_5", "over_2_5", "under_3_5"],
+  dc_best: ["double_chance_1x", "double_chance_12", "double_chance_x2"],
+  result_best: ["home_win", "double_chance_1x", "double_chance_12", "double_chance_x2"],
+};
+
 // Tappable starters for the rule box — one filter-style, one form-style, one if/else. Each is
 // known to parse cleanly (they use the engine's native signals), so a new user's first contact
 // with rules is a green read-back, not a red "will be ignored".
@@ -386,6 +398,43 @@ export default function StrategyBuilder({
     return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rule, market?.key, market?.side, mix]);
+
+  // Proven rules: backtested rule suggestions per popular market, fetched once. When the chosen
+  // base matches a row, a one-tap card offers the rule (only while the rule box is empty).
+  const [provenRules, setProvenRules] = useState<ProvenRule[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("proven_rules").select("market_key, market_label, rule_text, n, hit");
+      if (!cancelled && data?.length) setProvenRules(data as ProvenRule[]);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const provenSuggestion = useMemo<ProvenRule | null>(() => {
+    if (!provenRules.length) return null;
+    const byKey = new Map(provenRules.map((r) => [r.market_key, r]));
+    // a mix only gets a suggestion when EVERY selected outcome is the same proven market —
+    // a rule proven on one market must not be pitched at a blend of different ones
+    if (mix.length) {
+      const row = byKey.get(mix[0].market_key) ?? null;
+      return row && mix.every((m) => m.market_key === row.market_key) ? row : null;
+    }
+    const key = market?.key;
+    if (!key) return null;
+    // family bases: any member's proven rule qualifies — offer the strongest record
+    const members = PROVEN_FAMILY_MEMBERS[key];
+    if (members) {
+      let best: ProvenRule | null = null;
+      for (const k of members) {
+        const row = byKey.get(k);
+        if (row && (!best || Number(row.hit) > Number(best.hit))) best = row;
+      }
+      return best;
+    }
+    return byKey.get(key) ?? null; // exact market match (presets, shelf, typed outcomes)
+  }, [provenRules, mix, market?.key]);
 
   // Search across ALL leagues in the DB (1000+), not just the preloaded set — so typing "england"
   // finds Premier League, League One/Two, National League, etc. even though they aren't preloaded.
@@ -1287,6 +1336,27 @@ export default function StrategyBuilder({
               <span className="font-disp text-[16px] font-bold text-ink">Your rule</span>
               <span className="ml-auto rounded-md bg-ink px-2 py-1 font-mono text-[9.5px] font-bold uppercase tracking-wide text-flood">✦ AI reads this</span>
             </div>
+            {/* proven-rule suggestion — only while the box is EMPTY (never stomp typed text);
+                reappears if the user clears the box. One tap fills the rule via setRule, so the
+                normal debounced read-back flow confirms it like any hand-written rule. */}
+            {!rule.trim() && provenSuggestion && (
+              <div className="mb-3 rounded-xl border border-flood-deep/40 bg-flood/[0.08] p-3.5">
+                <div className="font-mono text-[10.5px] font-bold uppercase tracking-wide text-flood-deep">
+                  ✨ Proven rule for {provenSuggestion.market_label} — landed {Number(provenSuggestion.hit).toFixed(1).replace(/\.0$/, "")}% of {provenSuggestion.n} graded picks
+                </div>
+                <p className="mt-2 text-[12.5px] italic leading-relaxed text-ink">“{provenSuggestion.rule_text}”</p>
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setRule(provenSuggestion.rule_text)}
+                    className="rounded-lg bg-ink px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-wide text-flood transition-transform hover:-translate-y-0.5"
+                  >
+                    Use this rule
+                  </button>
+                  <span className="font-mono text-[10px] leading-snug text-ink-mute">Backtested on settled agent picks · past record, not a promise</span>
+                </div>
+              </div>
+            )}
             <textarea
               value={rule}
               onChange={(e) => setRule(e.target.value)}
