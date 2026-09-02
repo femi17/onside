@@ -11,6 +11,7 @@ import InstallPushPrompt from "@/components/InstallPushPrompt";
 import InstallNudge from "@/components/InstallNudge";
 import UpdateWatcher from "@/components/UpdateWatcher";
 import FounderQuestion from "@/components/FounderQuestion";
+import SeenPing from "@/components/SeenPing";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
 
@@ -134,6 +135,8 @@ export default async function AppLayout({
       <UpdateWatcher />
       {/* one founder question at a time, targeted server-side by what the user actually did */}
       <FounderQuestion />
+      {/* hourly-throttled "was seen today" ping for retention analytics (client-only, fire-and-forget) */}
+      <SeenPing />
     </div>
     </ConfirmProvider>
   );
