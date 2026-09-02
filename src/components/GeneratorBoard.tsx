@@ -248,7 +248,10 @@ export default function GeneratorBoard({
   const [quickWindow, setQuickWindow] = useState<0 | 3 | 6>(0);
   const [ranWindow, setRanWindow] = useState<0 | 3 | 6>(0);
   const [quickPicks, setQuickPicks] = useState<GenPick[]>([]);
-  const [quickId, setQuickId] = useState<string | null>(null);
+  // the draft strategy rows the LAST run aimed (one for single/mix; one PER OUTCOME in
+  // per-outcome mode — separate ids so two outcomes can both deliver the same fixture).
+  // outcome = the chip label (used to suffix names when promoting), null for single/mix.
+  const [quickRuns, setQuickRuns] = useState<{ id: string; outcome: string | null }[]>([]);
   const [hunting, setHunting] = useState(false);
   const [quickRan, setQuickRan] = useState(false);
   const [quickMsg, setQuickMsg] = useState<string | null>(null);
@@ -260,7 +263,7 @@ export default function GeneratorBoard({
   const [agentName, setAgentName] = useState("");
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
-  const [savedName, setSavedName] = useState<string | null>(null);
+  const [savedNames, setSavedNames] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -309,6 +312,45 @@ export default function GeneratorBoard({
   const eligible = useMemo(() => {
     const filtered = famNow === "all" ? upcoming : upcoming.filter((p) => famOf(p.market_key, p.market_label) === famNow);
     const ranked = [...filtered].sort((a, b) => (b.model_prob ?? -1) - (a.model_prob ?? -1));
+
+    // Multi-outcome quick pools assemble ROUND-ROBIN across market_key groups. Pure prob order
+    // buries lower-prob markets (Over 1.5 probs beat 1X probs every time → a 14-leg two-outcome
+    // spec came back one-sided), so instead: group by market, keep each group prob-ranked, take
+    // best-of-group in rotation (A, B, A, B…); a fixture taken by whichever turn reaches it
+    // first leaves EVERY group (one leg per fixture), and a dry group just drops out of the
+    // rotation while the rest keep filling. Feeding `chosen`'s slice AND pickForTarget's
+    // candidate set from this order preserves representation in both assembly modes.
+    if (genMode === "quick") {
+      const groups = new Map<string, GenPick[]>();
+      for (const p of ranked) {
+        const k = p.market_key ?? "";
+        const g = groups.get(k);
+        if (g) g.push(p);
+        else groups.set(k, [p]);
+      }
+      if (groups.size > 1) {
+        const lists = Array.from(groups.values()); // each prob-desc (stable partition of ranked)
+        const idx = lists.map(() => 0);
+        const seen = new Set<number>();
+        const out: GenPick[] = [];
+        let took = 1;
+        while (took > 0) {
+          took = 0;
+          for (let g = 0; g < lists.length; g++) {
+            while (idx[g] < lists[g].length && seen.has(lists[g][idx[g]].fixture.id)) idx[g]++;
+            if (idx[g] < lists[g].length) {
+              const p = lists[g][idx[g]++];
+              seen.add(p.fixture.id);
+              out.push(p);
+              took++;
+            }
+          }
+        }
+        return out;
+      }
+    }
+
+    // single group / agents mode: straight best-prob order, one leg per fixture
     const seen = new Set<number>();
     const out: GenPick[] = [];
     for (const p of ranked) {
@@ -317,7 +359,7 @@ export default function GeneratorBoard({
       out.push(p);
     }
     return out;
-  }, [upcoming, famNow]);
+  }, [upcoming, famNow, genMode]);
 
   const target = (() => {
     const t = parseFloat(targetStr.replace(",", "."));
@@ -422,16 +464,19 @@ export default function GeneratorBoard({
     });
   }
 
-  // Quick spec run: upsert the user's SINGLE quick draft strategy (their own throwaway agent),
-  // run it quietly via run-strategies, then re-query the pool scoped to that strategy and hand
-  // it to the exact same assembly pipeline the agents mode uses.
+  // Quick spec run: upsert the user's quick draft strategy row(s) (their own throwaway agents),
+  // run each quietly via run-strategies, then re-query the pool scoped to those strategy ids and
+  // hand it to the exact same assembly pipeline the agents mode uses.
   //
   // With SEVERAL outcomes selected and every one carrying a proven rule (toggle ON), the spec
-  // runs PER OUTCOME: the same draft row is re-aimed at each market in turn — single-market
-  // shape + THAT market's proven rule — and invoked sequentially. Deliveries accumulate under
-  // the one strategy id; unique(strategy_id, fixture_id) means a fixture taken by an earlier
-  // outcome won't re-deliver, which is fine — the assembler is one-leg-per-fixture anyway.
-  // Any outcome without a proven rule → today's behaviour exactly: one mix run, no rule.
+  // runs PER OUTCOME — and each outcome gets its OWN draft row ("⚡ Quick acca · <label>").
+  // Separate strategy ids matter: deliveries dedup on unique(strategy_id, fixture_id), so under
+  // ONE shared row outcome A's run would claim the qualifying fixtures and block outcome B
+  // (often carrying the identical proven rule → the same fixtures) from delivering them at all
+  // (the owner's 14-leg Over1.5+1X spec came back all-Over1.5 for exactly this reason).
+  // Distinct ids let both outcomes deliver the same fixture; the assembler stays
+  // one-leg-per-fixture. Single-outcome and rule-less mix keep the single "⚡ Quick acca" row.
+  // Draft rows are exempt from plan caps by DB design, so N drafts per user is fine.
   async function runQuickSpec() {
     if (hunting || chips.size === 0) return;
     setHunting(true);
@@ -440,7 +485,7 @@ export default function GeneratorBoard({
     setQuickPicks([]);
     setSaveOpen(false);
     setSaveMsg(null);
-    setSavedName(null);
+    setSavedNames([]);
     setRanWindow(quickWindow);
 
     const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
@@ -500,44 +545,51 @@ export default function GeneratorBoard({
       markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
     };
 
-    // every (re-)aim of the draft row this run will make, in order
-    const aims: Record<string, unknown>[] = perOutcome
-      ? sel.map((c) => ({ ...baseFor(proven[c.key] ?? null), ...singleRowFor(c) }))
+    // every aim this run will make: which draft row (by name) gets which row patch
+    const aims: { name: string; outcome: string | null; row: Record<string, unknown> }[] = perOutcome
+      ? sel.map((c) => ({
+          name: `${QUICK_NAME} · ${c.label}`,
+          outcome: c.label,
+          row: { ...baseFor(proven[c.key] ?? null), ...singleRowFor(c) },
+        }))
       : sel.length === 1
-        ? [{ ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) }]
-        : [{ ...baseFor(null), ...mixRow }];
+        ? [{ name: QUICK_NAME, outcome: null, row: { ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) } }]
+        : [{ name: QUICK_NAME, outcome: null, row: { ...baseFor(null), ...mixRow } }];
 
-    // ONE quick row per user, re-aimed on every run — drafts are exempt from free-plan locks,
-    // so re-aiming works on every plan
-    let id = quickId;
-    if (!id) {
+    // find-or-create a draft row by its quick name, then aim it. Drafts are exempt from
+    // free-plan locks, so re-aiming works on every plan.
+    async function aimDraft(name: string, row: Record<string, unknown>): Promise<{ id: string | null; err: string | null }> {
       const { data: found } = await supabase
         .from("strategies")
         .select("id")
         .eq("user_id", userId)
         .eq("status", "draft")
-        .eq("name", QUICK_NAME)
+        .eq("name", name)
         .limit(1);
-      id = found?.[0]?.id ?? null;
+      const id = found?.[0]?.id ?? null;
+      if (id) {
+        const { error } = await supabase.from("strategies").update(row).eq("id", id);
+        return { id, err: error?.message ?? null };
+      }
+      const { data: ins, error } = await supabase
+        .from("strategies")
+        .insert({ ...row, user_id: userId, name, status: "draft" })
+        .select("id")
+        .single();
+      return { id: (ins?.id as string) ?? null, err: error?.message ?? null };
     }
 
     // aim → invoke → next aim. Each invoke costs one of the day's spec runs; hitting the limit
     // (or any error) mid-sequence keeps every delivery already inserted and falls through to
     // the pool re-query, so the slip still assembles from whatever the runs found.
+    const used: { id: string; outcome: string | null }[] = [];
     for (const aim of aims) {
-      if (id) {
-        const { error } = await supabase.from("strategies").update(aim).eq("id", id);
-        if (error) { setQuickMsg(error.message); break; }
-      } else {
-        const { data: ins, error } = await supabase
-          .from("strategies")
-          .insert({ ...aim, user_id: userId, name: QUICK_NAME, status: "draft" })
-          .select("id")
-          .single();
-        if (error || !ins) { setHunting(false); setQuickMsg(error?.message ?? "Couldn't save your spec."); return; }
-        id = ins.id as string;
-        setQuickId(id);
+      const { id, err } = await aimDraft(aim.name, aim.row);
+      if (!id || err) {
+        setQuickMsg(err ?? "Couldn't save your spec.");
+        break;
       }
+      used.push({ id, outcome: aim.outcome });
 
       // run this aim once, quietly — no push/telegram noise from a throwaway run
       const { error: runErr } = await supabase.functions.invoke("run-strategies", { body: { strategy_id: id, quiet: true } });
@@ -560,17 +612,18 @@ export default function GeneratorBoard({
         break;
       }
     }
-    setQuickId(id);
+    setQuickRuns(used);
+    if (!used.length) { setHunting(false); return; }
 
-    // re-query the pool ONCE after all runs: the page's exact pool query, scoped to the quick
-    // strategy (per-outcome deliveries all accumulated under this one id)
+    // re-query the pool ONCE after all runs: the page's exact pool query, scoped to every
+    // strategy id this run aimed (per-outcome deliveries live under their own ids)
     const { data: dels, error: qErr } = await supabase
       .from("deliveries")
       .select(
         "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(name, flag_url, tier))"
       )
       .eq("user_id", userId)
-      .eq("strategy_id", id)
+      .in("strategy_id", used.map((u) => u.id))
       .eq("result", "pending")
       .gte("delivered_at", lagosTodayStartISO())
       .order("delivered_at", { ascending: false })
@@ -581,23 +634,40 @@ export default function GeneratorBoard({
     setQuickRan(true);
   }
 
-  // promote the quick draft into a real running agent — server-side limits (e.g. a free plan's
-  // one-running-agent cap) surface as the DB's own error; never pre-blocked client-side
+  // Promote EVERY draft the last run used into real running agents — per-outcome runs become
+  // one agent per outcome, named "<base> · <outcome label>". Server-side limits (e.g. a free
+  // plan's one-running-agent cap) surface as the DB's own per-row error; never pre-blocked
+  // client-side, and rows that promoted before a failure honestly stay promoted.
   async function promoteQuick() {
     const nm = agentName.trim();
-    if (!quickId || !nm || saveBusy) return;
+    if (!quickRuns.length || !nm || saveBusy) return;
     setSaveBusy(true);
     setSaveMsg(null);
-    const { error } = await supabase.from("strategies").update({ name: nm, status: "running" }).eq("id", quickId);
-    setSaveBusy(false);
-    if (error) {
-      setSaveMsg(`${error.message} — if you're at your plan's agent limit, upgrading unlocks another slot.`);
-      return;
+    const ok: string[] = [];
+    const okIds = new Set<string>();
+    let firstErr: string | null = null;
+    for (const r of quickRuns) {
+      const full = r.outcome ? `${nm} · ${r.outcome}` : nm;
+      const { error } = await supabase.from("strategies").update({ name: full, status: "running" }).eq("id", r.id);
+      if (error) {
+        firstErr = firstErr ?? `${full}: ${error.message}`;
+      } else {
+        ok.push(full);
+        okIds.add(r.id);
+      }
     }
-    setSavedName(nm);
-    setSaveOpen(false);
-    setQuickId(null); // the next quick run starts a fresh throwaway draft
-    router.refresh();
+    setSaveBusy(false);
+    if (ok.length) {
+      setSavedNames((prev) => [...prev, ...ok]);
+      // only the failures stay retryable — a promoted row must never be promoted twice
+      setQuickRuns((prev) => prev.filter((r) => !okIds.has(r.id)));
+      router.refresh();
+    }
+    if (firstErr) {
+      setSaveMsg(`${firstErr} — if you're at your plan's agent limit, upgrading unlocks another slot.`);
+    } else {
+      setSaveOpen(false);
+    }
   }
 
   const compliance = genMode === "quick" ? COMPLIANCE_QUICK : COMPLIANCE;
@@ -1100,40 +1170,51 @@ export default function GeneratorBoard({
       )}
 
       {/* ---- save the spec as a real agent (quiet secondary action) ---- */}
-      {genMode === "quick" && quickRan && !hunting && quickPicks.length > 0 && (
+      {genMode === "quick" && quickRan && !hunting && quickPicks.length > 0 && (savedNames.length > 0 || quickRuns.length > 0) && (
         <div className="mt-4 rounded-2xl border border-white/10 bg-pitch-2 p-4">
-          {savedName ? (
+          {savedNames.length > 0 && (
             <p className="text-[13px] text-onpitch-mute">
-              Saved — <b className="font-bold text-chalk">{savedName}</b> is now one of your agents and will deliver on its schedule.
+              Saved — <b className="font-bold text-chalk">{savedNames.join(", ")}</b>{" "}
+              {savedNames.length === 1 ? "is now one of your agents" : "are now your agents"} and will deliver on schedule.
             </p>
-          ) : !saveOpen ? (
-            <button
-              onClick={() => setSaveOpen(true)}
-              className="font-mono text-[12px] font-bold text-onpitch-mute underline decoration-white/20 underline-offset-2 transition-colors hover:text-chalk"
-            >
-              Save this spec as an agent →
-            </button>
-          ) : (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Name your agent</p>
-              <div className="mt-1.5 flex gap-2">
-                <input
-                  value={agentName}
-                  onChange={(e) => setAgentName(e.target.value)}
-                  placeholder="e.g. Goals Banker"
-                  className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-pitch px-3 text-[13.5px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
-                />
-                <button
-                  onClick={promoteQuick}
-                  disabled={saveBusy || !agentName.trim()}
-                  className="flex-none rounded-lg bg-flood px-4 font-bold text-ink disabled:opacity-40"
-                >
-                  {saveBusy ? "Saving…" : "Save"}
-                </button>
-              </div>
-              {saveMsg && <p className="mt-2 font-mono text-xs text-brick">{saveMsg}</p>}
-            </div>
           )}
+          {/* still-unpromoted rows (all of them at first; only the failures after a partial) */}
+          {quickRuns.length > 0 &&
+            (!saveOpen ? (
+              <button
+                onClick={() => setSaveOpen(true)}
+                className={`${savedNames.length ? "mt-3 " : ""}font-mono text-[12px] font-bold text-onpitch-mute underline decoration-white/20 underline-offset-2 transition-colors hover:text-chalk`}
+              >
+                {quickRuns.length > 1 ? `Save this spec as ${quickRuns.length} agents →` : "Save this spec as an agent →"}
+              </button>
+            ) : (
+              <div className={savedNames.length ? "mt-3" : undefined}>
+                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
+                  {quickRuns.some((r) => r.outcome) ? "Base name — each outcome becomes its own agent" : "Name your agent"}
+                </p>
+                <div className="mt-1.5 flex gap-2">
+                  <input
+                    value={agentName}
+                    onChange={(e) => setAgentName(e.target.value)}
+                    placeholder="e.g. Goals Banker"
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-pitch px-3 text-[13.5px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                  />
+                  <button
+                    onClick={promoteQuick}
+                    disabled={saveBusy || !agentName.trim()}
+                    className="flex-none rounded-lg bg-flood px-4 font-bold text-ink disabled:opacity-40"
+                  >
+                    {saveBusy ? "Saving…" : quickRuns.length > 1 ? `Save ${quickRuns.length}` : "Save"}
+                  </button>
+                </div>
+                {quickRuns.some((r) => r.outcome) && agentName.trim() && (
+                  <p className="mt-1.5 font-mono text-[10px] text-onpitch-mute">
+                    {quickRuns.map((r) => (r.outcome ? `${agentName.trim()} · ${r.outcome}` : agentName.trim())).join(" · ")}
+                  </p>
+                )}
+                {saveMsg && <p className="mt-2 font-mono text-xs text-brick">{saveMsg}</p>}
+              </div>
+            ))}
         </div>
       )}
 
