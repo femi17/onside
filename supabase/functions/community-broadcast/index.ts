@@ -411,9 +411,42 @@ async function whyRulesEdition(): Promise<{ facts: string; instruction: string }
 }
 
 async function ruleTipPost(dry: boolean, dmChats: number[] | null = null): Promise<Response> {
+  // One rule tip per day, whoever triggers it (channel discipline: two posts a day total) — a
+  // manual daytime edition means the scheduled evening tick quietly stands down. Previews and
+  // owner DMs pass through; only a real channel post is gated.
+  if (!dry && !dmChats) {
+    const { data: today } = await sb.from("channel_posts").select("id").eq("slot", "rule_tip").eq("status", "posted")
+      .gte("created_at", new Date(Date.now() - 20 * 3600 * 1000).toISOString()).limit(1);
+    if (today?.length) return new Response(JSON.stringify({ status: "skipped", slot: "rule_tip", reason: "rule tip already posted today" }), { status: 200, headers: { "content-type": "application/json" } });
+  }
   // rotation: skip families covered in the recent posts so the tips keep changing
   const { data: recent } = await sb.from("channel_posts").select("theme").eq("slot", "rule_tip").eq("status", "posted").order("created_at", { ascending: false }).limit(RULE_TIPS.length - 1);
   const covered = new Set((recent ?? []).map((r: any) => String(r.theme)));
+
+  // One-time data-drop edition (owner-directed 2026-09-02, prompted by a paying user asking
+  // "what do I write for Over 1.5?"): backtest over EVERY settled Over 1.5 agent pick carrying
+  // form data (n=350 through Sep 1): model>=80% + combined blend>=3.0 landed 90.3%, vs 89.2%
+  // unfiltered and 85.6% blend-alone. Copy is FIXED — the figures are a completed, dated test,
+  // not a live claim, and the rule text is parse-verified against the engine
+  // (model_prob gte 0.80 + goals_blend gte 3.0). Runs once, then the family rotation resumes.
+  if (!covered.has("rule_tip:over15_proof")) {
+    const rule = "Only games where the model gives my bet at least an 80% chance and the two teams combined blend is at least 3.0";
+    const text = `Wetin to write for Over 1.5? We check am against the record — 350 settled agent picks, this rule land 90%. Misses included, e dey public.\n\n"${rule}"\n\nDrop am inside your Over 1.5 agent word for word — the engine sabi read am. Past record no be promise o, but e dey cut rubbish games.` + FOOTER;
+    if (dry) return new Response(JSON.stringify({ status: "dry", slot: "rule_tip", family: "over15_proof", text }), { status: 200, headers: { "content-type": "application/json" } });
+    if (dmChats && dmChats.length) {
+      for (const chat of dmChats) await tg("sendMessage", { chat_id: chat, text, disable_web_page_preview: true });
+      return new Response(JSON.stringify({ status: "dm_sent", slot: "rule_tip", family: "over15_proof" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+    const ok = sent?.ok === true;
+    await sb.from("channel_posts").insert({
+      slot: "rule_tip", theme: "rule_tip:over15_proof", body: text,
+      telegram_message_id: ok ? sent.result?.message_id : null,
+      status: ok ? "posted" : "failed",
+      meta: ok ? { rule, backtest: { n: 350, won: 316, pct: 90.3, through: "2026-09-01" } } : { telegram: sent },
+    });
+    return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "rule_tip", family: "over15_proof" }), { status: 200, headers: { "content-type": "application/json" } });
+  }
 
   // the one-time "why rules" opener goes first, before the family rotation begins
   if (!covered.has("rule_tip:why_rules")) {
