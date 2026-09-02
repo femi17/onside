@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { canonicalMarket } from "@/lib/betCatalog";
+import { lagosTodayStartISO } from "@/lib/ticket";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
@@ -114,6 +115,97 @@ const starterHref = (r: (typeof STARTERS)[number]) =>
   `/strategies/new?${new URLSearchParams({ name: r.name, market: r.market, rule: r.rule }).toString()}`;
 
 const COMPLIANCE = "Assembled from your agents' picks · 18+ · Bet responsibly · Not financial advice";
+const COMPLIANCE_QUICK = "Assembled from your spec's picks · 18+ · Bet responsibly · Not financial advice";
+
+// ---- Quick spec mode ------------------------------------------------------------------------
+// Users with no agents state a spec (outcomes + legs + optional target); the engine executes it
+// as their own throwaway agent — a single re-aimed `strategies` draft row THEY own. Onside never
+// picks first-hand: every pick below came from the user's stated spec.
+
+// Popular-market outcome chips only. side/line mirror the builder's catalog defaults (same
+// shapes as StrategyBuilder's SURPRISE_POOL). Owner ruling: NOTHING is pre-selected — the user
+// must actively choose their outcomes.
+const QUICK_CHIPS: { key: string; label: string; side: string | null; line: number | null }[] = [
+  { key: "over_1_5", label: "Over 1.5 goals", side: "over", line: 1.5 },
+  { key: "over_2_5", label: "Over 2.5 goals", side: "over", line: 2.5 },
+  { key: "under_3_5", label: "Under 3.5 goals", side: "under", line: 3.5 },
+  { key: "double_chance_1x", label: "Double chance (1X)", side: "1x", line: null },
+  { key: "double_chance_12", label: "Double chance (12)", side: "12", line: null },
+  { key: "home_to_score", label: "Home team to score", side: "home", line: null },
+  { key: "away_to_score", label: "Away team to score", side: "away", line: null },
+  { key: "btts", label: "Both teams to score", side: "yes", line: null },
+];
+
+// the user's single quick strategy row: found by user_id + status 'draft' + this exact name,
+// re-aimed on every run (a DB trigger exempts draft rows from free-plan locks)
+const QUICK_NAME = "⚡ Quick acca";
+
+// one row of the proven_rules table (authenticated SELECT): a holdout-validated rule for a
+// market, with its past record. `filters` is the engine-ready rule_parsed filter list.
+type ProvenRule = {
+  market_key: string;
+  market_label: string | null;
+  rule_text: string | null;
+  filters: unknown[] | null;
+  n: number;
+  won: number;
+  hit: number;
+  computed_at: string;
+};
+// hit is a percentage; tolerate a 0..1 fraction just in case the miner ever writes one
+const hitPct = (r: ProvenRule) => Math.round(r.hit <= 1 ? r.hit * 100 : r.hit);
+
+// deliver_at mirrors "run now": the quick draft never sits on the scheduler (status 'draft'),
+// so this only anchors the engine's same-day hunt window at the moment of the run
+function nowDeliverAt(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// client-side mirror of the page's pool mapping (the server page can't share a function with a
+// "use client" module, so the shape lives in both places — keep them in step): still-upcoming
+// (≥10 min to kickoff), priced picks only.
+function rowsToGenPicks(rows: Record<string, unknown>[]): GenPick[] {
+  const cutoff = Date.now() + 10 * 60 * 1000;
+  const out: GenPick[] = [];
+  for (const r of rows) {
+    const f = r.fixtures as {
+      id: number;
+      home_team: string;
+      away_team: string;
+      kickoff_utc: string;
+      status: string | null;
+      leagues: { name: string; flag_url: string | null; tier: string | null } | null;
+    } | null;
+    if (!f?.kickoff_utc || Date.parse(f.kickoff_utc) < cutoff) continue;
+    const crit = r.criteria as { odds?: number; odds_src?: string } | null;
+    const odds = typeof crit?.odds === "number" && crit.odds > 1 ? crit.odds : null;
+    if (odds == null) continue;
+    out.push({
+      id: r.id as string,
+      strategy_id: (r.strategy_id as string) ?? null,
+      agent_name: ((r.strategies as { name?: string } | null)?.name) ?? "Your spec",
+      market_key: (r.market_key as string) ?? null,
+      market_label: (r.market_label as string) ?? null,
+      line: (r.line as number) ?? null,
+      side: (r.side as string) ?? null,
+      period: (r.period as string) ?? null,
+      bet_value: (r.bet_value as string) ?? null,
+      model_prob: r.model_prob != null ? Number(r.model_prob) : null,
+      odds,
+      odds_src: crit?.odds_src === "quoted" || crit?.odds_src === "derived" ? crit.odds_src : "model",
+      fixture: {
+        id: f.id,
+        home_team: f.home_team,
+        away_team: f.away_team,
+        kickoff_utc: f.kickoff_utc,
+        league: f.leagues ?? null,
+      },
+    });
+  }
+  return out;
+}
 
 export default function GeneratorBoard({
   picks,
@@ -144,11 +236,56 @@ export default function GeneratorBoard({
   const [usedToday, setUsedToday] = useState(generatedToday);
   const outOfSlips = free && usedToday >= 1;
 
+  // ---- Quick spec state ----
+  // mode: users with zero agents land on Quick spec (they have no pool to assemble from)
+  const [genMode, setGenMode] = useState<"agents" | "quick">(agentCount === 0 ? "quick" : "agents");
+  const quickMaxLegs = free ? 3 : 24; // client mirror of the GEN_ACCA_LEGS trigger caps
+  const [chips, setChips] = useState<Set<string>>(new Set()); // NO defaults — owner ruling
+  const [quickLegs, setQuickLegs] = useState(Math.min(3, free ? 3 : 24));
+  const [quickPicks, setQuickPicks] = useState<GenPick[]>([]);
+  const [quickId, setQuickId] = useState<string | null>(null);
+  const [hunting, setHunting] = useState(false);
+  const [quickRan, setQuickRan] = useState(false);
+  const [quickMsg, setQuickMsg] = useState<string | null>(null);
+  // proven-rule suggestions, keyed by market_key (missing table/rows → simply no card)
+  const [proven, setProven] = useState<Record<string, ProvenRule>>({});
+  const [applyProven, setApplyProven] = useState(true);
+  // save-as-agent (promote the quick draft to a running agent)
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [agentName, setAgentName] = useState("");
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [savedName, setSavedName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("proven_rules")
+        .select("market_key, market_label, rule_text, filters, n, won, hit, computed_at")
+        .in("market_key", QUICK_CHIPS.map((c) => c.key));
+      if (cancelled || !data) return;
+      const m: Record<string, ProvenRule> = {};
+      for (const r of data as ProvenRule[]) m[r.market_key] = r;
+      setProven(m);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // the suggestion only shows with EXACTLY one outcome selected (per-market rules can't combine);
+  // re-arm the default-ON toggle whenever that single market changes
+  const singleChipKey = chips.size === 1 ? Array.from(chips)[0] : null;
+  useEffect(() => { setApplyProven(true); }, [singleChipKey]);
+  const provenRow = singleChipKey ? proven[singleChipKey] ?? null : null;
+
   // pool: the user's own pending picks whose game is still ≥10 min from kickoff (re-checked
-  // every minute so a slip can't be tracked onto a game that just started)
+  // every minute so a slip can't be tracked onto a game that just started). Quick mode swaps in
+  // the picks the last spec run found — the assembly pipeline downstream is identical.
+  const pool = genMode === "quick" ? quickPicks : picks;
   const upcoming = useMemo(
-    () => picks.filter((p) => Date.parse(p.fixture.kickoff_utc) >= nowMs + 10 * 60 * 1000),
-    [picks, nowMs]
+    () => pool.filter((p) => Date.parse(p.fixture.kickoff_utc) >= nowMs + 10 * 60 * 1000),
+    [pool, nowMs]
   );
   const famsPresent = useMemo(() => {
     const s = new Set<Fam>();
@@ -158,8 +295,10 @@ export default function GeneratorBoard({
 
   // eligible = family-filtered, ranked by model probability, ONE leg per fixture (v1: no
   // same-game doubling — keep the best-rated pick per game)
+  // quick mode already scoped the pool to the user's chosen outcomes — no family filter there
+  const famNow = genMode === "quick" ? "all" : fam;
   const eligible = useMemo(() => {
-    const filtered = fam === "all" ? upcoming : upcoming.filter((p) => famOf(p.market_key, p.market_label) === fam);
+    const filtered = famNow === "all" ? upcoming : upcoming.filter((p) => famOf(p.market_key, p.market_label) === famNow);
     const ranked = [...filtered].sort((a, b) => (b.model_prob ?? -1) - (a.model_prob ?? -1));
     const seen = new Set<number>();
     const out: GenPick[] = [];
@@ -169,7 +308,7 @@ export default function GeneratorBoard({
       out.push(p);
     }
     return out;
-  }, [upcoming, fam]);
+  }, [upcoming, famNow]);
 
   const target = (() => {
     const t = parseFloat(targetStr.replace(",", "."));
@@ -177,12 +316,13 @@ export default function GeneratorBoard({
   })();
 
   // the assembled slip, shown in kickoff order like a real acca card
+  const legsNow = genMode === "quick" ? quickLegs : legs;
   const chosen = useMemo(() => {
-    const n = Math.min(legs, eligible.length);
+    const n = Math.min(legsNow, eligible.length);
     if (n < 2) return [];
     const sel = target ? (pickForTarget(eligible, n, target) ?? eligible.slice(0, n)) : eligible.slice(0, n);
     return [...sel].sort((a, b) => a.fixture.kickoff_utc.localeCompare(b.fixture.kickoff_utc));
-  }, [eligible, legs, target]);
+  }, [eligible, legsNow, target]);
 
   // combined odds = PRODUCT of leg odds (never a sum); any estimated leg makes the total an estimate
   const combined = chosen.reduce((acc, p) => acc * p.odds, 1);
@@ -263,27 +403,209 @@ export default function GeneratorBoard({
     router.refresh();
   }
 
+  function toggleChip(key: string) {
+    setQuickMsg(null);
+    setChips((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // Quick spec run: upsert the user's SINGLE quick draft strategy (their own throwaway agent),
+  // run it once quietly via run-strategies, then re-query the pool scoped to that strategy and
+  // hand it to the exact same assembly pipeline the agents mode uses.
+  async function runQuickSpec() {
+    if (hunting || chips.size === 0) return;
+    setHunting(true);
+    setQuickMsg(null);
+    setQuickRan(false);
+    setQuickPicks([]);
+    setSaveOpen(false);
+    setSaveMsg(null);
+    setSavedName(null);
+
+    const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
+    const pr = sel.length === 1 && applyProven ? proven[sel[0].key] ?? null : null;
+
+    // row shapes mirror StrategyBuilder's resolveMarket(): one outcome → that market's
+    // key/side/line; several → the mix shape (market_key 'mix', the list in `markets`).
+    const base: Record<string, unknown> = {
+      // a proven rule applies its stored engine-ready filters DIRECTLY — no LLM parse. Without
+      // one, rule_text stays null so the empty parse is never re-parsed into anything.
+      rule_text: pr?.rule_text ?? null,
+      rule_parsed: pr ? { filters: pr.filters ?? [], select: [] } : { filters: [], select: [] },
+      league_ids: [], // the spec states outcomes, not competitions — all upcoming leagues
+      league_mode: "all",
+      selectivity: "strong",
+      min_edge: 0.04,
+      min_odds: null,
+      max_odds: null,
+      max_per_prediction: free ? 8 : 24, // plan pick ceilings (plan_limits mirror)
+      deliver_at: nowDeliverAt(),
+      target_day: "same_day", // hunt today's remaining games, like a same-day agent
+      kickoff_at: null,
+      kickoff_until: null,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos",
+      channels: ["app"],
+      learning: false,
+    };
+    const marketRow: Record<string, unknown> =
+      sel.length === 1
+        ? {
+            market_key: sel[0].key,
+            market_label: sel[0].label,
+            custom_market: null,
+            side: sel[0].side,
+            line: sel[0].line,
+            period: "ft",
+            bet_value: null,
+            markets: null,
+          }
+        : {
+            market_key: "mix",
+            market_label: `Mix · ${sel.length} outcomes`,
+            custom_market: null,
+            side: null,
+            line: null,
+            period: "ft",
+            bet_value: null,
+            markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
+          };
+
+    // ONE quick row per user, re-aimed on every run — drafts are exempt from free-plan locks,
+    // so re-aiming works on every plan
+    let id = quickId;
+    if (!id) {
+      const { data: found } = await supabase
+        .from("strategies")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("status", "draft")
+        .eq("name", QUICK_NAME)
+        .limit(1);
+      id = found?.[0]?.id ?? null;
+    }
+    if (id) {
+      const { error } = await supabase.from("strategies").update({ ...base, ...marketRow }).eq("id", id);
+      if (error) { setHunting(false); setQuickMsg(error.message); return; }
+    } else {
+      const { data: ins, error } = await supabase
+        .from("strategies")
+        .insert({ ...base, ...marketRow, user_id: userId, name: QUICK_NAME, status: "draft" })
+        .select("id")
+        .single();
+      if (error || !ins) { setHunting(false); setQuickMsg(error?.message ?? "Couldn't save your spec."); return; }
+      id = ins.id as string;
+    }
+    setQuickId(id);
+
+    // run the spec once, quietly — no push/telegram noise from a throwaway run
+    const { error: runErr } = await supabase.functions.invoke("run-strategies", { body: { strategy_id: id, quiet: true } });
+    if (runErr) {
+      // surface the function's real error body, not the generic "non-2xx" message
+      let body: { error?: string; used?: number; limit?: number } | null = null;
+      try {
+        body = await (runErr as { context?: Response }).context?.json?.();
+      } catch { /* keep generic message */ }
+      setHunting(false);
+      if (body?.error === "quick_run_limit") {
+        const limit = body.limit ?? 0;
+        setQuickMsg(
+          free
+            ? `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — upgrade for more.`
+            : `You've used today's ${limit} spec run${limit === 1 ? "" : "s"} — more tomorrow.`
+        );
+      } else {
+        setQuickMsg(body?.error ?? runErr.message ?? "Your spec couldn't run — try again.");
+      }
+      return;
+    }
+
+    // re-query the pool: the page's exact pool query, scoped to the quick strategy
+    const { data: dels, error: qErr } = await supabase
+      .from("deliveries")
+      .select(
+        "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(name, flag_url, tier))"
+      )
+      .eq("user_id", userId)
+      .eq("strategy_id", id)
+      .eq("result", "pending")
+      .gte("delivered_at", lagosTodayStartISO())
+      .order("delivered_at", { ascending: false })
+      .limit(400);
+    setHunting(false);
+    if (qErr) { setQuickMsg(qErr.message); return; }
+    setQuickPicks(rowsToGenPicks((dels ?? []) as Record<string, unknown>[]));
+    setQuickRan(true);
+  }
+
+  // promote the quick draft into a real running agent — server-side limits (e.g. a free plan's
+  // one-running-agent cap) surface as the DB's own error; never pre-blocked client-side
+  async function promoteQuick() {
+    const nm = agentName.trim();
+    if (!quickId || !nm || saveBusy) return;
+    setSaveBusy(true);
+    setSaveMsg(null);
+    const { error } = await supabase.from("strategies").update({ name: nm, status: "running" }).eq("id", quickId);
+    setSaveBusy(false);
+    if (error) {
+      setSaveMsg(`${error.message} — if you're at your plan's agent limit, upgrading unlocks another slot.`);
+      return;
+    }
+    setSavedName(nm);
+    setSaveOpen(false);
+    setQuickId(null); // the next quick run starts a fresh throwaway draft
+    router.refresh();
+  }
+
+  const compliance = genMode === "quick" ? COMPLIANCE_QUICK : COMPLIANCE;
+
   const header = (
     <StickyHeader className="-mx-5 px-5 pb-4 pt-6 md:-mx-8 md:px-8">
       <MobileLogo />
       <div className="min-w-0">
         <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">Acca generator</p>
         <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">
-          Your agents found them. <span className="text-onpitch-mute">We assemble.</span>
+          {genMode === "quick" ? (
+            <>Your spec does the finding. <span className="text-onpitch-mute">We assemble.</span></>
+          ) : (
+            <>Your agents found them. <span className="text-onpitch-mute">We assemble.</span></>
+          )}
         </h1>
       </div>
     </StickyHeader>
   );
 
-  const footer = (
-    <p className="mt-6 pb-4 text-center font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">{COMPLIANCE}</p>
+  // top-of-page mode switch: existing agents-pool behaviour vs the stated-spec throwaway agent
+  const modeToggle = (
+    <div className="mt-4 flex rounded-xl border border-white/10 bg-pitch-2 p-1">
+      {([["agents", "My agents' picks"], ["quick", "Quick spec"]] as const).map(([k, l]) => (
+        <button
+          key={k}
+          onClick={() => { setGenMode(k); setMsg(null); }}
+          className={`flex-1 rounded-lg px-3 py-2 font-mono text-[11.5px] font-bold transition-colors ${
+            genMode === k ? "bg-flood/15 text-flood" : "text-onpitch-mute hover:text-chalk"
+          }`}
+        >
+          {l}
+        </button>
+      ))}
+    </div>
   );
 
-  // no agents yet → the generator has no pool; point at the three starter agents
-  if (agentCount === 0) {
+  const footer = (
+    <p className="mt-6 pb-4 text-center font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">{compliance}</p>
+  );
+
+  // no agents yet → the agents pool is empty; point at the three starter agents (quick mode,
+  // the default for these users, still works — the toggle above switches back to it)
+  if (genMode === "agents" && agentCount === 0) {
     return (
       <div className="mx-auto max-w-3xl px-5 pb-10 md:px-8">
         {header}
+        {modeToggle}
         <div className="mt-6 rounded-2xl border border-flood/30 bg-pitch-2 p-6">
           <p className="font-mono text-[10.5px] font-bold uppercase tracking-[0.2em] text-flood">No agents yet</p>
           <h2 className="mt-2 font-disp text-xl font-extrabold leading-snug text-chalk">
@@ -322,10 +644,11 @@ export default function GeneratorBoard({
   }
 
   // agents exist but nothing is still upcoming today → say so honestly, no filler
-  if (upcoming.length === 0) {
+  if (genMode === "agents" && upcoming.length === 0) {
     return (
       <div className="mx-auto max-w-3xl px-5 pb-10 md:px-8">
         {header}
+        {modeToggle}
         <div className="mt-6 rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-10 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-flood/15 font-mono text-xl text-flood">⚡</div>
           <h2 className="font-disp text-xl font-bold text-chalk">Your agents found nothing still upcoming today.</h2>
@@ -342,11 +665,149 @@ export default function GeneratorBoard({
     );
   }
 
+  // the slip only assembles in quick mode after a run actually found still-upcoming picks
+  const showSlip = genMode === "agents" || (quickRan && !hunting && upcoming.length > 0);
+
   return (
     <div className="mx-auto max-w-3xl px-5 pb-10 md:px-8">
       {header}
+      {modeToggle}
 
-      {/* ---- controls ---- */}
+      {/* ---- quick spec controls ---- */}
+      {genMode === "quick" && (
+        <>
+          <div className="mt-4 rounded-2xl border border-white/10 bg-pitch-2 p-4">
+            <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Your outcomes — pick at least one</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {QUICK_CHIPS.map((c) => {
+                const on = chips.has(c.key);
+                return (
+                  <button
+                    key={c.key}
+                    onClick={() => toggleChip(c.key)}
+                    className={`rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
+                      on ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-chalk hover:border-white/30"
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* proven-rule suggestion: exactly ONE outcome selected AND a proven_rules row exists */}
+            {provenRow ? (
+              <div className="mt-3.5 rounded-xl border border-flood/30 bg-pitch p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-flood">Proven rule</p>
+                    <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">
+                      Landed {hitPct(provenRow)}% of {provenRow.n} graded picks — apply it?
+                    </p>
+                    {provenRow.rule_text && (
+                      <p className="mt-1 text-[12px] leading-relaxed text-onpitch-mute">{provenRow.rule_text}</p>
+                    )}
+                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Past record, not a promise.</p>
+                  </div>
+                  <button
+                    onClick={() => setApplyProven((v) => !v)}
+                    aria-pressed={applyProven}
+                    className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
+                      applyProven ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-onpitch-mute hover:border-white/30"
+                    }`}
+                  >
+                    {applyProven ? "Applied ✓" : "Off"}
+                  </button>
+                </div>
+              </div>
+            ) : chips.size > 1 && Array.from(chips).some((k) => proven[k]) ? (
+              // per-market rules can't combine yet — the card hides itself with several outcomes
+              <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">Tip: pick one market to use its proven rule.</p>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-3">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Legs · 2–{quickMaxLegs}</p>
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <button
+                    onClick={() => setQuickLegs((n) => Math.max(2, n - 1))}
+                    className="h-9 w-9 rounded-lg border border-white/15 font-mono text-[15px] font-bold text-chalk transition-colors hover:border-white/30"
+                  >
+                    −
+                  </button>
+                  <span className="w-9 text-center font-mono text-[14px] font-bold text-chalk">{quickLegs}</span>
+                  <button
+                    onClick={() => setQuickLegs((n) => Math.min(quickMaxLegs, n + 1))}
+                    className="h-9 w-9 rounded-lg border border-white/15 font-mono text-[15px] font-bold text-chalk transition-colors hover:border-white/30"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Target odds (optional)</p>
+                <input
+                  value={targetStr}
+                  onChange={(e) => setTargetStr(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="leave it general"
+                  className="mt-1.5 h-9 w-36 rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Stake (₦)</p>
+                <input
+                  value={stakeStr}
+                  onChange={(e) => setStakeStr(e.target.value)}
+                  inputMode="numeric"
+                  placeholder="1000"
+                  className="mt-1.5 h-9 w-28 rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {quickMsg && <p className="mt-3 font-mono text-xs text-brick">{quickMsg}</p>}
+            <button
+              onClick={runQuickSpec}
+              disabled={hunting || chips.size === 0}
+              className="mt-4 w-full rounded-xl bg-flood px-4 py-3 font-bold text-ink transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+            >
+              {hunting ? "Hunting…" : chips.size === 0 ? "Pick at least one outcome" : "Generate from my spec"}
+            </button>
+            {free && (
+              <p className="mt-2.5 font-mono text-[10.5px] text-onpitch-mute">
+                Free plan: 1 tracked slip a day{usedToday > 0 ? " (used)" : ""} · 3 legs max
+              </p>
+            )}
+          </div>
+
+          {hunting && (
+            <div className="mt-4 rounded-2xl border border-dashed border-flood/30 bg-pitch-2 p-8 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 animate-pulse items-center justify-center rounded-xl bg-flood/15 font-mono text-xl text-flood">⚡</div>
+              <p className="text-sm font-bold text-chalk">Your spec is hunting today&apos;s games…</p>
+              <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-onpitch-mute">
+                Every upcoming fixture gets checked against your outcomes — usually 10–40 seconds.
+              </p>
+            </div>
+          )}
+          {!hunting && quickRan && upcoming.length === 0 && (
+            <div className="mt-4 rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-8 text-center">
+              <p className="text-sm font-bold text-chalk">Your spec found nothing still upcoming today.</p>
+              <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-onpitch-mute">
+                Loosen it or try more markets — the pool is only today&apos;s games that haven&apos;t kicked off.
+              </p>
+            </div>
+          )}
+          {!hunting && quickRan && upcoming.length > 0 && (
+            <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">
+              {eligible.length} game{eligible.length === 1 ? "" : "s"} matched your spec
+            </p>
+          )}
+        </>
+      )}
+
+      {/* ---- controls (agents mode) ---- */}
+      {genMode === "agents" && (
       <div className="mt-4 rounded-2xl border border-white/10 bg-pitch-2 p-4">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
           <div>
@@ -429,15 +890,18 @@ export default function GeneratorBoard({
           {free && <> · free plan: 1 generated slip a day{usedToday > 0 ? " (used)" : ""} · 3 legs max</>}
         </p>
       </div>
+      )}
 
       {/* ---- the assembled slip ---- */}
-      {chosen.length < 2 ? (
+      {!showSlip ? null : chosen.length < 2 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-8 text-center">
-          <p className="text-sm font-bold text-chalk">Not enough picks for a {legs}-leg slip.</p>
+          <p className="text-sm font-bold text-chalk">Not enough picks for a {legsNow}-leg slip.</p>
           <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-onpitch-mute">
-            {fam !== "all"
-              ? "Try another market family, or fewer legs — only one leg per game, from picks still upcoming."
-              : "Only one leg per game, from picks still upcoming — try fewer legs or wait for the next delivery."}
+            {genMode === "quick"
+              ? "Your spec found games, but not enough still-upcoming legs — one leg per game. Try fewer legs or more markets."
+              : fam !== "all"
+                ? "Try another market family, or fewer legs — only one leg per game, from picks still upcoming."
+                : "Only one leg per game, from picks still upcoming — try fewer legs or wait for the next delivery."}
           </p>
         </div>
       ) : (
@@ -520,10 +984,50 @@ export default function GeneratorBoard({
                 {busy ? "Tracking…" : `Track this slip · ${chosen.length} legs`}
               </button>
             )}
-            <p className="mt-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-ink-mute">{COMPLIANCE}</p>
+            <p className="mt-2.5 text-center font-mono text-[10px] uppercase tracking-wide text-ink-mute">{compliance}</p>
           </div>
         </section>
       )}
+
+      {/* ---- save the spec as a real agent (quiet secondary action) ---- */}
+      {genMode === "quick" && quickRan && !hunting && quickPicks.length > 0 && (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-pitch-2 p-4">
+          {savedName ? (
+            <p className="text-[13px] text-onpitch-mute">
+              Saved — <b className="font-bold text-chalk">{savedName}</b> is now one of your agents and will deliver on its schedule.
+            </p>
+          ) : !saveOpen ? (
+            <button
+              onClick={() => setSaveOpen(true)}
+              className="font-mono text-[12px] font-bold text-onpitch-mute underline decoration-white/20 underline-offset-2 transition-colors hover:text-chalk"
+            >
+              Save this spec as an agent →
+            </button>
+          ) : (
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Name your agent</p>
+              <div className="mt-1.5 flex gap-2">
+                <input
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  placeholder="e.g. Goals Banker"
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-pitch px-3 text-[13.5px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                />
+                <button
+                  onClick={promoteQuick}
+                  disabled={saveBusy || !agentName.trim()}
+                  className="flex-none rounded-lg bg-flood px-4 font-bold text-ink disabled:opacity-40"
+                >
+                  {saveBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
+              {saveMsg && <p className="mt-2 font-mono text-xs text-brick">{saveMsg}</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!(showSlip && chosen.length >= 2) && footer}
     </div>
   );
 }
