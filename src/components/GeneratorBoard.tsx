@@ -136,8 +136,12 @@ const QUICK_CHIPS: { key: string; label: string; side: string | null; line: numb
   { key: "btts", label: "Both teams to score", side: "yes", line: null },
 ];
 
-// the user's single quick strategy row: found by user_id + status 'draft' + this exact name,
-// re-aimed on every run (a DB trigger exempts draft rows from free-plan locks)
+// Name PREFIX for the user's quick draft strategy rows. Every path uses a market-dedicated
+// name — "⚡ Quick acca · <outcome label>" (single AND per-outcome) or "⚡ Quick acca · Mix" —
+// found by user_id + status 'draft' + exact name and re-aimed on every run (a DB trigger
+// exempts draft rows from free-plan locks). A market never shares a row with another market:
+// shared rows let stale same-day deliveries flood the pool and unique(strategy_id, fixture_id)
+// block the new market's picks. Legacy bare-"⚡ Quick acca" rows are left alone, never aimed.
 const QUICK_NAME = "⚡ Quick acca";
 
 // one row of the proven_rules table (authenticated SELECT): a holdout-validated rule for a
@@ -479,9 +483,10 @@ export default function GeneratorBoard({
   // block outcome B (often carrying the identical proven rule → the same fixtures) from
   // delivering them at all (the owner's 14-leg Over1.5+1X spec came back all-Over1.5 for exactly
   // this reason). Distinct ids let both outcomes deliver the same fixture; the assembler stays
-  // one-leg-per-fixture. Single-outcome — and multi where NO outcome has a rule or the toggle is
-  // off (per-outcome would cost N daily runs for zero rule benefit) — keeps the single
-  // "⚡ Quick acca" row. Draft rows are exempt from plan caps by DB design, so N drafts is fine.
+  // one-leg-per-fixture. Single-outcome uses its own "⚡ Quick acca · <label>" row too; multi
+  // where NO outcome has a rule or the toggle is off (per-outcome would cost N daily runs for
+  // zero rule benefit) runs once on the "⚡ Quick acca · Mix" row. Draft rows are exempt from
+  // plan caps by DB design, so N drafts per user is fine.
   async function runQuickSpec() {
     if (hunting || chips.size === 0) return;
     setHunting(true);
@@ -550,7 +555,11 @@ export default function GeneratorBoard({
       markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
     };
 
-    // every aim this run will make: which draft row (by name) gets which row patch
+    // Every aim this run will make: which draft row (by name) gets which row patch.
+    // EVERY path uses a market-dedicated row name — a shared generic row let one market's
+    // earlier same-day deliveries flood the next market's pool AND block its fixtures via
+    // unique(strategy_id, fixture_id) (owner's 1X-only run came back all-Over1.5). The legacy
+    // "⚡ Quick acca" rows stay in the DB untouched; no path aims them any more.
     const aims: { name: string; outcome: string | null; row: Record<string, unknown> }[] = perOutcome
       ? sel.map((c) => ({
           name: `${QUICK_NAME} · ${c.label}`,
@@ -558,8 +567,8 @@ export default function GeneratorBoard({
           row: { ...baseFor(proven[c.key] ?? null), ...singleRowFor(c) },
         }))
       : sel.length === 1
-        ? [{ name: QUICK_NAME, outcome: null, row: { ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) } }]
-        : [{ name: QUICK_NAME, outcome: null, row: { ...baseFor(null), ...mixRow } }];
+        ? [{ name: `${QUICK_NAME} · ${sel[0].label}`, outcome: null, row: { ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) } }]
+        : [{ name: `${QUICK_NAME} · Mix`, outcome: null, row: { ...baseFor(null), ...mixRow } }];
 
     // find-or-create a draft row by its quick name, then aim it. Drafts are exempt from
     // free-plan locks, so re-aiming works on every plan.
@@ -620,8 +629,12 @@ export default function GeneratorBoard({
     setQuickRuns(used);
     if (!used.length) { setHunting(false); return; }
 
-    // re-query the pool ONCE after all runs: the page's exact pool query, scoped to every
-    // strategy id this run aimed (per-outcome deliveries live under their own ids)
+    // Re-query the pool ONCE after all runs: the page's exact pool query, scoped to every
+    // strategy id this run aimed (per-outcome deliveries live under their own ids) AND — belt
+    // on top of the dedicated rows — to the markets this spec expects. Single/per-outcome
+    // deliveries carry the chip's market_key; a mix run's deliveries carry the member market
+    // keys. So the selected chip keys are the expected set in every mode, and stale legs from
+    // a row's earlier same-day life under a different market can never flood back in.
     const { data: dels, error: qErr } = await supabase
       .from("deliveries")
       .select(
@@ -629,6 +642,7 @@ export default function GeneratorBoard({
       )
       .eq("user_id", userId)
       .in("strategy_id", used.map((u) => u.id))
+      .in("market_key", sel.map((c) => c.key))
       .eq("result", "pending")
       .gte("delivered_at", lagosTodayStartISO())
       .order("delivered_at", { ascending: false })
