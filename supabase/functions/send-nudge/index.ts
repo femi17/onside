@@ -546,5 +546,60 @@ Deno.serve(async (_req) => {
     }
   }
 
+  // ---- renewal reminder: one-off (transfer/USSD) payers about to lapse ----
+  // A card subscription auto-renews; a transfer/USSD payment is one-off (no paystack_subscription_code),
+  // so it silently lapses at plan_until unless the user pays again. Remind anyone on a paid plan with NO
+  // recurring sub whose plan ends within 3 days. Claimed per (user, expiry date) so each cycle reminds
+  // once; time-sensitive so it bypasses the weekly cap (like perfect days) but stamps the cooldown after.
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString();
+  const { data: lapsing } = await sb.from("profiles")
+    .select("id, plan, plan_until")
+    .in("plan", ["pro", "pro_max"])
+    .is("paystack_subscription_code", null)
+    .not("plan_until", "is", null)
+    .gt("plan_until", new Date().toISOString())
+    .lt("plan_until", soon);
+  for (const r of (lapsing ?? []) as { id: string; plan: string; plan_until: string }[]) {
+    const { data: u } = await sb.auth.admin.getUserById(r.id);
+    const email = u?.user?.email;
+    if (!email) { skipped.push(`renewal:no-email:${r.id}`); continue; }
+    const expiryDay = r.plan_until.slice(0, 10);
+    const claimKey = `nudge:renewal:${r.id}:${expiryDay}`; // per expiry cycle → one reminder per period
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { email, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`renewal:${email}`); continue; }
+
+    const label = r.plan === "pro_max" ? "Pro Max" : "Pro";
+    const price = r.plan === "pro_max" ? "1,000" : "500";
+    const when = new Date(r.plan_until).toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+    let link = `${SITE}/checkout?plan=${r.plan}`;
+    try {
+      const { data: lk } = await sb.auth.admin.generateLink({
+        type: "magiclink", email, options: { redirectTo: `${SITE}/checkout?plan=${r.plan}` },
+      });
+      if (lk?.properties?.action_link) link = lk.properties.action_link;
+    } catch { /* plain checkout link fallback stays */ }
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+      body: JSON.stringify({
+        from: FROM, to: email,
+        subject: `Your Onside ${label} ends ${when} — a quick heads-up`,
+        html: shell(
+          para(`Your Onside <b style="color:#f3f6f4;">${label}</b> ends on <b style="color:#f3f6f4;">${when}</b>.`) +
+          para(`You paid by transfer/USSD, which is a one-off — so it won't renew on its own. To keep your agents running without a gap, top up here. Paying by card this time also sets up automatic renewal, so you never have to think about it again:`) +
+          button(link, `Keep my ${label} &middot; &#8358;${price}/month`) +
+          para(`<br>If you'd rather not, no problem — your account simply moves to the free plan on ${when}, and your record stays yours.`)
+        ),
+      }),
+    });
+    if (resp.ok) { sent.push(`renewal:${email}`); await touched(r.id); }
+    else {
+      failed.push(`renewal:${email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey);
+    }
+  }
+
   return Response.json({ candidates: targets.length + (pdRows?.length ?? 0) + (tgRows?.length ?? 0), sent, skipped, failed });
 });
