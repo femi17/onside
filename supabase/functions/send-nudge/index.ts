@@ -474,5 +474,77 @@ Deno.serve(async (_req) => {
     }
   }
 
+  // ---- founder courtesy: pre-live complimentary cohort (2026-09-03, owner-directed) ----
+  // Users who got Pro / Pro Max on the house during the pre-live/test phase. Now that live billing is
+  // on, a personal note FROM the founder inviting them to keep the plan — no pressure; it simply lapses
+  // to free on their date if they don't. Once-EVER per user (nudge:founder:), bypasses the weekly cap
+  // (a single owner-directed send) but stamps the cooldown after so other marketing waits a week.
+  // Hardcoded list on purpose: no request-controlled input, so it can never become a spam vector.
+  const FOUNDER_COURTESY: { user_id: string; email: string; name: string; plan: "pro" | "pro_max"; expires: string }[] = [
+    { user_id: "f56d0eac-3efd-497b-ac01-e1772a2f199b", email: "neyoxxxy@gmail.com", name: "Adebayo", plan: "pro", expires: "2026-09-26" },
+    { user_id: "924b1177-7d0a-4aaa-b492-4a0c97fc69b0", email: "sadikyahaya40@gmail.com", name: "Sadik", plan: "pro", expires: "2026-09-26" },
+    { user_id: "37502835-7a56-467c-aebe-acdfca80775e", email: "ndabere@gmail.com", name: "", plan: "pro", expires: "2026-09-26" },
+    { user_id: "8242f7c0-7654-4a17-8195-fdba71bfc88c", email: "ezeebube773@gmail.com", name: "Eze", plan: "pro_max", expires: "2026-09-27" },
+    { user_id: "10bfc425-8f20-4f08-9fa8-9f2d4c887324", email: "olatinwoadeola73@gmail.com", name: "Adeola", plan: "pro_max", expires: "2026-09-27" },
+    { user_id: "360879a5-954f-4944-9aca-0f8e4172c41d", email: "surajojazhi@gmail.com", name: "Surajo", plan: "pro", expires: "2026-09-28" },
+    { user_id: "b3c131a2-ac6a-4cea-9637-bd3358aafded", email: "immaculateolaj@gmail.com", name: "Joseph", plan: "pro_max", expires: "2026-09-28" },
+    { user_id: "9fdf1517-afdf-4059-a28f-07eb2b32ff28", email: "viviguy2021@gmail.com", name: "Vincent", plan: "pro_max", expires: "2026-09-29" },
+    { user_id: "8b66d622-5ca4-4c84-b884-166bd0a118be", email: "salehbiodun@gmail.com", name: "Saleh", plan: "pro_max", expires: "2026-09-29" },
+    { user_id: "f6e7c33f-6dbb-4d7e-8e66-0ceb5bb50359", email: "jaren2johnson@gmail.com", name: "", plan: "pro", expires: "2026-10-01" },
+    { user_id: "509f0ba8-9b41-4320-a024-c4ab57ae758b", email: "d.kingsdonfans@gmail.com", name: "Kingsdon", plan: "pro_max", expires: "2026-10-01" },
+    { user_id: "8232a270-d871-41a2-8488-3d0957568084", email: "jessejames1052@gmail.com", name: "Jesse", plan: "pro", expires: "2026-10-01" },
+    { user_id: "2a29cea7-ad05-4c75-9ce0-791bbf682fa6", email: "sannikb64@gmail.com", name: "", plan: "pro_max", expires: "2026-10-02" },
+    { user_id: "7077abd6-e029-414e-abb0-f2fd657f5aa2", email: "georgevictor5236@gmail.com", name: "George", plan: "pro_max", expires: "2026-10-02" },
+    { user_id: "8b39f52d-2f5f-4b00-af83-757a576ff71c", email: "ilnominepatre@gmail.com", name: "Divine", plan: "pro_max", expires: "2026-10-03" },
+    { user_id: "d8f898d7-f39f-4a2a-92cd-590ba5b207ec", email: "henryboma9@gmail.com", name: "Boma", plan: "pro", expires: "2026-10-03" },
+  ];
+  for (const r of FOUNDER_COURTESY) {
+    // only if they're still on the complimentary plan (skip anyone who since changed or lapsed)
+    const { data: prof } = await sb.from("profiles").select("plan").eq("id", r.user_id).maybeSingle();
+    if (!prof || prof.plan === "free" || prof.plan == null) { skipped.push(`founder:not-on-plan:${r.email}`); continue; }
+    const claimKey = `nudge:founder:${r.user_id}`;
+    const { error: dupe } = await sb.from("api_cache").insert({
+      cache_key: claimKey, payload: { email: r.email, at: new Date().toISOString() },
+    });
+    if (dupe) { skipped.push(`founder:${r.email}`); continue; }
+
+    const label = r.plan === "pro_max" ? "Pro Max" : "Pro";
+    const price = r.plan === "pro_max" ? "1,000" : "500";
+    const when = new Date(r.expires + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+    const greet = r.name ? `Hi ${r.name},` : "Hi there,";
+    // magic link signs them in and lands straight on checkout for their plan
+    let link = `${SITE}/checkout?plan=${r.plan}`;
+    try {
+      const { data: lk, error: lkErr } = await sb.auth.admin.generateLink({
+        type: "magiclink", email: r.email, options: { redirectTo: `${SITE}/checkout?plan=${r.plan}` },
+      });
+      if (!lkErr && lk?.properties?.action_link) link = lk.properties.action_link;
+    } catch { /* plain checkout link fallback stays */ }
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_KEY}` },
+      body: JSON.stringify({
+        from: FROM, to: r.email,
+        subject: "You were here before we launched — thank you",
+        html: shell(
+          para(greet) +
+          para("I'm Femi, the founder of Onside. I wanted to write to you personally.") +
+          para(`You started using Onside <i>before</i> we officially launched — back when we were still testing, fixing things, and getting the agents right. That early trust genuinely means a lot, so I put you on <b style="color:#f3f6f4;">${label}</b> on the house as my way of saying thank you.`) +
+          para(`We've now gone fully live, so Onside becomes a proper paid product from here. <b style="color:#f3f6f4;">There's no rush and nothing you need to do today</b> — your complimentary ${label} stays active through <b style="color:#f3f6f4;">${when}</b>. Whenever you're ready, you can keep everything exactly as it is — your agents, your tracking, your full record — by subscribing:`) +
+          button(link, `Keep my ${label} &middot; &#8358;${price}/month`) +
+          para(`<br>Pay by card for automatic renewal, or by transfer/USSD if you'd rather. Cancel anytime.`) +
+          para(`And if you decide it isn't for you, that's honestly fine — you won't be charged, and your account simply moves to the free plan afterwards. Either way, thank you for being one of the very first.`) +
+          para("If you ever want to talk — feedback, a problem, an idea — just reply here. This reaches me directly.") +
+          para("Femi<br>Founder, Onside")
+        ),
+      }),
+    });
+    if (resp.ok) { sent.push(`founder:${r.email}`); await touched(r.user_id); }
+    else {
+      failed.push(`founder:${r.email}`);
+      await sb.from("api_cache").delete().eq("cache_key", claimKey);
+    }
+  }
+
   return Response.json({ candidates: targets.length + (pdRows?.length ?? 0) + (tgRows?.length ?? 0), sent, skipped, failed });
 });
