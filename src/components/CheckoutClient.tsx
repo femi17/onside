@@ -18,6 +18,7 @@ export default function CheckoutClient({
   email,
   plan,
   planCode,
+  publicKey,
   upgrading = false,
   currentPlan = null,
   creditKobo = 0,
@@ -26,6 +27,7 @@ export default function CheckoutClient({
   email: string;
   plan: PaidPlan;
   planCode: string | null;
+  publicKey: string; // Paystack public key, passed from the server so no NEXT_PUBLIC_ var is needed
   upgrading?: boolean;
   currentPlan?: PaidPlan | null; // the still-active paid plan being upgraded FROM (drives proration)
   creditKobo?: number; // credit for the unused share of the current plan's month (kobo)
@@ -58,7 +60,7 @@ export default function CheckoutClient({
     // with a plan code Paystack sets up a recurring monthly subscription and takes the amount from
     // the plan; without one we fall back to a single charge for this month
     const opts: Record<string, unknown> = {
-      key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY,
+      key: publicKey,
       email,
       currency: "NGN",
       metadata: { user_id: userId, plan, plan_label: price.label },

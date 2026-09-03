@@ -53,12 +53,17 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Pro
   // upgrade is always a one-off (a plan code would charge the full plan amount).
   const planCode = creditKobo > 0 ? null : await getPlanCode(plan);
 
+  // read server-side and pass down, so the browser gets the (publishable) key via a prop instead of
+  // a NEXT_PUBLIC_ env var — keeps both Paystack keys as ordinary, non-public Vercel variables
+  const publicKey = process.env.PAYSTACK_PUBLIC_KEY ?? "";
+
   return (
     <CheckoutClient
       userId={user.id}
       email={user.email ?? ""}
       plan={plan}
       planCode={planCode}
+      publicKey={publicKey}
       upgrading={upgrading}
       currentPlan={activePaid}
       creditKobo={creditKobo}
