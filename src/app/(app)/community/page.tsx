@@ -31,14 +31,17 @@ export default async function CommunityPage() {
     // recent settled picks — attachable results for the composer
     supabase
       .from("deliveries")
-      .select("id, result, market_label, market_key, delivered_at, fixtures(home_team, away_team, leagues(name))")
+      // strategies(status) rides along so draft (quick-acca pool) picks can be dropped below
+      // WITHOUT losing deleted-agents' picks (null strategy = real history, stays attachable)
+      .select("id, result, market_label, market_key, delivered_at, strategies(status), fixtures(home_team, away_team, leagues(name))")
       .in("result", ["won", "lost"])
       .order("delivered_at", { ascending: false })
-      .limit(20),
+      .limit(30),
   ]);
 
   type Row = {
     id: string; result: string; market_label: string | null; market_key: string | null;
+    strategies: { status: string | null } | null;
     fixtures: { home_team: string; away_team: string; leagues: { name: string | null } | null } | null;
   };
   const board = (lb ?? []) as { user_id: string; handle: string; agent_name: string; landed: number; settled: number }[];
@@ -48,8 +51,12 @@ export default async function CommunityPage() {
   const blockedSet = new Set(blockedHandles);
   const posts = ((rawPosts ?? []) as CommunityPost[]).filter((p) => !blockedSet.has(p.author_handle));
 
-  // attachable results (most recent settled picks) for the composer
-  const shareable: ShareItem[] = ((recent ?? []) as unknown as Row[]).map((r) => ({
+  // attachable results (most recent settled picks) for the composer. Draft picks (quick-acca
+  // pool rows) are not agent results (owner-ruled); deleted agents' picks (null strategy) stay.
+  const shareable: ShareItem[] = ((recent ?? []) as unknown as Row[])
+    .filter((r) => r.strategies?.status !== "draft")
+    .slice(0, 20)
+    .map((r) => ({
     key: r.id,
     match: r.fixtures ? `${r.fixtures.home_team} v ${r.fixtures.away_team}` : "Match",
     league: r.fixtures?.leagues?.name ?? null,

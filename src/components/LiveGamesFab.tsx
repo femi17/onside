@@ -18,8 +18,10 @@ const FIXTURE_SELECT =
   "fixtures(home_team, away_team, kickoff_utc, status, elapsed, home_goals, away_goals, extra, events, updated_at, leagues(name, flag_url, tier), fixture_stats(momentum, corners_home, corners_away))";
 const TICKET_SELECT =
   `id, fixture_id, market_key, market_label, custom_market, line, side, bet_value, status, current_value, tracker_hidden, ${FIXTURE_SELECT}`;
+// strategies join is INNER + draft-filtered at the query: quick-acca pool rows would otherwise
+// light the live peek with 30 games the user never chose (drafts are not agents, owner-ruled)
 const DELIVERY_SELECT =
-  `id, fixture_id, market_key, market_label, line, side, bet_value, result, current_value, delivered_at, strategies(name), ${FIXTURE_SELECT}`;
+  `id, fixture_id, market_key, market_label, line, side, bet_value, result, current_value, delivered_at, strategies!inner(name, status), ${FIXTURE_SELECT}`;
 
 // live win/lose read → a dot colour. Green = winning now, amber = in the balance, red = losing.
 // (Red here is real-time bet status — it means this bet is behind — not a "confidence" grade.)
@@ -69,7 +71,7 @@ export default function LiveGamesFab() {
       // RLS scopes both tables to the current user; only unsettled bets can be live
       const [tk, dl] = await Promise.all([
         supabase.from("tickets").select(TICKET_SELECT).in("status", ["pending", "live"]),
-        supabase.from("deliveries").select(DELIVERY_SELECT).eq("result", "pending"),
+        supabase.from("deliveries").select(DELIVERY_SELECT).eq("result", "pending").neq("strategies.status", "draft"),
       ]);
       if (!alive) return;
       setTickets((tk.data as unknown as RawTicket[]) ?? []);
