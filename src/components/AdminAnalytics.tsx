@@ -62,7 +62,9 @@ const pct = (num: number, den: number) => (den ? `${Math.round((num / den) * 100
 // compact naira for hero/axis labels (₦1.2m, ₦48k) so big figures don't wrap
 const naira = (x: number) => {
   if (x >= 1_000_000) return `₦${(x / 1_000_000).toFixed(x >= 10_000_000 ? 0 : 1)}m`;
-  if (x >= 10_000) return `₦${Math.round(x / 1000)}k`;
+  // one decimal in the 10k–1m band so ₦12,500 shows ₦12.5k, not a rounded-up ₦13k that
+  // contradicts the full figure in the detail cards (strip a trailing .0 → ₦48k not ₦48.0k)
+  if (x >= 10_000) return `₦${(x / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return `₦${n(x)}`;
 };
 
