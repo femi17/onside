@@ -402,6 +402,9 @@ function Item({
   else { chipMobile = chipDesktop = ms?.label ?? "Upcoming"; }
 
   const settleBtn = "rounded-lg px-2.5 py-1 font-mono text-[10px] font-bold uppercase disabled:opacity-50";
+  // the band-colour receipt behind the % was hover-only (title=) — invisible on touch screens.
+  // A tap toggles the same explanation inline; desktop keeps the hover title as a bonus.
+  const [pctHintOpen, setPctHintOpen] = useState(false);
 
   return (
     <div className="rounded-xl bg-chalk text-ink shadow-lg">
@@ -438,8 +441,18 @@ function Item({
                 {p.model_prob != null ? (
                   <>
                     {" · "}
-                    {/* colour = this band's real track record vs its claim (hover for the numbers) */}
-                    <b title={tone.hint} className={tone.cls || undefined}>{Math.round(p.model_prob * 100)}%</b>
+                    {/* colour = this band's real track record vs its claim — tap (or hover on
+                        desktop) for the numbers */}
+                    <button
+                      type="button"
+                      onClick={() => setPctHintOpen((v) => !v)}
+                      title={tone.hint}
+                      aria-expanded={pctHintOpen}
+                      aria-label="What this percentage means"
+                      className={`font-bold underline decoration-dotted underline-offset-2 ${tone.cls || "text-ink"}`}
+                    >
+                      {Math.round(p.model_prob * 100)}%
+                    </button>
                   </>
                 ) : p.edge != null ? ` · ${p.edge > 0 ? "+" : ""}${p.edge}%` : ""}
                 {/* price: "@" = real median bookmaker odds; "~" = estimate (no direct quote);
@@ -470,6 +483,12 @@ function Item({
                 ?
               </button>
             </div>
+            {/* tapped-open receipt for the % — same text the desktop hover shows */}
+            {pctHintOpen && p.model_prob != null && (
+              <div className="mt-1 rounded-lg bg-ink/[0.05] px-2.5 py-1.5 font-mono text-[10px] leading-relaxed text-ink-mute">
+                The % is the model&apos;s chance for this exact bet. {tone.hint}
+              </div>
+            )}
             {/* on mobile the agent name drops to its own line so it isn't truncated off the row */}
             <div className="truncate font-mono text-[11px] font-bold text-flood-deep md:hidden">{p.agent_name}</div>
           </div>
