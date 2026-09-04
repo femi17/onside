@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Script from "next/script";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import PaystackPop from "@paystack/inline-js";
 import { PLAN_PRICING, type PaidPlan } from "@/lib/plans";
-
-// Paystack Inline drops a global `PaystackPop` once its script loads.
-declare global {
-  interface Window {
-    PaystackPop?: { setup: (opts: Record<string, unknown>) => { openIframe: () => void } };
-  }
-}
 
 export default function CheckoutClient({
   userId,
@@ -36,17 +29,6 @@ export default function CheckoutClient({
   const price = PLAN_PRICING[plan];
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  // Paystack's inline.js sets window.PaystackPop asynchronously. Opening the popup before it's ready
-  // is what makes the FIRST attempt error (with a reload) and a retry work. Gate the button on this:
-  // the Script onReady sets it, and this poll is a backstop (covers a cached script whose onReady
-  // may not re-fire on client navigation).
-  const [payReady, setPayReady] = useState(false);
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.PaystackPop) { setPayReady(true); return; }
-    const t = setInterval(() => { if (typeof window !== "undefined" && window.PaystackPop) { setPayReady(true); clearInterval(t); } }, 150);
-    const stop = setTimeout(() => clearInterval(t), 8000);
-    return () => { clearInterval(t); clearTimeout(stop); };
-  }, []);
 
   // prorated tier upgrade: pay the full next-tier month minus the unused-time credit, as a one-off
   // charge (the server then moves the recurring subscription over)
@@ -63,34 +45,25 @@ export default function CheckoutClient({
   function pay() {
     setMsg(null);
     if (!publicKey) {
-      // empty key = the "We could not start this transaction / enter a valid Key" popup error;
-      // don't hand Paystack a blank key — surface a clear message instead.
       setMsg("Checkout is temporarily unavailable. Please try again shortly or contact support@onside.com.ng.");
       return;
     }
-    const Pop = window.PaystackPop;
-    if (!Pop) {
-      setMsg("Payment is still loading — try again in a moment.");
-      return;
-    }
     setBusy(true);
-    // with a plan code Paystack sets up a recurring monthly subscription and takes the amount from
-    // the plan; without one we fall back to a single charge for this month
-    const opts: Record<string, unknown> = {
+    // Inline-JS v2 (@paystack/inline-js): bundled, so the popup is ready synchronously — no async
+    // script race (the v1 first-open "enter a valid Key" flake is gone). With a plan code Paystack
+    // sets up the recurring monthly subscription and takes the amount from the plan; otherwise a
+    // one-off charge for this month.
+    const popup = new PaystackPop();
+    popup.newTransaction({
       key: publicKey,
       email,
       currency: "NGN",
       metadata: { user_id: userId, plan, plan_label: price.label },
-      callback: (res: { reference: string }) => {
-        // Paystack's callback runs outside React — hand off to the async verifier
-        void finish(res.reference);
-      },
-      onClose: () => setBusy(false),
-    };
-    if (planCode) opts.plan = planCode;
-    else opts.amount = prorated ? dueKobo : price.kobo;
-    const handler = Pop.setup(opts);
-    handler.openIframe();
+      ...(planCode ? { plan: planCode } : { amount: prorated ? dueKobo : price.kobo }),
+      onSuccess: (transaction: { reference: string }) => void finish(transaction.reference),
+      onCancel: () => setBusy(false),
+      onError: () => { setBusy(false); setMsg("Payment couldn't start — please try again."); },
+    });
   }
 
   async function finish(reference: string) {
@@ -118,13 +91,6 @@ export default function CheckoutClient({
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-10">
-      <Script
-        src="https://js.paystack.co/v1/inline.js"
-        strategy="afterInteractive"
-        onReady={() => setPayReady(true)}
-        onError={() => setMsg("Secure checkout failed to load — please reload the page.")}
-      />
-
       <Link href={backHref} className="mb-8 flex items-center gap-2">
         <span className="glyph" />
         <span className="font-disp text-lg font-extrabold tracking-tight text-chalk">
@@ -180,13 +146,11 @@ export default function CheckoutClient({
 
         <button
           onClick={pay}
-          disabled={busy || !payReady || !publicKey}
+          disabled={busy || !publicKey}
           className="mt-5 w-full rounded-xl bg-flood px-5 py-3.5 font-bold text-ink transition-transform hover:-translate-y-0.5 disabled:opacity-50"
         >
           {!publicKey
             ? "Checkout unavailable"
-            : !payReady
-            ? "Loading secure checkout…"
             : busy
               ? "Processing…"
               : prorated

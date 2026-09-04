@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@paystack/inline-js": "^2.24.0",
     "@supabase/ssr": "^0.5.1",
     "@supabase/supabase-js": "^2.45.4",
     "next": "^15.5.23",
