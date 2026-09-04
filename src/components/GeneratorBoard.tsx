@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { canonicalMarket } from "@/lib/betCatalog";
-import { lagosTodayStartISO } from "@/lib/ticket";
 import { useMinuteTick } from "@/lib/useMinuteTick";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
@@ -390,18 +389,17 @@ export default function GeneratorBoard({
   const pool = genMode === "quick" ? quickPicks : picks;
   const upcoming = useMemo(() => {
     let out = pool.filter((p) => Date.parse(p.fixture.kickoff_utc) >= nowMs + 10 * 60 * 1000);
-    // Agents mode assembles from picks the agents ALREADY found (all leagues, any odds), so the
-    // league + odds controls filter the pool client-side here. Quick mode is filtered by the engine
-    // at hunt time (baseFor), so no client filter is applied there.
-    if (genMode === "agents") {
-      if (leagueIds.length) out = out.filter((p) => p.fixture.league?.id != null && leagueIds.includes(p.fixture.league.id));
-      const lo = Number(minOddsStr) > 0 ? Number(minOddsStr) : null;
-      const hi = Number(maxOddsStr) > 0 ? Number(maxOddsStr) : null;
-      if (lo != null) out = out.filter((p) => p.odds >= lo);
-      if (hi != null) out = out.filter((p) => p.odds <= hi);
-    }
+    // Belt-and-suspenders: the SHOWN acca always obeys the user's league + odds selection, in BOTH
+    // tabs. Agents mode assembles from agents' all-league picks (this is the only filter). Quick mode
+    // is already filtered by the engine, but a reused draft can carry stale same-day picks into the
+    // pool re-query — this guarantees none of them ever slip past the user's selection.
+    if (leagueIds.length) out = out.filter((p) => p.fixture.league?.id != null && leagueIds.includes(p.fixture.league.id));
+    const lo = Number(minOddsStr) > 0 ? Number(minOddsStr) : null;
+    const hi = Number(maxOddsStr) > 0 ? Number(maxOddsStr) : null;
+    if (lo != null) out = out.filter((p) => p.odds >= lo);
+    if (hi != null) out = out.filter((p) => p.odds <= hi);
     return out;
-  }, [pool, nowMs, genMode, leagueIds, minOddsStr, maxOddsStr]);
+  }, [pool, nowMs, leagueIds, minOddsStr, maxOddsStr]);
   const famsPresent = useMemo(() => {
     const s = new Set<Fam>();
     for (const p of upcoming) s.add(famOf(p.market_key, p.market_label));
@@ -692,6 +690,10 @@ export default function GeneratorBoard({
     // aim → invoke → next aim. Each invoke costs one of the day's spec runs; hitting the limit
     // (or any error) mid-sequence keeps every delivery already inserted and falls through to
     // the pool re-query, so the slip still assembles from whatever the runs found.
+    // stamp the run so the pool re-query below can exclude a reused draft's EARLIER same-day picks
+    // (a draft run before leagues/odds were set left all-league, low-odds pending picks behind —
+    // scoping to picks delivered after this moment keeps those stale legs out of the slip)
+    const runStart = new Date(Date.now() - 60_000).toISOString(); // 60s back to absorb client/server clock skew
     const used: { id: string; outcome: string | null }[] = [];
     for (const aim of aims) {
       const { id, err } = await aimDraft(aim.name, aim.row);
@@ -740,7 +742,7 @@ export default function GeneratorBoard({
       .in("strategy_id", used.map((u) => u.id))
       .in("market_key", sel.map((c) => c.key))
       .eq("result", "pending")
-      .gte("delivered_at", lagosTodayStartISO())
+      .gte("delivered_at", runStart)
       .order("delivered_at", { ascending: false })
       .limit(400);
     setHunting(false);
