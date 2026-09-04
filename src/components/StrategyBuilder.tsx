@@ -412,6 +412,19 @@ export default function StrategyBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // cross-market rules: a signal from ANOTHER market (e.g. model home-win %) that predicts this one,
+  // farmed from settled picks. Offered opt-in below the proven rule when it's better or fills a gap.
+  const [crossRules, setCrossRules] = useState<ProvenRule[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.rpc("cross_market_suggestions");
+      if (!cancelled && data?.length) setCrossRules(data as ProvenRule[]);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const provenSuggestion = useMemo<ProvenRule | null>(() => {
     if (!provenRules.length) return null;
     const byKey = new Map(provenRules.map((r) => [r.market_key, r]));
@@ -435,6 +448,28 @@ export default function StrategyBuilder({
     }
     return byKey.get(key) ?? null; // exact market match (presets, shelf, typed outcomes)
   }, [provenRules, mix, market?.key]);
+
+  // same market-matching as provenSuggestion, over the cross-market farmed rules
+  const crossSuggestion = useMemo<ProvenRule | null>(() => {
+    if (!crossRules.length) return null;
+    const byKey = new Map(crossRules.map((r) => [r.market_key, r]));
+    if (mix.length) {
+      const row = byKey.get(mix[0].market_key) ?? null;
+      return row && mix.every((m) => m.market_key === row.market_key) ? row : null;
+    }
+    const key = market?.key;
+    if (!key) return null;
+    const members = PROVEN_FAMILY_MEMBERS[key];
+    if (members) {
+      let best: ProvenRule | null = null;
+      for (const k of members) {
+        const row = byKey.get(k);
+        if (row && (!best || Number(row.hit) > Number(best.hit))) best = row;
+      }
+      return best;
+    }
+    return byKey.get(key) ?? null;
+  }, [crossRules, mix, market?.key]);
 
   // Search across ALL leagues in the DB (1000+), not just the preloaded set — so typing "england"
   // finds Premier League, League One/Two, National League, etc. even though they aren't preloaded.
@@ -1357,6 +1392,28 @@ export default function StrategyBuilder({
                     {provenSuggestion.source === "fixtures"
                       ? "Backtested on the full match history · past record, not a promise"
                       : "Backtested on settled agent picks · past record, not a promise"}
+                  </span>
+                </div>
+              </div>
+            )}
+            {/* cross-market edge: a signal from ANOTHER market that predicts this one — shown when it
+                has no proven rule yet, or the cross signal has landed a higher % than the proven one */}
+            {!rule.trim() && crossSuggestion && (!provenSuggestion || Number(crossSuggestion.hit) > Number(provenSuggestion.hit)) && (
+              <div className="mb-3 rounded-xl border border-grass/40 bg-grass/[0.08] p-3.5">
+                <div className="font-mono text-[10.5px] font-bold uppercase tracking-wide text-grass-deep">
+                  🧬 Cross-market edge for {crossSuggestion.market_label} — landed {Number(crossSuggestion.hit).toFixed(1).replace(/\.0$/, "")}% of {crossSuggestion.n} picks
+                </div>
+                <p className="mt-2 text-[12.5px] italic leading-relaxed text-ink">“{crossSuggestion.rule_text}”</p>
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setRule(crossSuggestion.rule_text)}
+                    className="rounded-lg bg-ink px-3.5 py-2 font-mono text-[11px] font-bold uppercase tracking-wide text-grass transition-transform hover:-translate-y-0.5"
+                  >
+                    Use this rule
+                  </button>
+                  <span className="font-mono text-[10px] leading-snug text-ink-mute">
+                    A signal from another market that predicts this one · past record, not a promise
                   </span>
                 </div>
               </div>
