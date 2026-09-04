@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Script from "next/script";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -36,6 +36,17 @@ export default function CheckoutClient({
   const price = PLAN_PRICING[plan];
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // Paystack's inline.js sets window.PaystackPop asynchronously. Opening the popup before it's ready
+  // is what makes the FIRST attempt error (with a reload) and a retry work. Gate the button on this:
+  // the Script onReady sets it, and this poll is a backstop (covers a cached script whose onReady
+  // may not re-fire on client navigation).
+  const [payReady, setPayReady] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.PaystackPop) { setPayReady(true); return; }
+    const t = setInterval(() => { if (typeof window !== "undefined" && window.PaystackPop) { setPayReady(true); clearInterval(t); } }, 150);
+    const stop = setTimeout(() => clearInterval(t), 8000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, []);
 
   // prorated tier upgrade: pay the full next-tier month minus the unused-time credit, as a one-off
   // charge (the server then moves the recurring subscription over)
@@ -101,7 +112,12 @@ export default function CheckoutClient({
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-5 py-10">
-      <Script src="https://js.paystack.co/v1/inline.js" strategy="afterInteractive" />
+      <Script
+        src="https://js.paystack.co/v1/inline.js"
+        strategy="afterInteractive"
+        onReady={() => setPayReady(true)}
+        onError={() => setMsg("Secure checkout failed to load — please reload the page.")}
+      />
 
       <Link href={backHref} className="mb-8 flex items-center gap-2">
         <span className="glyph" />
@@ -158,16 +174,18 @@ export default function CheckoutClient({
 
         <button
           onClick={pay}
-          disabled={busy}
+          disabled={busy || !payReady}
           className="mt-5 w-full rounded-xl bg-flood px-5 py-3.5 font-bold text-ink transition-transform hover:-translate-y-0.5 disabled:opacity-50"
         >
-          {busy
-            ? "Processing…"
-            : prorated
-              ? `Upgrade · ₦${dueNaira.toLocaleString()} today`
-              : planCode
-                ? `Subscribe · ₦${price.naira.toLocaleString()}/mo`
-                : `Pay ₦${price.naira.toLocaleString()} for a month`}
+          {!payReady
+            ? "Loading secure checkout…"
+            : busy
+              ? "Processing…"
+              : prorated
+                ? `Upgrade · ₦${dueNaira.toLocaleString()} today`
+                : planCode
+                  ? `Subscribe · ₦${price.naira.toLocaleString()}/mo`
+                  : `Pay ₦${price.naira.toLocaleString()} for a month`}
         </button>
         <p className="mt-2.5 text-center font-mono text-[10.5px] text-ink-mute">
           {prorated
