@@ -62,6 +62,12 @@ export default function CheckoutClient({
 
   function pay() {
     setMsg(null);
+    if (!publicKey) {
+      // empty key = the "We could not start this transaction / enter a valid Key" popup error;
+      // don't hand Paystack a blank key — surface a clear message instead.
+      setMsg("Checkout is temporarily unavailable. Please try again shortly or contact support@onside.com.ng.");
+      return;
+    }
     const Pop = window.PaystackPop;
     if (!Pop) {
       setMsg("Payment is still loading — try again in a moment.");
@@ -174,10 +180,12 @@ export default function CheckoutClient({
 
         <button
           onClick={pay}
-          disabled={busy || !payReady}
+          disabled={busy || !payReady || !publicKey}
           className="mt-5 w-full rounded-xl bg-flood px-5 py-3.5 font-bold text-ink transition-transform hover:-translate-y-0.5 disabled:opacity-50"
         >
-          {!payReady
+          {!publicKey
+            ? "Checkout unavailable"
+            : !payReady
             ? "Loading secure checkout…"
             : busy
               ? "Processing…"

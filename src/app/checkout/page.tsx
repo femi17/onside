@@ -55,7 +55,14 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Pro
 
   // read server-side and pass down, so the browser gets the (publishable) key via a prop instead of
   // a NEXT_PUBLIC_ env var — keeps both Paystack keys as ordinary, non-public Vercel variables
-  const publicKey = process.env.PAYSTACK_PUBLIC_KEY ?? "";
+  // resilient to the env-var naming (it was renamed a few times during go-live): accept the plain
+  // server var OR the legacy NEXT_PUBLIC_ one. Empty here → "enter a valid Key" from Paystack, so
+  // CheckoutClient guards on it and shows a clear message instead of the cryptic popup error.
+  const publicKey =
+    process.env.PAYSTACK_PUBLIC_KEY ||
+    process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ||
+    process.env.NEXT_PAYSTACK_KEY ||
+    "";
 
   return (
     <CheckoutClient
