@@ -31,7 +31,7 @@ export type GenPick = {
     home_team: string;
     away_team: string;
     kickoff_utc: string;
-    league: { name: string; flag_url: string | null; tier: string | null } | null;
+    league: { id: number; name: string; flag_url: string | null; tier: string | null } | null;
   };
 };
 
@@ -191,7 +191,7 @@ function rowsToGenPicks(rows: Record<string, unknown>[]): GenPick[] {
       away_team: string;
       kickoff_utc: string;
       status: string | null;
-      leagues: { name: string; flag_url: string | null; tier: string | null } | null;
+      leagues: { id: number; name: string; flag_url: string | null; tier: string | null } | null;
     } | null;
     if (!f?.kickoff_utc || Date.parse(f.kickoff_utc) < cutoff) continue;
     const crit = r.criteria as { odds?: number; odds_src?: string } | null;
@@ -388,10 +388,20 @@ export default function GeneratorBoard({
   // every minute so a slip can't be tracked onto a game that just started). Quick mode swaps in
   // the picks the last spec run found — the assembly pipeline downstream is identical.
   const pool = genMode === "quick" ? quickPicks : picks;
-  const upcoming = useMemo(
-    () => pool.filter((p) => Date.parse(p.fixture.kickoff_utc) >= nowMs + 10 * 60 * 1000),
-    [pool, nowMs]
-  );
+  const upcoming = useMemo(() => {
+    let out = pool.filter((p) => Date.parse(p.fixture.kickoff_utc) >= nowMs + 10 * 60 * 1000);
+    // Agents mode assembles from picks the agents ALREADY found (all leagues, any odds), so the
+    // league + odds controls filter the pool client-side here. Quick mode is filtered by the engine
+    // at hunt time (baseFor), so no client filter is applied there.
+    if (genMode === "agents") {
+      if (leagueIds.length) out = out.filter((p) => p.fixture.league?.id != null && leagueIds.includes(p.fixture.league.id));
+      const lo = Number(minOddsStr) > 0 ? Number(minOddsStr) : null;
+      const hi = Number(maxOddsStr) > 0 ? Number(maxOddsStr) : null;
+      if (lo != null) out = out.filter((p) => p.odds >= lo);
+      if (hi != null) out = out.filter((p) => p.odds <= hi);
+    }
+    return out;
+  }, [pool, nowMs, genMode, leagueIds, minOddsStr, maxOddsStr]);
   const famsPresent = useMemo(() => {
     const s = new Set<Fam>();
     for (const p of upcoming) s.add(famOf(p.market_key, p.market_label));
@@ -724,7 +734,7 @@ export default function GeneratorBoard({
     const { data: dels, error: qErr } = await supabase
       .from("deliveries")
       .select(
-        "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(name, flag_url, tier))"
+        "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(id, name, flag_url, tier))"
       )
       .eq("user_id", userId)
       .in("strategy_id", used.map((u) => u.id))
@@ -889,6 +899,100 @@ export default function GeneratorBoard({
   // the slip only assembles in quick mode after a run actually found still-upcoming picks
   const showSlip = genMode === "agents" || (quickRan && !hunting && upcoming.length > 0);
 
+  // ---- shared filter controls (both tabs): per-leg odds band + league accordion. In Quick mode
+  // they set the hunt (baseFor); in Agents mode they filter the assembled pool (see `upcoming`). ----
+  const oddsRange = (
+    <div>
+      <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Leg odds range (optional)</p>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <input
+          value={minOddsStr}
+          onChange={(e) => setMinOddsStr(e.target.value)}
+          inputMode="decimal"
+          placeholder="min"
+          className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+        />
+        <span className="font-mono text-[13px] text-onpitch-mute">–</span>
+        <input
+          value={maxOddsStr}
+          onChange={(e) => setMaxOddsStr(e.target.value)}
+          inputMode="decimal"
+          placeholder="max"
+          className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+        />
+      </div>
+    </div>
+  );
+  const leagueAccordion = (
+    <div className="mt-4 rounded-xl border border-white/10">
+      <button onClick={() => setLgOpen((v) => !v)} className="flex w-full items-center justify-between px-3.5 py-2.5 text-left">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
+          Leagues · {leaguePicked.length ? `${leaguePicked.length} selected` : "all leagues"}
+        </span>
+        <span className="font-mono text-[12px] text-onpitch-mute">{lgOpen ? "▾" : "▸"}</span>
+      </button>
+      {lgOpen && (
+        <div className="border-t border-white/10 p-3.5">
+          <div className="flex flex-wrap gap-1.5">
+            {([["⚡ Top today", groupIds.topToday], ["🏆 Top Europe", groupIds.topEuro], ["🥈 Europe 2nd", groupIds.euro2], ["🌎 S. America", groupIds.sAmerica], ["🌏 Asia", groupIds.asia]] as const).map(([label, ids]) => {
+              const on = ids.length > 0 && ids.every((id) => leagueIds.includes(id));
+              return (
+                <button
+                  key={label}
+                  onClick={() => toggleGroup(ids as number[])}
+                  disabled={!ids.length}
+                  className={`rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors disabled:opacity-40 ${on ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-chalk hover:border-white/30"}`}
+                >
+                  {label}{ids.length ? ` (${ids.length})` : ""}
+                </button>
+              );
+            })}
+          </div>
+          {leaguePicked.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {leaguePicked.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
+                  className="flex items-center gap-1.5 rounded-full border border-flood bg-flood/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-flood"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
+                  <span>{l.name}</span>
+                  {l.country && <span className="font-normal opacity-80">· {l.country}</span>}
+                  <span className="opacity-80">✕</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            value={lgSearch}
+            onChange={(e) => setLgSearch(e.target.value)}
+            placeholder="Search by league or country…"
+            className="mt-2.5 h-9 w-full rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+          />
+          <div className="no-scrollbar mt-2 flex max-h-52 flex-wrap gap-1.5 overflow-y-auto">
+            {(lgSearch.trim().length >= 2 ? lgResults : allLeagues)
+              .filter((l) => !leagueIds.includes(l.id))
+              .slice(0, 60)
+              .map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); }}
+                  className="flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/30"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
+                  <span>{l.name}</span>
+                  {l.country && <span className="font-normal text-onpitch-mute">· {l.country}</span>}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="mx-auto max-w-3xl px-5 pb-10 md:px-8">
       {header}
@@ -1012,80 +1116,7 @@ export default function GeneratorBoard({
               </div>
             </div>
 
-            {/* leagues — collapsed accordion to save space; top leagues show as buttons (like the
-                agent page), search finds any of the rest. Empty selection = all leagues. */}
-            <div className="mt-4 rounded-xl border border-white/10">
-              <button
-                onClick={() => setLgOpen((v) => !v)}
-                className="flex w-full items-center justify-between px-3.5 py-2.5 text-left"
-              >
-                <span className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
-                  Leagues · {leaguePicked.length ? `${leaguePicked.length} selected` : "all leagues"}
-                </span>
-                <span className="font-mono text-[12px] text-onpitch-mute">{lgOpen ? "▾" : "▸"}</span>
-              </button>
-              {lgOpen && (
-                <div className="border-t border-white/10 p-3.5">
-                  {/* one-tap groups (mirror the agent page) — tap to select or clear a whole set */}
-                  <div className="flex flex-wrap gap-1.5">
-                    {([["⚡ Top today", groupIds.topToday], ["🏆 Top Europe", groupIds.topEuro], ["🥈 Europe 2nd", groupIds.euro2], ["🌎 S. America", groupIds.sAmerica], ["🌏 Asia", groupIds.asia]] as const).map(([label, ids]) => {
-                      const on = ids.length > 0 && ids.every((id) => leagueIds.includes(id));
-                      return (
-                        <button
-                          key={label}
-                          onClick={() => toggleGroup(ids as number[])}
-                          disabled={!ids.length}
-                          className={`rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors disabled:opacity-40 ${on ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-chalk hover:border-white/30"}`}
-                        >
-                          {label}{ids.length ? ` (${ids.length})` : ""}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {leaguePicked.length > 0 && (
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {leaguePicked.map((l) => (
-                        <button
-                          key={l.id}
-                          onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
-                          className="flex items-center gap-1.5 rounded-full border border-flood bg-flood/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-flood"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
-                          <span>{l.name}</span>
-                          {l.country && <span className="font-normal opacity-80">· {l.country}</span>}
-                          <span className="opacity-80">✕</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <input
-                    value={lgSearch}
-                    onChange={(e) => setLgSearch(e.target.value)}
-                    placeholder="Search by league or country…"
-                    className="mt-2.5 h-9 w-full rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
-                  />
-                  {/* tap to add: search results while typing, else the top leagues as buttons */}
-                  <div className="no-scrollbar mt-2 flex max-h-52 flex-wrap gap-1.5 overflow-y-auto">
-                    {(lgSearch.trim().length >= 2 ? lgResults : allLeagues)
-                      .filter((l) => !leagueIds.includes(l.id))
-                      .slice(0, 60)
-                      .map((l) => (
-                        <button
-                          key={l.id}
-                          onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); }}
-                          className="flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/30"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
-                          <span>{l.name}</span>
-                          {l.country && <span className="font-normal text-onpitch-mute">· {l.country}</span>}
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            {leagueAccordion}
 
             <div className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-3">
               <div>
@@ -1116,26 +1147,7 @@ export default function GeneratorBoard({
                   className="mt-1.5 h-9 w-36 rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
                 />
               </div>
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Leg odds range (optional)</p>
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <input
-                    value={minOddsStr}
-                    onChange={(e) => setMinOddsStr(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="min"
-                    className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
-                  />
-                  <span className="font-mono text-[13px] text-onpitch-mute">–</span>
-                  <input
-                    value={maxOddsStr}
-                    onChange={(e) => setMaxOddsStr(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="max"
-                    className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
-                  />
-                </div>
-              </div>
+              {oddsRange}
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Stake (₦)</p>
                 <input
@@ -1243,7 +1255,11 @@ export default function GeneratorBoard({
               className="mt-1.5 h-9 w-28 rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
             />
           </div>
+          {oddsRange}
         </div>
+
+        {/* leagues + odds filter the assembled pool from your agents' picks (client-side) */}
+        {leagueAccordion}
 
         {/* market family filter — only families your pool actually has */}
         {famsPresent.size > 1 && (

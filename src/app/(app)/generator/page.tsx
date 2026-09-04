@@ -23,7 +23,7 @@ export default async function GeneratorPage() {
     supabase
       .from("deliveries")
       .select(
-        "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(name, flag_url, tier))"
+        "id, strategy_id, market_key, market_label, line, side, period, bet_value, model_prob, criteria, strategies(name), fixtures(id, home_team, away_team, kickoff_utc, status, leagues(id, name, flag_url, tier))"
       )
       .eq("user_id", user.id)
       .eq("result", "pending")
@@ -51,7 +51,7 @@ export default async function GeneratorPage() {
       away_team: string;
       kickoff_utc: string;
       status: string | null;
-      leagues: { name: string; flag_url: string | null; tier: string | null } | null;
+      leagues: { id: number; name: string; flag_url: string | null; tier: string | null } | null;
     } | null;
     if (!f?.kickoff_utc || Date.parse(f.kickoff_utc) < cutoff) continue;
     // only priced picks are eligible — without an odd the combined product would be a lie
