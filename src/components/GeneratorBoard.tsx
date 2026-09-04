@@ -166,6 +166,10 @@ type ProvenRule = {
 // hit is a percentage; tolerate a 0..1 fraction just in case the miner ever writes one
 const hitPct = (r: ProvenRule) => Math.round(r.hit <= 1 ? r.hit * 100 : r.hit);
 
+// league option shape for the picker — country + flag carried so same-named leagues
+// (Premier League: England/Wales/Kenya; Ligue 2: France/Algeria) are distinguishable
+type LgOpt = { id: number; name: string; country: string | null; flag_url: string | null };
+
 // deliver_at mirrors "run now": the quick draft never sits on the scheduler (status 'draft'),
 // so this only anchors the engine's same-day hunt window at the moment of the run
 function nowDeliverAt(): string {
@@ -275,10 +279,10 @@ export default function GeneratorBoard({
   const [minOddsStr, setMinOddsStr] = useState("");
   const [maxOddsStr, setMaxOddsStr] = useState("");
   const [leagueIds, setLeagueIds] = useState<number[]>([]);
-  const [leaguePicked, setLeaguePicked] = useState<{ id: number; name: string; country: string | null }[]>([]);
+  const [leaguePicked, setLeaguePicked] = useState<LgOpt[]>([]);
   const [lgSearch, setLgSearch] = useState("");
-  const [lgResults, setLgResults] = useState<{ id: number; name: string; country: string | null }[]>([]);
-  const [allLeagues, setAllLeagues] = useState<{ id: number; name: string; country: string | null }[]>([]); // top set, shown as buttons
+  const [lgResults, setLgResults] = useState<LgOpt[]>([]);
+  const [allLeagues, setAllLeagues] = useState<LgOpt[]>([]); // top set, shown as buttons
   const [lgOpen, setLgOpen] = useState(false); // accordion — collapsed by default to save space
   // save-as-agent (promote the quick draft to a running agent)
   const [saveOpen, setSaveOpen] = useState(false);
@@ -307,9 +311,9 @@ export default function GeneratorBoard({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("leagues").select("id, name, country")
+      const { data } = await supabase.from("leagues").select("id, name, country, flag_url")
         .order("tier", { ascending: true, nullsFirst: false }).order("name", { ascending: true }).limit(400);
-      if (!cancelled) setAllLeagues((data ?? []) as { id: number; name: string; country: string | null }[]);
+      if (!cancelled) setAllLeagues((data ?? []) as LgOpt[]);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -320,8 +324,8 @@ export default function GeneratorBoard({
     if (t.length < 2) { setLgResults([]); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const { data } = await supabase.from("leagues").select("id, name, country").ilike("name", `%${t}%`).limit(20);
-      if (!cancelled) setLgResults((data ?? []) as { id: number; name: string; country: string | null }[]);
+      const { data } = await supabase.from("leagues").select("id, name, country, flag_url").ilike("name", `%${t}%`).limit(20);
+      if (!cancelled) setLgResults((data ?? []) as LgOpt[]);
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [lgSearch]);
@@ -986,9 +990,13 @@ export default function GeneratorBoard({
                         <button
                           key={l.id}
                           onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
-                          className="rounded-full border border-flood bg-flood/15 px-3 py-1.5 font-mono text-[11px] font-bold text-flood"
+                          className="flex items-center gap-1.5 rounded-full border border-flood bg-flood/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-flood"
                         >
-                          {l.name} ✕
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
+                          <span>{l.name}</span>
+                          {l.country && <span className="font-normal opacity-80">· {l.country}</span>}
+                          <span className="opacity-80">✕</span>
                         </button>
                       ))}
                     </div>
@@ -1008,10 +1016,12 @@ export default function GeneratorBoard({
                         <button
                           key={l.id}
                           onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); }}
-                          title={l.country ?? undefined}
-                          className="rounded-full border border-white/15 px-3 py-1.5 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/30"
+                          className="flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1.5 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/30"
                         >
-                          {l.name}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {l.flag_url && <img src={l.flag_url} alt="" className="h-3 w-[18px] flex-none rounded-[2px] object-cover" />}
+                          <span>{l.name}</span>
+                          {l.country && <span className="font-normal text-onpitch-mute">· {l.country}</span>}
                         </button>
                       ))}
                   </div>
