@@ -2522,31 +2522,15 @@ Deno.serve(async (req) => {
     }
     if (!strategies.length) return json({ strategies: 0, inserted: 0, shard, shards });
 
-    // An EMPTY parse ({filters:[],select:[]}) is a FAILED parse, not a rule with no conditions
-    // (definition hoisted above the mastered-market block, which needs it too).
+    // An EMPTY parse ({filters:[],select:[]}) is a FAILED parse, not a rule with no conditions.
     const emptyParse = (rp: any) => !!rp && Array.isArray(rp.filters) && Array.isArray(rp.select) && !rp.filters.length && !rp.select.length;
 
-    // Mastered-market default (owner-ruled 2026-09-02): an agent deployed with NO rule at all,
-    // on a market the proven-rules library has mastered, gets the proven rule applied at its
-    // next run — STAMPED onto the row (rule_text + rule_parsed) so the builder, feed and Guide
-    // all show it and the user can edit or clear it like any rule they wrote. Never silent
-    // filtering. Exact-market matches only; quick-spec drafts excluded (their empty rule may be
-    // a deliberate user choice); costs zero LLM — the filters are stored pre-parsed.
-    {
-      const ruleless = strategies.filter((s) =>
-        s.status !== "draft" && (!s.rule_text || !String(s.rule_text).trim()) && (!s.rule_parsed || emptyParse(s.rule_parsed)));
-      if (ruleless.length) {
-        const { data: pr } = await sb.from("proven_rules").select("market_key, rule_text, filters");
-        const prMap = new Map((pr ?? []).map((r: any) => [String(r.market_key), r]));
-        for (const s of ruleless) {
-          const row = prMap.get(String(s.market_key));
-          if (!row || !Array.isArray(row.filters) || !row.filters.length) continue;
-          const rp = { filters: row.filters, select: [] };
-          s.rule_parsed = rp; s.rule_text = row.rule_text;
-          await sb.from("strategies").update({ rule_parsed: rp, rule_text: row.rule_text }).eq("id", s.id);
-        }
-      }
-    }
+    // Ruleless agents run with NO auto-applied rule (owner-ruled 2026-09-04, reversing the
+    // 2026-09-02 mastered-market default): if the user set no rule, we leave it be — the base
+    // model prediction plus the standard screens decide, and we never stamp a proven rule onto
+    // their chosen outcome. The auto-stamped rules were high-probability filters that forced
+    // ruleless agents into short-odds favourites; a rule is now applied ONLY when the user
+    // writes one (or taps a suggestion in the builder).
 
     // Empty parses re-qualify for parsing (the "1st Half Over0.5" agent's ">= 86%" rule gated
     // nothing for 10 days when an empty parse was cached forever); retry cost is bounded because
