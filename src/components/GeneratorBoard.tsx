@@ -278,6 +278,8 @@ export default function GeneratorBoard({
   const [leaguePicked, setLeaguePicked] = useState<{ id: number; name: string; country: string | null }[]>([]);
   const [lgSearch, setLgSearch] = useState("");
   const [lgResults, setLgResults] = useState<{ id: number; name: string; country: string | null }[]>([]);
+  const [allLeagues, setAllLeagues] = useState<{ id: number; name: string; country: string | null }[]>([]); // top set, shown as buttons
+  const [lgOpen, setLgOpen] = useState(false); // accordion — collapsed by default to save space
   // save-as-agent (promote the quick draft to a running agent)
   const [saveOpen, setSaveOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
@@ -301,13 +303,24 @@ export default function GeneratorBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // league search (debounced) — same pattern as the agent builder; empty selection = all leagues
+  // top leagues shown as buttons (same set the agent page preloads: ordered by tier, limit 400)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("leagues").select("id, name, country")
+        .order("tier", { ascending: true, nullsFirst: false }).order("name", { ascending: true }).limit(400);
+      if (!cancelled) setAllLeagues((data ?? []) as { id: number; name: string; country: string | null }[]);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // league search (debounced) — finds anything beyond the preloaded top set; empty = all leagues
   useEffect(() => {
     const t = lgSearch.trim();
     if (t.length < 2) { setLgResults([]); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const { data } = await supabase.from("leagues").select("id, name, country").ilike("name", `%${t}%`).limit(15);
+      const { data } = await supabase.from("leagues").select("id, name, country").ilike("name", `%${t}%`).limit(20);
       if (!cancelled) setLgResults((data ?? []) as { id: number; name: string; country: string | null }[]);
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -953,40 +966,55 @@ export default function GeneratorBoard({
               </div>
             </div>
 
-            {/* leagues — optional; empty = all leagues (same idea as agent deployment) */}
-            <div className="mt-4">
-              <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Leagues (optional — all if empty)</p>
-              {leaguePicked.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {leaguePicked.map((l) => (
-                    <button
-                      key={l.id}
-                      onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
-                      className="rounded-full border border-flood bg-flood/15 px-3 py-1.5 font-mono text-[11px] font-bold text-flood"
-                    >
-                      {l.name} ✕
-                    </button>
-                  ))}
-                </div>
-              )}
-              <input
-                value={lgSearch}
-                onChange={(e) => setLgSearch(e.target.value)}
-                placeholder="Search a league to add…"
-                className="mt-1.5 h-9 w-full max-w-sm rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
-              />
-              {lgResults.filter((l) => !leagueIds.includes(l.id)).length > 0 && (
-                <div className="mt-1.5 max-h-44 max-w-sm overflow-y-auto rounded-lg border border-white/10 bg-pitch">
-                  {lgResults.filter((l) => !leagueIds.includes(l.id)).map((l) => (
-                    <button
-                      key={l.id}
-                      onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); setLgSearch(""); setLgResults([]); }}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left font-mono text-[12px] text-chalk hover:bg-white/5"
-                    >
-                      <span className="truncate">{l.name}</span>
-                      {l.country && <span className="flex-none text-[10px] text-onpitch-mute">{l.country}</span>}
-                    </button>
-                  ))}
+            {/* leagues — collapsed accordion to save space; top leagues show as buttons (like the
+                agent page), search finds any of the rest. Empty selection = all leagues. */}
+            <div className="mt-4 rounded-xl border border-white/10">
+              <button
+                onClick={() => setLgOpen((v) => !v)}
+                className="flex w-full items-center justify-between px-3.5 py-2.5 text-left"
+              >
+                <span className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
+                  Leagues · {leaguePicked.length ? `${leaguePicked.length} selected` : "all leagues"}
+                </span>
+                <span className="font-mono text-[12px] text-onpitch-mute">{lgOpen ? "▾" : "▸"}</span>
+              </button>
+              {lgOpen && (
+                <div className="border-t border-white/10 p-3.5">
+                  {leaguePicked.length > 0 && (
+                    <div className="mb-2.5 flex flex-wrap gap-1.5">
+                      {leaguePicked.map((l) => (
+                        <button
+                          key={l.id}
+                          onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
+                          className="rounded-full border border-flood bg-flood/15 px-3 py-1.5 font-mono text-[11px] font-bold text-flood"
+                        >
+                          {l.name} ✕
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    value={lgSearch}
+                    onChange={(e) => setLgSearch(e.target.value)}
+                    placeholder="Search any league…"
+                    className="h-9 w-full rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                  />
+                  {/* tap to add: search results while typing, else the top leagues as buttons */}
+                  <div className="no-scrollbar mt-2 flex max-h-52 flex-wrap gap-1.5 overflow-y-auto">
+                    {(lgSearch.trim().length >= 2 ? lgResults : allLeagues)
+                      .filter((l) => !leagueIds.includes(l.id))
+                      .slice(0, 60)
+                      .map((l) => (
+                        <button
+                          key={l.id}
+                          onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); }}
+                          title={l.country ?? undefined}
+                          className="rounded-full border border-white/15 px-3 py-1.5 font-mono text-[11px] font-bold text-chalk transition-colors hover:border-white/30"
+                        >
+                          {l.name}
+                        </button>
+                      ))}
+                  </div>
                 </div>
               )}
             </div>
