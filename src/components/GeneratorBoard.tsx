@@ -134,6 +134,12 @@ const QUICK_CHIPS: { key: string; label: string; side: string | null; line: numb
   { key: "home_to_score", label: "Home team to score", side: "home", line: null },
   { key: "away_to_score", label: "Away team to score", side: "away", line: null },
   { key: "btts", label: "Both teams to score", side: "yes", line: null },
+  // early-payout "path" markets — the engine prices them (EARLY_KEYS) and poll grades them from
+  // the goal sequence; they hit more often than a straight win (paid once the team goes ahead)
+  { key: "home_win_1up", label: "Home 1UP", side: "home", line: null },
+  { key: "away_win_1up", label: "Away 1UP", side: "away", line: null },
+  { key: "home_win_2up", label: "Home 2UP", side: "home", line: null },
+  { key: "away_win_2up", label: "Away 2UP", side: "away", line: null },
 ];
 
 // Name PREFIX for the user's quick draft strategy rows. Every path uses a market-dedicated
@@ -262,7 +268,16 @@ export default function GeneratorBoard({
   const [quickMsg, setQuickMsg] = useState<string | null>(null);
   // proven-rule suggestions, keyed by market_key (missing table/rows → simply no card)
   const [proven, setProven] = useState<Record<string, ProvenRule>>({});
-  const [applyProven, setApplyProven] = useState(true);
+  // rules are OFF by default (owner-ruled 2026-09-04): a spec runs raw unless the user opts in —
+  // proven rules are high-probability filters that push picks into short-odds favourites.
+  const [applyProven, setApplyProven] = useState(false);
+  // per-leg odds band (fully open by default) + optional league restriction, like agent deployment
+  const [minOddsStr, setMinOddsStr] = useState("");
+  const [maxOddsStr, setMaxOddsStr] = useState("");
+  const [leagueIds, setLeagueIds] = useState<number[]>([]);
+  const [leaguePicked, setLeaguePicked] = useState<{ id: number; name: string; country: string | null }[]>([]);
+  const [lgSearch, setLgSearch] = useState("");
+  const [lgResults, setLgResults] = useState<{ id: number; name: string; country: string | null }[]>([]);
   // save-as-agent (promote the quick draft to a running agent)
   const [saveOpen, setSaveOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
@@ -286,11 +301,23 @@ export default function GeneratorBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // league search (debounced) — same pattern as the agent builder; empty selection = all leagues
+  useEffect(() => {
+    const t = lgSearch.trim();
+    if (t.length < 2) { setLgResults([]); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const { data } = await supabase.from("leagues").select("id, name, country").ilike("name", `%${t}%`).limit(15);
+      if (!cancelled) setLgResults((data ?? []) as { id: number; name: string; country: string | null }[]);
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [lgSearch]);
+
   // proven-rule surface: one selected outcome → its card; several where EVERY outcome has a
   // proven row → the per-outcome list with one shared toggle. The default-ON toggle re-arms
   // whenever the selection changes at all.
   const chipsKey = useMemo(() => Array.from(chips).sort().join(","), [chips]);
-  useEffect(() => { setApplyProven(true); }, [chipsKey]);
+  useEffect(() => { setApplyProven(false); }, [chipsKey]); // rules stay opt-in when the selection changes
   const singleChipKey = chips.size === 1 ? Array.from(chips)[0] : null;
   const provenRow = singleChipKey ? proven[singleChipKey] ?? null : null;
   const selChips = useMemo(() => QUICK_CHIPS.filter((c) => chips.has(c.key)), [chips]);
@@ -517,12 +544,12 @@ export default function GeneratorBoard({
     const baseFor = (pr: ProvenRule | null): Record<string, unknown> => ({
       rule_text: pr?.rule_text ?? null,
       rule_parsed: pr ? { filters: pr.filters ?? [], select: [] } : { filters: [], select: [] },
-      league_ids: [], // the spec states outcomes, not competitions — all upcoming leagues
-      league_mode: "all",
+      league_ids: leagueIds,                              // empty = all leagues; else hunt these
+      league_mode: leagueIds.length ? "fixed" : "all",
       selectivity: "strong",
       min_edge: 0.04,
-      min_odds: null,
-      max_odds: null,
+      min_odds: Number(minOddsStr) > 0 ? Number(minOddsStr) : null,   // per-leg odds band (open by default)
+      max_odds: Number(maxOddsStr) > 0 ? Number(maxOddsStr) : null,
       max_per_prediction: free ? 8 : 24, // plan pick ceilings (plan_limits mirror)
       deliver_at: nowDeliverAt(),
       target_day: "same_day", // hunt today's remaining games, like a same-day agent
@@ -926,6 +953,44 @@ export default function GeneratorBoard({
               </div>
             </div>
 
+            {/* leagues — optional; empty = all leagues (same idea as agent deployment) */}
+            <div className="mt-4">
+              <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Leagues (optional — all if empty)</p>
+              {leaguePicked.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {leaguePicked.map((l) => (
+                    <button
+                      key={l.id}
+                      onClick={() => { setLeaguePicked((p) => p.filter((x) => x.id !== l.id)); setLeagueIds((p) => p.filter((x) => x !== l.id)); }}
+                      className="rounded-full border border-flood bg-flood/15 px-3 py-1.5 font-mono text-[11px] font-bold text-flood"
+                    >
+                      {l.name} ✕
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                value={lgSearch}
+                onChange={(e) => setLgSearch(e.target.value)}
+                placeholder="Search a league to add…"
+                className="mt-1.5 h-9 w-full max-w-sm rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+              />
+              {lgResults.filter((l) => !leagueIds.includes(l.id)).length > 0 && (
+                <div className="mt-1.5 max-h-44 max-w-sm overflow-y-auto rounded-lg border border-white/10 bg-pitch">
+                  {lgResults.filter((l) => !leagueIds.includes(l.id)).map((l) => (
+                    <button
+                      key={l.id}
+                      onClick={() => { setLeaguePicked((p) => [...p, l]); setLeagueIds((p) => [...p, l.id]); setLgSearch(""); setLgResults([]); }}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left font-mono text-[12px] text-chalk hover:bg-white/5"
+                    >
+                      <span className="truncate">{l.name}</span>
+                      {l.country && <span className="flex-none text-[10px] text-onpitch-mute">{l.country}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-3">
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Legs · 2–{quickMaxLegs}</p>
@@ -954,6 +1019,26 @@ export default function GeneratorBoard({
                   placeholder="leave it general"
                   className="mt-1.5 h-9 w-36 rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
                 />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Leg odds range (optional)</p>
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <input
+                    value={minOddsStr}
+                    onChange={(e) => setMinOddsStr(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="min"
+                    className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                  />
+                  <span className="font-mono text-[13px] text-onpitch-mute">–</span>
+                  <input
+                    value={maxOddsStr}
+                    onChange={(e) => setMaxOddsStr(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="max"
+                    className="h-9 w-[68px] rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] font-bold text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                  />
+                </div>
               </div>
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Stake (₦)</p>
