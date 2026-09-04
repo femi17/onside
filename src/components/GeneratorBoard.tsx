@@ -168,7 +168,7 @@ const hitPct = (r: ProvenRule) => Math.round(r.hit <= 1 ? r.hit * 100 : r.hit);
 
 // league option shape for the picker — country + flag carried so same-named leagues
 // (Premier League: England/Wales/Kenya; Ligue 2: France/Algeria) are distinguishable
-type LgOpt = { id: number; name: string; country: string | null; flag_url: string | null };
+type LgOpt = { id: number; name: string; country: string | null; flag_url: string | null; tier: string | null };
 
 // deliver_at mirrors "run now": the quick draft never sits on the scheduler (status 'draft'),
 // so this only anchors the engine's same-day hunt window at the moment of the run
@@ -283,6 +283,7 @@ export default function GeneratorBoard({
   const [lgSearch, setLgSearch] = useState("");
   const [lgResults, setLgResults] = useState<LgOpt[]>([]);
   const [allLeagues, setAllLeagues] = useState<LgOpt[]>([]); // top set, shown as buttons
+  const [todayLeagueIds, setTodayLeagueIds] = useState<Set<number>>(new Set()); // leagues with a fixture today
   const [lgOpen, setLgOpen] = useState(false); // accordion — collapsed by default to save space
   // save-as-agent (promote the quick draft to a running agent)
   const [saveOpen, setSaveOpen] = useState(false);
@@ -311,24 +312,65 @@ export default function GeneratorBoard({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("leagues").select("id, name, country, flag_url")
+      const { data } = await supabase.from("leagues").select("id, name, country, flag_url, tier")
         .order("tier", { ascending: true, nullsFirst: false }).order("name", { ascending: true }).limit(400);
       if (!cancelled) setAllLeagues((data ?? []) as LgOpt[]);
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // league search (debounced) — finds anything beyond the preloaded top set; empty = all leagues
+  // leagues that actually have a fixture TODAY — powers the "Top today" one-tap select
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const start = new Date(); start.setHours(0, 0, 0, 0);
+      const end = new Date(start); end.setDate(end.getDate() + 1);
+      const { data } = await supabase.from("fixtures").select("league_id")
+        .in("status", ["NS", "TBD"]).gte("kickoff_utc", start.toISOString()).lt("kickoff_utc", end.toISOString());
+      if (!cancelled) setTodayLeagueIds(new Set(((data ?? []) as { league_id: number | null }[]).map((f) => f.league_id).filter((v): v is number => v != null)));
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // league search (debounced) — matches league NAME or COUNTRY; empty selection = all leagues
   useEffect(() => {
     const t = lgSearch.trim();
     if (t.length < 2) { setLgResults([]); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const { data } = await supabase.from("leagues").select("id, name, country, flag_url").ilike("name", `%${t}%`).limit(20);
+      const { data } = await supabase.from("leagues").select("id, name, country, flag_url, tier")
+        .or(`name.ilike.%${t}%,country.ilike.%${t}%`).limit(30);
       if (!cancelled) setLgResults((data ?? []) as LgOpt[]);
     }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [lgSearch]);
+
+  // one-tap league group id-sets (mirror the agent page's tier bundles) + "top today"
+  const groupIds = useMemo(() => {
+    const byTier = (t: string) => allLeagues.filter((l) => l.tier === t).map((l) => l.id);
+    const topFlight = allLeagues.filter((l) => ["top", "sa_top", "as_top"].includes(l.tier ?? "")).map((l) => l.id);
+    return {
+      topToday: topFlight.filter((id) => todayLeagueIds.has(id)),
+      topEuro: byTier("top"),
+      euro2: byTier("mid"),
+      sAmerica: byTier("sa_top"),
+      asia: byTier("as_top"),
+    };
+  }, [allLeagues, todayLeagueIds]);
+
+  // add the whole group if not all selected, else remove it (cap-free — league_ids just scopes the hunt)
+  const toggleGroup = (ids: number[]) => {
+    if (!ids.length) return;
+    const allSel = ids.every((id) => leagueIds.includes(id));
+    if (allSel) {
+      setLeagueIds((prev) => prev.filter((id) => !ids.includes(id)));
+      setLeaguePicked((prev) => prev.filter((l) => !ids.includes(l.id)));
+    } else {
+      const add = allLeagues.filter((l) => ids.includes(l.id) && !leagueIds.includes(l.id));
+      setLeagueIds((prev) => [...prev, ...add.map((l) => l.id)]);
+      setLeaguePicked((prev) => [...prev, ...add]);
+    }
+  };
 
   // proven-rule surface: one selected outcome → its card; several where EVERY outcome has a
   // proven row → the per-outcome list with one shared toggle. The default-ON toggle re-arms
@@ -984,8 +1026,24 @@ export default function GeneratorBoard({
               </button>
               {lgOpen && (
                 <div className="border-t border-white/10 p-3.5">
+                  {/* one-tap groups (mirror the agent page) — tap to select or clear a whole set */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {([["⚡ Top today", groupIds.topToday], ["🏆 Top Europe", groupIds.topEuro], ["🥈 Europe 2nd", groupIds.euro2], ["🌎 S. America", groupIds.sAmerica], ["🌏 Asia", groupIds.asia]] as const).map(([label, ids]) => {
+                      const on = ids.length > 0 && ids.every((id) => leagueIds.includes(id));
+                      return (
+                        <button
+                          key={label}
+                          onClick={() => toggleGroup(ids as number[])}
+                          disabled={!ids.length}
+                          className={`rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors disabled:opacity-40 ${on ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-chalk hover:border-white/30"}`}
+                        >
+                          {label}{ids.length ? ` (${ids.length})` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
                   {leaguePicked.length > 0 && (
-                    <div className="mb-2.5 flex flex-wrap gap-1.5">
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
                       {leaguePicked.map((l) => (
                         <button
                           key={l.id}
@@ -1004,8 +1062,8 @@ export default function GeneratorBoard({
                   <input
                     value={lgSearch}
                     onChange={(e) => setLgSearch(e.target.value)}
-                    placeholder="Search any league…"
-                    className="h-9 w-full rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
+                    placeholder="Search by league or country…"
+                    className="mt-2.5 h-9 w-full rounded-lg border border-white/15 bg-pitch px-2.5 font-mono text-[13px] text-chalk placeholder:text-onpitch-mute focus:border-flood focus:outline-none"
                   />
                   {/* tap to add: search results while typing, else the top leagues as buttons */}
                   <div className="no-scrollbar mt-2 flex max-h-52 flex-wrap gap-1.5 overflow-y-auto">
