@@ -115,11 +115,13 @@ function oddsBandRow(minStr: string, maxStr: string): { min_odds: number | null;
   return { min_odds: lo, max_odds: hi };
 }
 
-// selectivity tiers -> the minimum edge (model prob − market prob) a pick must clear
+// confidence tiers -> the minimum model confidence (shown %) a pick must clear. Replaces the old
+// edge tiers: confidence is what users perceive (hit rate) and it out-performed edge on every axis
+// in the Sep-2026 replay. Edge (min_edge) is set to 0 here — it's now an optional advanced lane.
 const SELECT = [
-  { key: "elite", name: "Elite value", eq: "min edge +5.0%", min_edge: 0.05, desc: "Only the biggest mispricings clear the bar. Fewest picks, highest conviction." },
-  { key: "strong", name: "Strong value", eq: "min edge +4.0%", min_edge: 0.04, desc: "A clear edge over the bookmaker. A balanced number of picks." },
-  { key: "wide", name: "Wider net", eq: "min edge +2.5%", min_edge: 0.025, desc: "Smaller edges allowed through. More picks, more variance." },
+  { key: "elite", name: "Safest", eq: "≥ 80% confidence", confidence_floor: 0.8, desc: "Only the picks the model is most sure about. Fewest picks, highest hit rate." },
+  { key: "strong", name: "Balanced", eq: "≥ 70% confidence", confidence_floor: 0.7, desc: "Strong confidence with a healthy number of picks. Recommended." },
+  { key: "wide", name: "Wider net", eq: "≥ 60% confidence", confidence_floor: 0.6, desc: "A lower bar — more picks, more variance." },
 ];
 
 const FINISHED_LIVE = ["FT", "AET", "PEN", "1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT"];
@@ -877,7 +879,8 @@ export default function StrategyBuilder({
       league_ids: leagueSurprise ? [] : picked.size ? Array.from(picked) : [],
       league_mode: leagueSurprise ? "surprise" : picked.size ? "fixed" : "all",
       selectivity: SELECT[selIdx].key,
-      min_edge: SELECT[selIdx].min_edge,
+      confidence_floor: SELECT[selIdx].confidence_floor,
+      min_edge: 0, // edge is no longer the default gate — confidence_floor is (advanced edge lane TBD)
       // odds band — parse the inputs, floor at 1.01, and only keep sane values (max >= min)
       ...oddsBandRow(minOdds, maxOdds),
       max_per_prediction: cap,
@@ -1032,7 +1035,7 @@ export default function StrategyBuilder({
 
       <div className="my-4 flex flex-col gap-2.5 border-t border-dashed border-ink/15 pt-3.5 text-[13px]">
         <Row k="Leagues" v={leagueSurprise ? "🎲 Surprise · re-rolls each run" : picked.size === 0 ? (plan === "pro_max" ? "All competitions" : "Pick some") : `${picked.size} of ${maxLeagues}`} />
-        <Row k="Selectivity" v={`${sel.name.split(" ")[0]} · ${sel.eq.replace("min edge ", "")}`} />
+        <Row k="Confidence" v={`${sel.name} · ${sel.eq}`} />
         <Row k="Cap" v={`${cap} / prediction`} />
         {kickAt && <Row k="Kickoff" v={kickUntil ? `${kickAt}–${kickUntil} window` : `${kickAt} games only`} />}
         <Row k="Delivery" v={`${time} · ${chLabel}`} />
@@ -1671,9 +1674,9 @@ export default function StrategyBuilder({
 
           {/* 06 selectivity */}
           <section className="rounded-2xl bg-chalk p-5 text-ink shadow-xl">
-            <Step n="06" t="How strict?" />
+            <Step n="06" t="How confident?" />
             <p className="mb-3 text-[13px] leading-snug text-ink-mute">
-              Your agent only sends a game when our model rates it better than the bookmaker&apos;s price. This sets how much better it has to be. Stricter means fewer picks, but each one is a bigger edge.
+              Your agent only sends a game when the model is confident enough it&apos;ll land. This sets the minimum confidence. Stricter means fewer picks, but each one is a safer bet.
             </p>
             <div className="flex flex-col gap-2">
               {SELECT.map((s, i) => {
