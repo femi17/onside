@@ -596,7 +596,7 @@ export default function StrategyBuilder({
 
   // live preview: how many upcoming fixtures the strategy would look at over the next few days
   // (the agent runs daily, so counting only the tail of today would read 0 in the evening).
-  // Rule-based on leagues + the upcoming slate; edge filtering narrows this once the model lands.
+  // Rule-based on leagues + the upcoming slate; the confidence bar narrows this once the model lands.
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -1071,7 +1071,7 @@ export default function StrategyBuilder({
             <div className="font-mono text-[11px] text-onpitch-mute">No upcoming games in your leagues over the next few days — try more leagues or 🎲 Surprise me.</div>
           )}
         </div>
-        <p className="mt-3 font-mono text-[10px] leading-relaxed text-onpitch-mute">Edge ranking narrows this to your bar once odds land.</p>
+        <p className="mt-3 font-mono text-[10px] leading-relaxed text-onpitch-mute">Your confidence bar narrows this once odds land.</p>
       </div>
 
       {editing ? (
