@@ -1807,6 +1807,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       }))
     : null;
   const baseSet = isFamily(baseMk) || !!mixCands; // "best of a set": built-in family or user mix
+  // confidence floor (owner-directed 2026-09-06): the owner-ruled 0.5 delivery floor is now
+  // per-agent. NULL keeps 0.5 (>50% to land) so EVERY existing agent is unchanged; the builder
+  // sets it higher (e.g. 0.70) for new confidence-default agents. Edge (min_edge) stays a
+  // separate, now-optional lane layered on top of this — it is NOT removed for agents that set it.
+  const confFloor = strategy.confidence_floor != null ? Number(strategy.confidence_floor) : 0.5;
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
@@ -1912,7 +1917,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // owner's ≥50% floor applies to the shown number too — never print "more likely to miss".
       // Selection stayed raw above (floor, edge cap); everything from here gates on the shown %.
       const shown = blend50(chosen.model_prob, chosen.market_prob);
-      if (shown == null || shown < 0.5) continue;
+      if (shown == null || shown < confFloor) continue;
       if (shown !== chosen.model_prob) { chosen.model_raw = chosen.model_prob; chosen.model_prob = shown; }
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
@@ -1968,7 +1973,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // to it, and the band screen re-checks the blended cell (raw check above stays as a cheap
     // pre-odds early exit during the transition)
     const shownP = blend50(mp, kp);
-    if (shownP == null || shownP < 0.5) continue;
+    if (shownP == null || shownP < confFloor) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
