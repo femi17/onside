@@ -615,8 +615,13 @@ export default function GeneratorBoard({
       rule_parsed: pr ? { filters: pr.filters ?? [], select: [] } : { filters: [], select: [] },
       league_ids: leagueIds,                              // empty = all leagues; else hunt these
       league_mode: leagueIds.length ? "fixed" : "all",
+      // confidence-default (2026-09-06): quick-accas gate on the owner's 0.5 confidence floor
+      // (confidence_floor null → 0.5) rather than the old 0.04 edge bar. min_edge:0 still excludes
+      // negative-edge picks (model worse than the book). Kept looser than the builder's 0.7 default
+      // on purpose — a same-day acca needs enough legs to assemble; ranking still favours quality.
       selectivity: "strong",
-      min_edge: 0.04,
+      confidence_floor: null,
+      min_edge: 0,
       min_odds: Number(minOddsStr) > 0 ? Number(minOddsStr) : null,   // per-leg odds band (open by default)
       max_odds: Number(maxOddsStr) > 0 ? Number(maxOddsStr) : null,
       max_per_prediction: free ? 8 : 24, // plan pick ceilings (plan_limits mirror)
