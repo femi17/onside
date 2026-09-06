@@ -32,6 +32,9 @@ type RecordData = {
   days: { day: string; graded: number; won: number; perfect?: number; perfect_n?: number | null }[];
   perfect_details?: { day: string; sweeps: { n: number; legs: PerfectLeg[] }[] }[];
   bands: { band: number; n: number; won: number; claimed: number }[];
+  // pooled claim-vs-delivered over every graded pick that carries a shown % — the honest headline
+  // (a bare pooled hit rate is mix-dependent; this anchors it to what the model actually claimed)
+  calibration?: { n: number; won: number; claimed: number };
 };
 
 async function loadRecord(): Promise<RecordData | null> {
@@ -99,6 +102,22 @@ export default async function RecordPage() {
                 <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-mute">hit rate</div>
               </div>
             </div>
+
+            {/* calibration frame — the honest read of the hit rate. A pooled won/graded is
+                dominated by market mix; this anchors it to the model's own claim: when we say
+                X%, X% (near enough) lands. Mix-proof, and the whole point of a confidence product. */}
+            {r.calibration && r.calibration.n > 0 && (
+              <div className="mt-4 rounded-2xl border border-grass/25 bg-grass/10 p-4 text-center">
+                <p className="font-disp text-base font-extrabold text-ink sm:text-lg">
+                  Claimed <span className="text-flood-deep">{r.calibration.claimed}%</span>
+                  {" · "}landed <span className="text-grass-deep">{pct(r.calibration.won, r.calibration.n)}%</span>
+                </p>
+                <p className="mt-1 font-mono text-[11px] text-ink-mute">
+                  Across {r.calibration.n.toLocaleString()} graded picks — the confidence the model claimed against what actually landed. Calibrated to within {Math.abs(r.calibration.claimed - pct(r.calibration.won, r.calibration.n))} point{Math.abs(r.calibration.claimed - pct(r.calibration.won, r.calibration.n)) === 1 ? "" : "s"}.
+                </p>
+              </div>
+            )}
+
             <p className="mt-2 font-mono text-[11px] text-onpitch-mute">
               {r.all_time.since && (
                 <>Counting since {new Date(r.all_time.since).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · </>
