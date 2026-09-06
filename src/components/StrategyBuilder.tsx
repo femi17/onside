@@ -122,7 +122,8 @@ function oddsBandRow(minStr: string, maxStr: string): { min_odds: number | null;
 
 // confidence tiers -> the minimum model confidence (shown %) a pick must clear. Replaces the old
 // edge tiers: confidence is what users perceive (hit rate) and it out-performed edge on every axis
-// in the Sep-2026 replay. Edge (min_edge) is set to 0 here — it's now an optional advanced lane.
+// in the Sep-2026 replay. Edge is not a user control at all now — min_edge is always saved as 0
+// (the learner may still tune it under the hood when an agent has learning on).
 const SELECT = [
   { key: "elite", name: "Safest", eq: "≥ 80% confidence", confidence_floor: 0.8, desc: "Only the picks the model is most sure about. Fewest picks, highest hit rate." },
   { key: "strong", name: "Balanced", eq: "≥ 70% confidence", confidence_floor: 0.7, desc: "Strong confidence with a healthy number of picks. Recommended." },
@@ -308,11 +309,6 @@ export default function StrategyBuilder({
   // no bound on that side; both empty = any odds. Kept as strings so the inputs can be cleared.
   const [minOdds, setMinOdds] = useState(existing?.min_odds != null ? String(existing.min_odds) : "");
   const [maxOdds, setMaxOdds] = useState(existing?.max_odds != null ? String(existing.max_odds) : "");
-  // advanced edge lane (optional): a base min-edge bar layered ON TOP of the confidence floor.
-  // Stored as a 0-1 fraction, entered as percentage points (4 = 4% = 0.04). Empty/0 = confidence-
-  // only, the default. Power users only — confidence is the headline gate now. Editing an existing
-  // edge agent surfaces its saved bar here instead of silently resetting it to 0 on save.
-  const [minEdge, setMinEdge] = useState(existing?.min_edge ? String(Math.round(Number(existing.min_edge) * 1000) / 10) : "");
   // the cap is any number the user wants (e.g. a typed 16), clamped to the plan ceiling —
   // the pills are just shortcuts, so a stored in-between value survives editing exactly
   const [cap, setCap] = useState(() => Math.max(1, Math.min(existing?.max_per_prediction ?? 8, maxPicks)));
@@ -891,10 +887,9 @@ export default function StrategyBuilder({
       league_mode: leagueSurprise ? "surprise" : picked.size ? "fixed" : "all",
       selectivity: SELECT[selIdx].key,
       confidence_floor: SELECT[selIdx].confidence_floor,
-      // advanced edge lane: an optional base bar layered ON TOP of the confidence floor (empty/0 =
-      // confidence-only, the default). Entered as percentage points, stored as a 0-1 fraction,
-      // floored at 0. The learner may still tune this upward when the agent has learning on.
-      min_edge: minEdge.trim() && Number(minEdge) > 0 ? Math.max(0, Number(minEdge) / 100) : 0,
+      // edge is NOT a user control — confidence is the only gate. Kept 0 here; the learner may
+      // still tune it upward under the hood when the agent has learning on.
+      min_edge: 0,
       // odds band — parse the inputs, floor at 1.01, and only keep sane values (max >= min)
       ...oddsBandRow(minOdds, maxOdds),
       max_per_prediction: cap,
@@ -1050,7 +1045,6 @@ export default function StrategyBuilder({
       <div className="my-4 flex flex-col gap-2.5 border-t border-dashed border-ink/15 pt-3.5 text-[13px]">
         <Row k="Leagues" v={leagueSurprise ? "🎲 Surprise · re-rolls each run" : picked.size === 0 ? (plan === "pro_max" ? "All competitions" : "Pick some") : `${picked.size} of ${maxLeagues}`} />
         <Row k="Confidence" v={`${sel.name} · ${sel.eq}`} />
-        {minEdge.trim() && Number(minEdge) > 0 && <Row k="Edge filter" v={`+${minEdge}% min`} />}
         <Row k="Cap" v={`${cap} / prediction`} />
         {kickAt && <Row k="Kickoff" v={kickUntil ? `${kickAt}–${kickUntil} window` : `${kickAt} games only`} />}
         <Row k="Delivery" v={`${time} · ${chLabel}`} />
@@ -1713,30 +1707,6 @@ export default function StrategyBuilder({
                 );
               })}
             </div>
-
-            {/* advanced edge lane — tucked in a disclosure so confidence stays the headline. An
-                optional base bar layered ON TOP of the confidence floor; empty = confidence-only. */}
-            <details className="mt-3 rounded-xl border border-ink/10 bg-chalk-2 px-3.5 py-2.5" open={!!minEdge}>
-              <summary className="cursor-pointer list-none font-mono text-[11px] font-bold uppercase tracking-wide text-ink-mute">
-                Advanced · edge filter {minEdge ? `· +${minEdge}%` : "· off"}
-              </summary>
-              <p className="mt-2 text-[12.5px] leading-snug text-ink-mute">
-                On top of the confidence bar, only send picks the model rates at least this far above the bookmaker&apos;s price. Leave empty for confidence-only (recommended).
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-mute">
-                <label className="flex items-center gap-1.5">min edge
-                  <input
-                    type="number" min={0} step={0.5} inputMode="decimal" placeholder="off" value={minEdge}
-                    onChange={(e) => setMinEdge(e.target.value)}
-                    className="w-20 rounded-lg border border-ink/15 bg-white px-2 py-1.5 text-[13px] font-bold text-ink focus:border-ink/40 focus:outline-none"
-                  />
-                </label>
-                <span>%</span>
-                {minEdge && (
-                  <button type="button" onClick={() => setMinEdge("")} className="ml-auto rounded-lg border border-ink/15 px-2 py-1.5 text-[11px] font-bold text-ink-mute hover:border-ink/30 hover:text-ink">clear</button>
-                )}
-              </div>
-            </details>
           </section>
 
           {/* 07 cap + delivery */}
