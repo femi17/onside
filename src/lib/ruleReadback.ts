@@ -28,6 +28,8 @@ const FIELD: Record<string, string> = {
   over_1_5_odds: "the Over 1.5 odds",
   over_2_5_odds: "the Over 2.5 odds",
   under_2_5_odds: "the Under 2.5 odds",
+  home_over15_odds: "the home team's Over 1.5 odds",
+  away_over15_odds: "the away team's Over 1.5 odds",
   btts_yes_odds: "the both-teams-score odds",
   market_odds: "the fair odds on your market",
   model_prob: "the model's probability for your market",
