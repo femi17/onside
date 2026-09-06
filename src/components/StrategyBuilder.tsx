@@ -12,11 +12,16 @@ import ConnectTelegram from "@/components/ConnectTelegram";
 
 export type LeagueOpt = { id: number; name: string; country: string | null; flag_url: string | null; tier: string | null };
 
+// Starter markets. Curated to the ones a 127K-fixture walk-forward calibration sweep (Sep 2026)
+// confirmed the model's confidence HOLDS UP on: for picks it rates >=70%, >=70% actually land, at
+// volume. BTTS was pulled — it was the one market the model is systematically overconfident on
+// (rates 80%, lands 74% at every band), which also explains the underwater BTTS paper agent.
+// Corners stays as a popular option though the sweep can't score it (no corner model in forecast).
 const PRESETS = [
   { key: "home_to_score", label: "Home team to score", side: "home", line: null as number | null, sub: "1+ home goal" },
   { key: "over_1_5", label: "Over 1.5 goals", side: "over", line: 1.5 as number | null, sub: "2+ total" },
   { key: "over_2_5", label: "Over 2.5 goals", side: "over", line: 2.5 as number | null, sub: "3+ total" },
-  { key: "btts", label: "Both teams to score", side: "yes", line: null as number | null, sub: "GG yes" },
+  { key: "double_chance_1x", label: "Double chance (1X)", side: "1x", line: null as number | null, sub: "home or draw" },
   { key: "over_8_5_corners", label: "Over 8.5 corners", side: "over", line: 8.5 as number | null, sub: "corner line" },
   { key: "home_win", label: "Home win", side: "home", line: null as number | null, sub: "1x2 home" },
 ];

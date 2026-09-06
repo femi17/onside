@@ -132,7 +132,9 @@ const QUICK_CHIPS: { key: string; label: string; side: string | null; line: numb
   { key: "double_chance_12", label: "Double chance (12)", side: "12", line: null },
   { key: "home_to_score", label: "Home team to score", side: "home", line: null },
   { key: "away_to_score", label: "Away team to score", side: "away", line: null },
-  { key: "btts", label: "Both teams to score", side: "yes", line: null },
+  // BTTS pulled (Sep 2026): the 127K-fixture calibration sweep found the model systematically
+  // overconfident on it (rates 80%, lands 74% at every band) — the one market whose stated
+  // confidence doesn't hold up. Still reachable via the full builder, just not a quick chip.
   // early-payout "path" markets — the engine prices them (EARLY_KEYS) and poll grades them from
   // the goal sequence; they hit more often than a straight win (paid once the team goes ahead)
   { key: "home_win_1up", label: "Home 1UP", side: "home", line: null },
