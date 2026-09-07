@@ -1811,7 +1811,34 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // per-agent. NULL keeps 0.5 (>50% to land) so EVERY existing agent is unchanged; the builder
   // sets it higher (e.g. 0.70) for new confidence-default agents. Edge (min_edge) stays a
   // separate, now-optional lane layered on top of this — it is NOT removed for agents that set it.
-  const confFloor = strategy.confidence_floor != null ? Number(strategy.confidence_floor) : 0.5;
+  let confFloor = strategy.confidence_floor != null ? Number(strategy.confidence_floor) : 0.5;
+  // Platform market defaults (owner-directed 2026-09-08): when an agent on a preset market carries
+  // NO rule of its own, run the validated default SCREEN for that market — the "basis for the
+  // platform" for the majority who don't write a rule. A user's own rule overrides this entirely
+  // (we never stack the two). The owner-ruled 0.5 baseline floor still gates every market; only
+  // Double Chance 1X raises it (its whole screen IS confidence >=80%). Thresholds locked from
+  // backtests: 1UP screen >=80% (below that home wins only ~41%); New GG = BTTS 64-66% (82.9% Over
+  // 1.5); Over 0.5 >=98% (77% Over 2.5); both-team Over1.5 odds >=2.00 for Under 3.5 (73% floor
+  // dropped pending A/B). Wrapped so a mistake here can NEVER break core selection.
+  try {
+    const hasUserRule = !!(rule && (((rule.filters?.length ?? 0) > 0) || ((rule.select?.length ?? 0) > 0)));
+    if (!hasUserRule && !baseSet) {
+      const F = (field: string, op: string, value: number, value2 = 0): Cond => ({ field, op, value, value2 });
+      const DEFAULT_SCREENS: Record<string, Cond[]> = {
+        under_3_5: [F("home_over15_odds", "gte", 2.0), F("away_over15_odds", "gte", 2.0)],
+        over_2_5: [F("over05_prob", "gte", 0.98)],
+        over_1_5: [F("btts_prob", "between", 0.64, 0.66)],
+        btts: [F("btts_prob", "between", 0.64, 0.66)],
+        home_win: [F("home_1up_prob", "gte", 0.80)],
+        home_to_score: [F("home_1up_prob", "gte", 0.80)],
+        away_win: [F("away_1up_prob", "gte", 0.80)],
+        away_to_score: [F("away_1up_prob", "gte", 0.80)],
+      };
+      const screen = DEFAULT_SCREENS[baseMk];
+      if (screen) rule = { filters: screen, select: [] };
+      if (baseMk === "double_chance_1x") confFloor = Math.max(confFloor, 0.80);
+    }
+  } catch (_e) { /* market defaults are best-effort; never break core selection */ }
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
@@ -1884,6 +1911,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         draw_prob: cell.confident ? round2(cell.agg.dr) : null,
         home_over15_odds: teamOverOdds("home_goals_ou"),
         away_over15_odds: teamOverOdds("away_goals_ou"),
+        // screens for the platform market defaults: P(Over 0.5) for the Over 2.5 default, and each
+        // team's model 1UP probability (agg.early) for the Home/Away Win + to-score defaults.
+        over05_prob: cell.confident ? round2(overP(cell.agg, 0.5)) : null,
+        home_1up_prob: cell.confident && cell.agg.early?.["home_win_1up"] != null ? round2(cell.agg.early["home_win_1up"]) : null,
+        away_1up_prob: cell.confident && cell.agg.early?.["away_win_1up"] != null ? round2(cell.agg.early["away_win_1up"]) : null,
       };
       // rules see the same model % the card will show (the blend) — edge stays raw like the tiers
       const sig = signalsFor(bms, blend50(bmp, bkp), bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
