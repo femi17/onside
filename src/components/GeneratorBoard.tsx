@@ -129,6 +129,7 @@ const QUICK_CHIPS: { key: string; label: string; side: string | null; line: numb
   { key: "over_2_5", label: "Over 2.5 goals", side: "over", line: 2.5 },
   { key: "under_3_5", label: "Under 3.5 goals", side: "under", line: 3.5 },
   { key: "double_chance_1x", label: "Double chance (1X)", side: "1x", line: null },
+  { key: "double_chance_x2", label: "Double chance (X2)", side: "x2", line: null },
   { key: "double_chance_12", label: "Double chance (12)", side: "12", line: null },
   // straight win — the engine screens these via the 1UP >=80% platform default (only truly
   // dominant sides), so they carry the same quality as the 1UP path but pay as a full win.
