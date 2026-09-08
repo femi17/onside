@@ -476,8 +476,11 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
     case "away_win": return W(res === "away");
     case "draw": return W(res === "draw");
     case "result_1x2": return W(res === side);
-    case "home_win_1up": return W(everLed(f.goals, "home"));
-    case "away_win_1up": return W(everLed(f.goals, "away"));
+    // a WIN is unconditionally a 1UP win (the side led at the final whistle) — the || res guard
+    // matches 2up/never_down below and is robust when the goal-event feed is empty/sparse (obscure
+    // leagues), where everLed() alone wrongly returned lost on a game the side actually won.
+    case "home_win_1up": return W(everLed(f.goals, "home") || res === "home");
+    case "away_win_1up": return W(everLed(f.goals, "away") || res === "away");
     case "home_win_2up": return W(everLed(f.goals, "home", 2) || res === "home");
     case "away_win_2up": return W(everLed(f.goals, "away", 2) || res === "away");
     case "draw_2up": return W(res === "draw");
