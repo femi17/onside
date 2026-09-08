@@ -151,22 +151,6 @@ const QUICK_CHIPS: { key: string; label: string; side: string | null; line: numb
 // block the new market's picks. Legacy bare-"⚡ Quick acca" rows are left alone, never aimed.
 const QUICK_NAME = "⚡ Quick acca";
 
-// one row of the proven_rules table (authenticated SELECT): a holdout-validated rule for a
-// market, with its past record. `filters` is the engine-ready rule_parsed filter list.
-type ProvenRule = {
-  market_key: string;
-  market_label: string | null;
-  rule_text: string | null;
-  filters: unknown[] | null;
-  n: number;
-  won: number;
-  hit: number;
-  computed_at: string;
-  source: string | null;
-};
-// hit is a percentage; tolerate a 0..1 fraction just in case the miner ever writes one
-const hitPct = (r: ProvenRule) => Math.round(r.hit <= 1 ? r.hit * 100 : r.hit);
-
 // league option shape for the picker — country + flag carried so same-named leagues
 // (Premier League: England/Wales/Kenya; Ligue 2: France/Algeria) are distinguishable
 type LgOpt = { id: number; name: string; country: string | null; flag_url: string | null; tier: string | null };
@@ -271,11 +255,6 @@ export default function GeneratorBoard({
   const [hunting, setHunting] = useState(false);
   const [quickRan, setQuickRan] = useState(false);
   const [quickMsg, setQuickMsg] = useState<string | null>(null);
-  // proven-rule suggestions, keyed by market_key (missing table/rows → simply no card)
-  const [proven, setProven] = useState<Record<string, ProvenRule>>({});
-  // rules are OFF by default (owner-ruled 2026-09-04): a spec runs raw unless the user opts in —
-  // proven rules are high-probability filters that push picks into short-odds favourites.
-  const [applyProven, setApplyProven] = useState(false);
   // per-leg odds band (fully open by default) + optional league restriction, like agent deployment
   const [minOddsStr, setMinOddsStr] = useState("");
   const [maxOddsStr, setMaxOddsStr] = useState("");
@@ -292,22 +271,6 @@ export default function GeneratorBoard({
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [savedNames, setSavedNames] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase
-        .from("proven_rules")
-        .select("market_key, market_label, rule_text, filters, n, won, hit, computed_at, source")
-        .in("market_key", QUICK_CHIPS.map((c) => c.key));
-      if (cancelled || !data) return;
-      const m: Record<string, ProvenRule> = {};
-      for (const r of data as ProvenRule[]) m[r.market_key] = r;
-      setProven(m);
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // top leagues shown as buttons (same set the agent page preloads: ordered by tier, limit 400)
   useEffect(() => {
@@ -372,18 +335,6 @@ export default function GeneratorBoard({
       setLeaguePicked((prev) => [...prev, ...add]);
     }
   };
-
-  // proven-rule surface: one selected outcome → its card; several where EVERY outcome has a
-  // proven row → the per-outcome list with one shared toggle. The default-ON toggle re-arms
-  // whenever the selection changes at all.
-  const chipsKey = useMemo(() => Array.from(chips).sort().join(","), [chips]);
-  useEffect(() => { setApplyProven(false); }, [chipsKey]); // rules stay opt-in when the selection changes
-  const singleChipKey = chips.size === 1 ? Array.from(chips)[0] : null;
-  const provenRow = singleChipKey ? proven[singleChipKey] ?? null : null;
-  const selChips = useMemo(() => QUICK_CHIPS.filter((c) => chips.has(c.key)), [chips]);
-  // multi-select surfaces the per-outcome list whenever ANY selected outcome has a proven rule;
-  // zero ruled outcomes → a one-line honest note and a single mix run instead
-  const anyProvenSel = selChips.length > 1 && selChips.some((c) => proven[c.key]);
 
   // pool: the user's own pending picks whose game is still ≥10 min from kickoff (re-checked
   // every minute so a slip can't be tracked onto a game that just started). Quick mode swaps in
@@ -571,18 +522,15 @@ export default function GeneratorBoard({
   // run each quietly via run-strategies, then re-query the pool scoped to those strategy ids and
   // hand it to the exact same assembly pipeline the agents mode uses.
   //
-  // With SEVERAL outcomes selected and at least ONE carrying a proven rule (toggle ON), the spec
-  // runs PER OUTCOME — each outcome gets its OWN draft row ("⚡ Quick acca · <label>"): ruled
-  // outcomes apply their rule, unruled ones run rule-less (the engine's model floors/screens
-  // still apply). Separate strategy ids matter: deliveries dedup on unique(strategy_id,
-  // fixture_id), so under ONE shared row outcome A's run would claim the qualifying fixtures and
-  // block outcome B (often carrying the identical proven rule → the same fixtures) from
-  // delivering them at all (the owner's 14-leg Over1.5+1X spec came back all-Over1.5 for exactly
-  // this reason). Distinct ids let both outcomes deliver the same fixture; the assembler stays
-  // one-leg-per-fixture. Single-outcome uses its own "⚡ Quick acca · <label>" row too; multi
-  // where NO outcome has a rule or the toggle is off (per-outcome would cost N daily runs for
-  // zero rule benefit) runs once on the "⚡ Quick acca · Mix" row. Draft rows are exempt from
-  // plan caps by DB design, so N drafts per user is fine.
+  // Every generated row is RULE-LESS (owner-directed 2026-09-08): the engine applies the platform's
+  // validated per-market default screen to any rule-less agent, so the generator no longer sets
+  // rules. MULTI-outcome runs PER OUTCOME — each gets its OWN single-market draft row
+  // ("⚡ Quick acca · <label>"): a single market is what the engine's market defaults screen (a
+  // "mix" row is a SET and the defaults skip it), and distinct strategy ids matter because
+  // deliveries dedup on unique(strategy_id, fixture_id) — under one shared row outcome A would
+  // claim the qualifying fixtures and block outcome B. Distinct ids let both deliver the same
+  // fixture; the assembler stays one-leg-per-fixture. Single-outcome uses its own row too. Draft
+  // rows are exempt from plan caps by DB design, so N drafts per user is fine.
   async function runQuickSpec() {
     if (hunting || chips.size === 0) return;
     setHunting(true);
@@ -595,7 +543,7 @@ export default function GeneratorBoard({
     setRanWindow(quickWindow);
 
     const sel = QUICK_CHIPS.filter((c) => chips.has(c.key));
-    const perOutcome = sel.length > 1 && applyProven && sel.some((c) => proven[c.key]);
+    const perOutcome = sel.length > 1; // per-outcome single rows so the engine's market default screens each leg (a "mix" row is a set → defaults skip it)
 
     // kick-off window → the engine's INCLUSIVE local-time kickoff_at/until pair, computed ONCE
     // so every aim this run shares the same window. Plain local Date math is correct here: the
@@ -608,11 +556,11 @@ export default function GeneratorBoard({
       return { kickoff_at: hm(now), kickoff_until: hm(new Date(now.getTime() + quickWindow * 3600 * 1000)) };
     })();
 
-    // shared row fields; a proven rule applies its stored engine-ready filters DIRECTLY — no
-    // LLM parse. Without one, rule_text stays null so the empty parse is never re-parsed.
-    const baseFor = (pr: ProvenRule | null): Record<string, unknown> => ({
-      rule_text: pr?.rule_text ?? null,
-      rule_parsed: pr ? { filters: pr.filters ?? [], select: [] } : { filters: [], select: [] },
+    // shared row fields — always rule-less: rule_text/rule_parsed stay empty so the engine applies
+    // the platform's per-market default screen (no user rule to parse).
+    const baseFor = (): Record<string, unknown> => ({
+      rule_text: null,
+      rule_parsed: { filters: [], select: [] },
       league_ids: leagueIds,                              // empty = all leagues; else hunt these
       league_mode: leagueIds.length ? "fixed" : "all",
       // confidence-default (2026-09-06): quick-accas gate on the owner's 0.5 confidence floor
@@ -645,17 +593,6 @@ export default function GeneratorBoard({
       bet_value: null,
       markets: null,
     });
-    const mixRow: Record<string, unknown> = {
-      market_key: "mix",
-      market_label: `Mix · ${sel.length} outcomes`,
-      custom_market: null,
-      side: null,
-      line: null,
-      period: "ft",
-      bet_value: null,
-      markets: sel.map((c) => ({ market_key: c.key, label: c.label, side: c.side, line: c.line, period: "ft", bet_value: null })),
-    };
-
     // Every aim this run will make: which draft row (by name) gets which row patch.
     // EVERY path uses a market-dedicated row name — a shared generic row let one market's
     // earlier same-day deliveries flood the next market's pool AND block its fixtures via
@@ -665,11 +602,9 @@ export default function GeneratorBoard({
       ? sel.map((c) => ({
           name: `${QUICK_NAME} · ${c.label}`,
           outcome: c.label,
-          row: { ...baseFor(proven[c.key] ?? null), ...singleRowFor(c) },
+          row: { ...baseFor(), ...singleRowFor(c) },
         }))
-      : sel.length === 1
-        ? [{ name: `${QUICK_NAME} · ${sel[0].label}`, outcome: null, row: { ...baseFor(applyProven ? proven[sel[0].key] ?? null : null), ...singleRowFor(sel[0]) } }]
-        : [{ name: `${QUICK_NAME} · Mix`, outcome: null, row: { ...baseFor(null), ...mixRow } }];
+      : [{ name: `${QUICK_NAME} · ${sel[0].label}`, outcome: null, row: { ...baseFor(), ...singleRowFor(sel[0]) } }];
 
     // find-or-create a draft row by its quick name, then aim it. Drafts are exempt from
     // free-plan locks, so re-aiming works on every plan.
@@ -1029,83 +964,13 @@ export default function GeneratorBoard({
               })}
             </div>
 
-            {/* proven-rule suggestion: exactly ONE outcome selected AND a proven_rules row exists */}
-            {provenRow ? (
-              <div className="mt-3.5 rounded-xl border border-flood/30 bg-pitch p-3.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-flood">Proven rule</p>
-                    <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">
-                      Landed {hitPct(provenRow)}% of {provenRow.n} {provenRow.source === "fixtures" ? "backtested matches" : "graded picks"} — apply it?
-                    </p>
-                    {provenRow.rule_text && (
-                      <p className="mt-1 text-[12px] leading-relaxed text-onpitch-mute">{provenRow.rule_text}</p>
-                    )}
-                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">
-                      {provenRow.source === "fixtures"
-                        ? "Backtested on the full match history · past record, not a promise"
-                        : "Past record, not a promise."}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setApplyProven((v) => !v)}
-                    aria-pressed={applyProven}
-                    className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
-                      applyProven ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-onpitch-mute hover:border-white/30"
-                    }`}
-                  >
-                    {applyProven ? "Applied ✓" : "Off"}
-                  </button>
-                </div>
-              </div>
-            ) : anyProvenSel ? (
-              // at least one selected outcome is mastered → the spec runs PER OUTCOME (toggle
-              // ON): ruled outcomes apply their rule, unruled ones run on model screening only.
-              // One shared toggle governs the ruled subset; each outcome costs a spec run.
-              <div className="mt-3.5 rounded-xl border border-flood/30 bg-pitch p-3.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-flood">Proven rules</p>
-                    <p className="mt-1 text-[13px] font-bold leading-snug text-chalk">Apply proven rules per outcome?</p>
-                    <div className="mt-1.5 flex flex-col gap-1">
-                      {selChips.map((c) => {
-                        const r = proven[c.key] as ProvenRule | undefined;
-                        return (
-                          <p key={c.key} className="text-[12.5px] font-bold leading-snug text-chalk">
-                            {c.label}{" "}
-                            <span className="font-mono text-[11px] font-normal text-onpitch-mute">
-                              {r ? <>· landed {hitPct(r)}% of {r.n}</> : <>· no proven rule yet — model screening only</>}
-                            </span>
-                          </p>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">Past record, not a promise.</p>
-                    {applyProven && (
-                      <p className="mt-1 font-mono text-[10.5px] text-flood">
-                        Runs each outcome as its own spec — uses {selChips.length} of your daily runs.
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => setApplyProven((v) => !v)}
-                    aria-pressed={applyProven}
-                    aria-label="Apply proven rules per outcome"
-                    className={`flex-none rounded-full border px-3 py-1.5 font-mono text-[11px] font-bold transition-colors ${
-                      applyProven ? "border-flood bg-flood/15 text-flood" : "border-white/15 text-onpitch-mute hover:border-white/30"
-                    }`}
-                  >
-                    {applyProven ? "Applied ✓" : "Off"}
-                  </button>
-                </div>
-              </div>
-            ) : chips.size > 1 ? (
-              // no selected outcome has a proven rule yet — one mix run, model screening only
-              // (per-outcome would cost extra daily runs for zero rule benefit)
+            {/* The platform screens every outcome with its own validated rule automatically —
+                no user rule to set (owner-directed 2026-09-08). */}
+            {chips.size > 0 && (
               <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">
-                No proven rules for these outcomes yet — they run as one spec on model screening.
+                Each outcome is screened by the platform&apos;s own validated rule — no setup needed.
               </p>
-            ) : null}
+            )}
 
             {/* kick-off window — narrows the engine hunt to games starting inside it */}
             <div className="mt-4">
