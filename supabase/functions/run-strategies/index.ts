@@ -1837,7 +1837,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const screen = DEFAULT_SCREENS[baseMk];
       if (screen) rule = { filters: screen, select: [] };
       // per-market minimum confidence floors enforced on top of the screen (owner-directed).
-      const MIN_FLOORS: Record<string, number> = { double_chance_1x: 0.80, under_3_5: 0.73 };
+      const MIN_FLOORS: Record<string, number> = { double_chance_1x: 0.80, double_chance_x2: 0.80, double_chance_12: 0.80, under_3_5: 0.73 };
       if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
     }
   } catch (_e) { /* market defaults are best-effort; never break core selection */ }
