@@ -1818,8 +1818,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // (we never stack the two). The owner-ruled 0.5 baseline floor still gates every market; only
   // Double Chance 1X raises it (its whole screen IS confidence >=80%). Thresholds locked from
   // backtests: 1UP screen >=80% (below that home wins only ~41%); New GG = BTTS 64-66% (82.9% Over
-  // 1.5); Over 0.5 >=98% (77% Over 2.5); both-team Over1.5 odds >=2.00 for Under 3.5 (73% floor
-  // dropped pending A/B). Wrapped so a mistake here can NEVER break core selection.
+  // 1.5); Over 0.5 >=98% (77% Over 2.5); both-team Over1.5 odds >=2.00 for Under 3.5 + a 73%
+  // confidence floor. Wrapped so a mistake here can NEVER break core selection.
   try {
     const hasUserRule = !!(rule && (((rule.filters?.length ?? 0) > 0) || ((rule.select?.length ?? 0) > 0)));
     if (!hasUserRule && !baseSet) {
@@ -1836,7 +1836,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       };
       const screen = DEFAULT_SCREENS[baseMk];
       if (screen) rule = { filters: screen, select: [] };
-      if (baseMk === "double_chance_1x") confFloor = Math.max(confFloor, 0.80);
+      // per-market minimum confidence floors enforced on top of the screen (owner-directed).
+      const MIN_FLOORS: Record<string, number> = { double_chance_1x: 0.80, under_3_5: 0.73 };
+      if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
     }
   } catch (_e) { /* market defaults are best-effort; never break core selection */ }
   const priced: Scored[] = [], unpriced: Scored[] = [];
