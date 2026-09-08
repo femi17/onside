@@ -1835,7 +1835,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         away_to_score: [F("away_1up_prob", "gte", 0.80)],
       };
       const screen = DEFAULT_SCREENS[baseMk];
-      if (screen) rule = { filters: screen, select: [] };
+      // BTTS is a weak bet at the New GG band (58% lands) but those games go OVER 2.5 ~65% (+EV),
+      // and today's live New GG picks went 5/6 Over 2.5 (incl. a 0-5 where BTTS lost) — owner-
+      // directed: a rule-less BTTS agent SCREENS on the BTTS 64-66% band but BETS Over 2.5.
+      if (screen) rule = {
+        filters: screen,
+        select: baseMk === "btts" ? [{ when: [], market_key: "over_2_5", side: "over", line: 2.5 }] : [],
+      };
       // per-market minimum confidence floors enforced on top of the screen (owner-directed).
       const MIN_FLOORS: Record<string, number> = { double_chance_1x: 0.80, double_chance_x2: 0.80, double_chance_12: 0.80, under_3_5: 0.73 };
       if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
