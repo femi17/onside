@@ -1847,6 +1847,24 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
     }
   } catch (_e) { /* market defaults are best-effort; never break core selection */ }
+  // MANDATORY Under 3.5 platform rule (owner-directed 2026-09-09): EVERY under_3_5 pick — from ANY
+  // agent, whether or not it set its own rule, single-market OR chosen inside a mix — must clear a
+  // 73% floor AND come from a game where BOTH teams' Over 1.5 odds are >= 2.00 (the low-scoring
+  // signal). A user's own rule can only ADD selectivity on top; it can NEVER lower this bar. No
+  // bookmaker odds to price the both-O1.5 screen => fail closed (skip). Stabilises Under 3.5 for
+  // every customer, not just the ruleless ones the DEFAULT_SCREENS block above already covered.
+  const under35Ok = (bms: any, shownProb: number | null): boolean => {
+    if (shownProb == null || shownProb < 0.73) return false;
+    const ouLam = marketLams(bms);
+    const ouImplied = ouLam ? marketAggFor(ouLam, 1) : null; // ft share = 1
+    const teamOdds = (m: "home_goals_ou" | "away_goals_ou"): number | null => {
+      const direct = marketProb(m, "over", 1.5, bms, "ft");
+      const p = direct != null ? direct : (ouImplied ? modelProb(m, "over", 1.5, ouImplied) : null);
+      return p != null && p > 0.01 && p < 0.995 ? round2(1 / p) : null;
+    };
+    const ho = teamOdds("home_goals_ou"), ao = teamOdds("away_goals_ou");
+    return ho != null && ao != null && ho >= 2.0 && ao >= 2.0;
+  };
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
@@ -1978,6 +1996,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const shown = blend50(chosen.model_prob, chosen.market_prob);
       if (shown == null || shown < confFloor) continue;
       if (shown !== chosen.model_prob) { chosen.model_raw = chosen.model_prob; chosen.model_prob = shown; }
+      // mandatory Under 3.5 platform rule — applies even to mix/family agents that CHOSE under_3_5
+      if (chosen.mk === "under_3_5" && !under35Ok(await bookmakersFor(f.id, key), chosen.model_prob)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2017,6 +2037,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketFor(baseCand, bms2);
     if (kp == null) {
+      // mandatory Under 3.5 rule needs bookmaker odds to verify the both-O1.5 screen — no odds => skip
+      if (eff.mk === "under_3_5") continue;
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)
@@ -2033,6 +2055,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // pre-odds early exit during the transition)
     const shownP = blend50(mp, kp);
     if (shownP == null || shownP < confFloor) continue;
+    // mandatory Under 3.5 platform rule — enforced on every under_3_5 agent regardless of its own rule
+    if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
