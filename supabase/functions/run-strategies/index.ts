@@ -2107,6 +2107,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
       if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
       if ((chosen.mk === "double_chance_1x" || chosen.mk === "double_chance_x2") && (chosen.model_prob ?? 0) < 0.80) continue;
+      // mandatory 1UP rule (mix/family agents that CHOSE a 1UP market) — model (shown) >= 85%
+      if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
       // mandatory BTTS rule (mix/family agents that CHOSE btts) — New GG 64-65% band
       if (chosen.mk === "btts" && !bttsOk(cell)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
@@ -2163,6 +2165,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (eff.mk === "under_3_5") continue;
       // mandatory Double Chance 1X/X2 floor still applies with no odds (shown == model)
       if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && mp < 0.80) continue;
+      // mandatory 1UP floor with no odds (shown == model)
+      if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && mp < 0.85) continue;
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)
@@ -2183,6 +2187,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
     // mandatory Double Chance 1X / X2 platform rule — model (shown) >= 80%
     if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && shownP < 0.80) continue;
+    // mandatory 1UP platform rule — model (shown) >= 85% (home_win_1up 95.5% / away_win_1up 90.9% at >=80%)
+    if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && shownP < 0.85) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
