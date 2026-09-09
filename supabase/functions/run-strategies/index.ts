@@ -1865,21 +1865,23 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const ho = teamOdds("home_goals_ou"), ao = teamOdds("away_goals_ou");
     return ho != null && ao != null && ho >= 2.0 && ao >= 2.0;
   };
-  // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): rules 1 AND 3 together — Over 0.5
-  // model prob >= 0.98 (very high-scoring signal, ~77% Over 2.5) AND combined blend >= 4.5 (71.3%
-  // holdout, on par with rules 1/2). Two independent confirmations => higher precision. Applied to
-  // every over_2_5 pick from a DIRECT or MIX agent regardless of its own rule (a user rule can only
-  // ADD selectivity). The BTTS/New GG -> Over 2.5 conversion (rule 2, base market 'btts') is EXEMPT:
-  // its band games sit below blend 4.5, so it keeps its own governing rule. No confident model
-  // rating / no full form for both sides => fail closed (skip).
+  // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): the Over 2.5 rules run
+  // INDEPENDENTLY — a game qualifies if it passes EITHER rule on its own, NOT both concatenated.
+  //   Rule 1: Over 0.5 model prob >= 0.98 (very high-scoring signal, ~77% Over 2.5)
+  //   Rule 3: combined blend >= 4.5 (71.3% holdout / 75.2% train, on par)
+  // Each is an independent selector; a game flagged by more than one collapses to a single pick via
+  // the per-agent UNIQUE(strategy_id, fixture_id) delivery guard. Applied to every over_2_5 pick
+  // from a DIRECT or MIX agent regardless of its own rule (a user rule can only ADD selectivity).
+  // The BTTS/New GG -> Over 2.5 conversion (rule 2, base market 'btts') runs as its own path and is
+  // EXEMPT: its band games sit below blend 4.5. No confident model rating => fail closed (skip).
   const over25Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
     const over05 = overP(cell.agg, 0.5);
-    if (over05 == null || over05 < 0.98) return false;              // rule 1
+    if (over05 != null && over05 >= 0.98) return true;             // rule 1 passes on its own
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
-    if (hB == null || aB == null) return false;
-    return (hB + aB) / 2 >= 4.5;                                    // rule 3
+    if (hB != null && aB != null && (hB + aB) / 2 >= 4.5) return true; // rule 3 passes on its own
+    return false;
   };
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
