@@ -1824,15 +1824,15 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const hasUserRule = !!(rule && (((rule.filters?.length ?? 0) > 0) || ((rule.select?.length ?? 0) > 0)));
     if (!hasUserRule && !baseSet) {
       const F = (field: string, op: string, value: number, value2 = 0): Cond => ({ field, op, value, value2 });
+      // over_1_5 / over_2_5 / home_to_score / away_to_score are deliberately NOT here — each is
+      // governed by its own MANDATORY independent-rules gate below (over15Ok / over25Ok /
+      // homeScoreOk / awayScoreOk) that applies to EVERY agent. A single screen here would
+      // AND-restrict ruleless agents to just one of the rules and defeat the OR independence.
       const DEFAULT_SCREENS: Record<string, Cond[]> = {
         under_3_5: [F("home_over15_odds", "gte", 2.0), F("away_over15_odds", "gte", 2.0)],
-        over_2_5: [F("over05_prob", "gte", 0.98)],
-        over_1_5: [F("btts_prob", "between", 0.64, 0.66)],
         btts: [F("btts_prob", "between", 0.64, 0.66)],
         home_win: [F("home_1up_prob", "gte", 0.80)],
-        home_to_score: [F("home_1up_prob", "gte", 0.80)],
         away_win: [F("away_1up_prob", "gte", 0.80)],
-        away_to_score: [F("away_1up_prob", "gte", 0.80)],
       };
       const screen = DEFAULT_SCREENS[baseMk];
       // BTTS is a weak bet at the New GG band (58% lands) but those games go OVER 2.5 ~65% (+EV),
@@ -1906,6 +1906,39 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (o15 != null && o15 >= 0.85 && blend != null && blend >= 3.0) return true; // rule 2
     const btts = round2(cell.agg.btts);
     if (btts >= 0.64 && btts <= 0.66) return true;                       // rule 3
+    return false;
+  };
+  // MANDATORY Home-to-score platform rule (owner-directed 2026-09-09): 3 independent rules (OR):
+  //   Rule 1: model home-to-score >= 0.85 AND home goals avg >= 1.5 (87.0% on graded picks — live)
+  //   Rule 2: combined blend >= 4.0 AND home goals avg >= 1.8       (84.3% holdout)
+  //   Rule 3: home goals avg >= 2.0                                 (81.8% holdout)
+  const homeScoreOk = (cell: Cell, hf?: Form, af?: Form): boolean => {
+    if (!cell.confident) return false;
+    const hAvg = hf && hf.n ? hf.gf5 / hf.n : null;
+    const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
+    const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
+    const blend = hB != null && aB != null ? (hB + aB) / 2 : null;
+    const hs = cell.agg.homeScore;
+    if (hs != null && hs >= 0.85 && hAvg != null && hAvg >= 1.5) return true;      // rule 1
+    if (blend != null && blend >= 4.0 && hAvg != null && hAvg >= 1.8) return true; // rule 2
+    if (hAvg != null && hAvg >= 2.0) return true;                                  // rule 3
+    return false;
+  };
+  // MANDATORY Away-to-score platform rule (owner-directed 2026-09-09): 3 independent rules (OR).
+  // Away scoring is structurally harder than home, so its structural bar sits a notch lower:
+  //   Rule 1: model away-to-score >= 0.85   (89.0% farmed)
+  //   Rule 2: combined blend >= 4.5         (77.9% holdout)
+  //   Rule 3: away won >= 4 of last 5       (76.6% holdout)
+  const awayScoreOk = (cell: Cell, hf?: Form, af?: Form): boolean => {
+    if (!cell.confident) return false;
+    const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
+    const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
+    const blend = hB != null && aB != null ? (hB + aB) / 2 : null;
+    const as = cell.agg.awayScore;
+    const aw = af ? af.wins5 : null;
+    if (as != null && as >= 0.85) return true;                    // rule 1
+    if (blend != null && blend >= 4.5) return true;               // rule 2
+    if (aw != null && aw >= 4) return true;                       // rule 3
     return false;
   };
   const priced: Scored[] = [], unpriced: Scored[] = [];
@@ -2045,6 +2078,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (chosen.mk === "over_2_5" && baseMk !== "btts" && !over25Ok(cell, hForm, aForm)) continue;
       // mandatory Over 1.5 platform rule (3 independent rules) — mix/family agents that CHOSE over_1_5
       if (chosen.mk === "over_1_5" && baseMk !== "btts" && !over15Ok(cell, hForm, aForm)) continue;
+      // mandatory Home/Away-to-score platform rules (mix/family agents that CHOSE to-score)
+      if (chosen.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
+      if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2083,6 +2119,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (eff.mk === "over_2_5" && baseMk !== "btts" && !over25Ok(cell, hForm, aForm)) continue;
     // mandatory Over 1.5 platform rule (3 independent rules) — every direct/mix over_1_5 pick
     if (eff.mk === "over_1_5" && baseMk !== "btts" && !over15Ok(cell, hForm, aForm)) continue;
+    // mandatory Home/Away-to-score platform rules (3 independent rules each)
+    if (eff.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
+    if (eff.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
