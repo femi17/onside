@@ -2133,6 +2133,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((chosen.period ?? "ft") === "1h" && chosen.side === "under"
           && ((chosen.mk === "total_goals_ou" && chosen.line === 1.5) || chosen.mk === "under_1_5")
           && !(cell.confident && (1 - overP(cell.agg, 3.5)) >= 0.76)) continue;
+      // 1st-half Over 0.5 (mix chose it): bet only when full-match Over 1.5 model prob >= 0.85
+      if ((chosen.period ?? "ft") === "1h" && chosen.side === "over"
+          && ((chosen.mk === "total_goals_ou" && chosen.line === 0.5) || chosen.mk === "over_0_5")
+          && !(cell.confident && overP(cell.agg, 1.5) >= 0.85)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2183,6 +2187,12 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if ((strategy.period ?? "ft") === "1h" && eff.side === "under"
         && ((eff.mk === "total_goals_ou" && eff.line === 1.5) || eff.mk === "under_1_5")
         && !(cell.confident && (1 - overP(cell.agg, 3.5)) >= 0.76)) continue;
+    // 1st-half Over 0.5: bet only when the full-match Over 1.5 model prob >= 0.85 (owner-directed
+    // 2026-09-09; Over-1.5 games are 1H Over 0.5 ~79%, Over-2.5 games ~87%, so a strong Over 1.5
+    // signal lands ~80%). Engine prices 1H Over 0.5 itself, so this is only the gate.
+    if ((strategy.period ?? "ft") === "1h" && eff.side === "over"
+        && ((eff.mk === "total_goals_ou" && eff.line === 0.5) || eff.mk === "over_0_5")
+        && !(cell.confident && overP(cell.agg, 1.5) >= 0.85)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
