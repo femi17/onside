@@ -1865,19 +1865,23 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const ho = teamOdds("home_goals_ou"), ao = teamOdds("away_goals_ou");
     return ho != null && ao != null && ho >= 2.0 && ao >= 2.0;
   };
-  // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): the Over 2.5 rules run
-  // INDEPENDENTLY — a game qualifies if it passes EITHER rule on its own, NOT both concatenated.
-  //   Rule 1: Over 0.5 model prob >= 0.98 (very high-scoring signal, ~77% Over 2.5)
-  //   Rule 3: combined blend >= 4.5 (71.3% holdout / 75.2% train, on par)
-  // Each is an independent selector; a game flagged by more than one collapses to a single pick via
-  // the per-agent UNIQUE(strategy_id, fixture_id) delivery guard. Applied to every over_2_5 pick
-  // from a DIRECT or MIX agent regardless of its own rule (a user rule can only ADD selectivity).
-  // The BTTS/New GG -> Over 2.5 conversion (rule 2, base market 'btts') runs as its own path and is
-  // EXEMPT: its band games sit below blend 4.5. No confident model rating => fail closed (skip).
+  // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): the Over 2.5 agent is governed by
+  // THREE rules that each run INDEPENDENTLY — a game qualifies if it passes ANY one on its own (OR),
+  // never all concatenated:
+  //   Rule 1: Over 0.5 model prob >= 0.98         (very high-scoring signal, ~77% Over 2.5)
+  //   Rule 2: model BTTS in the New GG band 64-66 (~66% Over 2.5)
+  //   Rule 3: combined blend >= 4.5               (71.3% holdout / 75.2% train, on par)
+  // A game flagged by more than one rule collapses to a SINGLE pick via the per-agent
+  // UNIQUE(strategy_id, fixture_id) delivery guard — no duplicate among the three rules. Applied to
+  // every over_2_5 pick from a DIRECT or MIX agent regardless of its own rule (a user rule can only
+  // ADD selectivity). The BTTS agent's own New GG -> Over 2.5 conversion (base market 'btts') runs
+  // separately and is EXEMPT from this. No confident model rating => fail closed (skip).
   const over25Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
     const over05 = overP(cell.agg, 0.5);
     if (over05 != null && over05 >= 0.98) return true;             // rule 1 passes on its own
+    const btts = round2(cell.agg.btts);
+    if (btts >= 0.64 && btts <= 0.66) return true;                 // rule 2 passes on its own
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
     if (hB != null && aB != null && (hB + aB) / 2 >= 4.5) return true; // rule 3 passes on its own
