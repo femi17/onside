@@ -289,6 +289,12 @@ function modelProb(mk: string, side: string | null, line: number | null, agg: Ag
     // game, so it ships at a flat CALIBRATED 0.85 when the gate passes, else null (not delivered) —
     // never the 99% (that would overclaim). Model-band learning will refine it as picks settle.
     case "goals_in_row_2": return (side !== "no" && overP(agg, 0.5) >= 0.99) ? 0.85 : null;
+    // "NO team scores 3 in a row" — owner-directed 2026-09-09: bet the NO side on games the model
+    // rates Under 3.5 >= 76% (low-scoring => a team scoring 3 unanswered is very unlikely). Events
+    // backtest: NO-3-in-row is 90.4% when the game finishes Under 3.5; the model gate realizes ~80%.
+    // Engine doesn't model 3-in-a-row per game, so ships a flat CALIBRATED 0.80 (honest, not the 90%),
+    // else null (not delivered). Only the NO side (yes-3-in-row stays unpriced). Model-band refines it.
+    case "goals_in_row_3": return (side === "no" && (1 - overP(agg, 3.5)) >= 0.76) ? 0.80 : null;
     case "home_goals_ou":
     case "away_goals_ou": {
       if (line == null) return null;
