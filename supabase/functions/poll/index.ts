@@ -569,7 +569,16 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
     case "highest_scoring_half": { const d = (f.h1h + f.h1a) - (f.h2h + f.h2a); const hi = d > 0 ? "1h" : d < 0 ? "2h" : "equal"; return W(hi === side); }
     case "home_highest_scoring_half": { const d = f.h1h - f.h2h; const hi = d > 0 ? "1h" : d < 0 ? "2h" : "equal"; return W(hi === side); }
     case "away_highest_scoring_half": { const d = f.h1a - f.h2a; const hi = d > 0 ? "1h" : d < 0 ? "2h" : "equal"; return W(hi === side); }
-    case "teams_to_score": { const s = h > 0 && a > 0 ? "both" : h > 0 ? "home" : a > 0 ? "away" : "none"; return W(s === side); }
+    // "Teams to score — Home/Away" means that team SCORED (inclusive; both-scoring still wins the
+    // home/away side) — matches away_to_score/home_to_score. Both/None stay exact. (fix 2026-09-09:
+    // was graded exclusively as both/home/away/none, so a 2-3 wrongly lost the "away to score" side.)
+    case "teams_to_score": {
+      if (side === "home") return W(h > 0);
+      if (side === "away") return W(a > 0);
+      if (side === "both" || side === "yes") return W(h > 0 && a > 0);
+      if (side === "none" || side === "no") return W(h === 0 && a === 0);
+      return null;
+    }
     case "htft_cs": { const m = (val || "").match(/(\d+)\D+(\d+)\D+(\d+)\D+(\d+)/); return m ? W(f.h1h === Number(m[1]) && f.h1a === Number(m[2]) && f.hg === Number(m[3]) && f.ag === Number(m[4])) : null; }
     case "both_halves_ou": { if (line == null) return null; const o1 = (f.h1h + f.h1a) > line, o2 = (f.h2h + f.h2a) > line; return W(side === "over" ? o1 && o2 : !o1 && !o2); }
     case "winning_margin": return gradeMargin(val, h, a);

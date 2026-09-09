@@ -91,7 +91,7 @@ export const BET_CATALOG: CatalogMarket[] = [
   { id: "result_or_cs", label: "1X2 or Clean Sheet", group: "Special", gradeableKey: "result_or_cs", rule: "Result OR either team keeps a clean sheet — either wins." },
   { id: "htft", label: "Half-time/Full-time", group: "Score", gradeableKey: "htft", value: TEXT, rule: "Leader at HT and at FT." },
   { id: "htft_cs", label: "HT/FT correct score", group: "Score", gradeableKey: "htft_cs", value: TEXT, rule: "Exact 1st-half score and exact full-time score." },
-  { id: "teams_to_score", label: "Teams to score", group: "Goals", gradeableKey: "teams_to_score", rule: "Which team(s) score: both / home / away / neither." },
+  { id: "teams_to_score", label: "Teams to score", group: "Goals", gradeableKey: "teams_to_score", rule: "Both teams score, or neither. A named home/away side means that team scores (use Home/Away team to score)." },
   { id: "home_highest_scoring_half", label: "Home highest scoring half", group: "Half", gradeableKey: "home_highest_scoring_half", rule: "Which half the Home team scored more in." },
   { id: "first_team_to_score", label: "First team to score", group: "Score", gradeableKey: "first_team_to_score", rule: "Which team scores first (or none)." },
   { id: "first_goal_interval", label: "When will the 1st goal be scored", group: "Goals", gradeableKey: "first_goal_interval", value: TEXT, rule: "Which minute interval the first goal falls in (or None)." },
@@ -482,11 +482,14 @@ export function recognizeBet(input: string): RecognizedBet | null {
     };
   }
 
-  // Teams to score — which team(s) find the net: both / home only / away only / neither.
+  // Teams to score. A named HOME/AWAY side means that team SCORES (inclusive) — route to the
+  // canonical home_to_score/away_to_score so it prices and grades as "team scored" (owner-ruled
+  // 2026-09-09; both-scoring wins the home/away side). Only both / neither stay on teams_to_score.
   // Guard against "both teams to score" (that's BTTS, handled by the alias map).
   if (/teams?\s+to\s+score/.test(raw) && !/both\s+teams\s+to\s+score/.test(raw)) {
-    const side = /\bboth\b/.test(raw) ? "both" : /\bneither\b|\bnone\b|no\s*goal/.test(raw) ? "none"
-      : /\bhome\b/.test(raw) ? "home" : /\baway\b/.test(raw) ? "away" : null;
+    if (/\bhome\b/.test(raw)) return { marketKey: "home_to_score", label: "Home team to score", line: null, side: "home", period: "ft", gradeable: true, value: null };
+    if (/\baway\b/.test(raw)) return { marketKey: "away_to_score", label: "Away team to score", line: null, side: "away", period: "ft", gradeable: true, value: null };
+    const side = /\bboth\b/.test(raw) ? "both" : /\bneither\b|\bnone\b|no\s*goal/.test(raw) ? "none" : null;
     if (side) return { marketKey: "teams_to_score", label: `Teams to score — ${side}`, line: null, side, period: "ft", gradeable: true, value: null };
   }
 

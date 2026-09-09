@@ -873,7 +873,13 @@ function canon(mk: string, side: string | null, line: number | null): { mk: stri
     const s = (side ?? "1x").toLowerCase();
     return { mk: s === "x2" ? "double_chance_x2" : s === "12" ? "double_chance_12" : "double_chance_1x", side: s, line: null };
   }
-  if (mk === "teams_to_score") return { mk: "btts", side: side ?? "yes", line: null };
+  // "Teams to score — Home/Away" = that team scores (inclusive) -> price as home/away_to_score so it
+  // matches settlement; both/none map to BTTS yes/no (fix 2026-09-09, was always priced as BTTS).
+  if (mk === "teams_to_score") {
+    if (side === "home") return { mk: "home_to_score", side: "home", line: null };
+    if (side === "away") return { mk: "away_to_score", side: "away", line: null };
+    return { mk: "btts", side: (side === "no" || side === "none") ? "no" : "yes", line: null };
+  }
   if (mk === "home_no_bet") return { mk: "dnb", side: "away", line: null };
   if (mk === "away_no_bet") return { mk: "dnb", side: "home", line: null };
   // per settlement, draw 2UP/Never-Down are exactly a draw bet — price them as one
