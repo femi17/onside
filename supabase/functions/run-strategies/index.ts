@@ -283,6 +283,12 @@ function modelProb(mk: string, side: string | null, line: number | null, agg: Ag
     case "btts": return side === "no" ? 1 - agg.btts : agg.btts;
     case "home_to_score": return agg.homeScore;
     case "away_to_score": return agg.awayScore;
+    // "Any team to score 2 in a row" — owner-directed 2026-09-09: bet ONLY on games the model rates
+    // Over 0.5 >= 99% (=> expected goals >= ~4.6, extreme high-scoring; 2-in-a-row lands ~85% in the
+    // events-feed backtest: 87% at total>=4, 92% at >=5). The engine doesn't model 2-in-a-row per
+    // game, so it ships at a flat CALIBRATED 0.85 when the gate passes, else null (not delivered) —
+    // never the 99% (that would overclaim). Model-band learning will refine it as picks settle.
+    case "goals_in_row_2": return (side !== "no" && overP(agg, 0.5) >= 0.99) ? 0.85 : null;
     case "home_goals_ou":
     case "away_goals_ou": {
       if (line == null) return null;
