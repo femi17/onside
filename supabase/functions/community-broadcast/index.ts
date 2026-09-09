@@ -564,6 +564,112 @@ async function perfectAgentPost(): Promise<Response | null> {
   return new Response(JSON.stringify({ status: ok ? "posted" : "failed", slot: "perfect_agent", n }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
+// ---- Engagement slots (owner-directed 2026-09-09): native Telegram polls + an honest deterministic
+// receipt, so the channel invites a tap/vote instead of only broadcasting. Polls are self-contained
+// (no footer/caption in the Telegram API); the receipt is pure data so it carries no LLM/banned risk.
+
+// Today's standout UPCOMING pick: highest model confidence, deduped by fixture, tier-tagged leagues
+// preferred (established competitions the bookmaker actually prices) so polls aren't on obscure games.
+async function topUpcomingPick(): Promise<any | null> {
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const { data } = await sb.from("deliveries")
+    .select("model_prob, market_label, bet_value, market_key, side, line, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
+    .gte("delivered_at", startOfDay).not("model_prob", "is", null)
+    .order("model_prob", { ascending: false }).limit(100);
+  const rows = dedupeByFixture((data ?? []) as any[])
+    .filter((r) => r.fixtures && Date.parse(r.fixtures.kickoff_utc) > now.getTime());
+  const tierOf = (r: any) => { const l = r.fixtures?.leagues; return (Array.isArray(l) ? l[0]?.tier : l?.tier) ?? null; };
+  return rows.find((r) => tierOf(r) != null) ?? rows[0] ?? null;
+}
+
+function betLabelOf(p: any): string {
+  return `${p.market_label ?? p.market_key}${p.bet_value ? ` ${p.bet_value}` : ""}`;
+}
+
+// Shared sender for the poll slots — dry preview / owner DM / live channel, logged to channel_posts.
+async function sendPollSlot(slot: string, theme: string, question: string, options: string[], meta: any, dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+  const poll = { question: question.slice(0, 300), options: options.map((o) => o.slice(0, 100)), is_anonymous: true };
+  if (dry) return J({ status: "dry", slot, ...poll });
+  if (dmChats && dmChats.length) {
+    for (const chat of dmChats) await tg("sendPoll", { chat_id: chat, ...poll });
+    return J({ status: "dm_sent", slot });
+  }
+  const sent = await tg("sendPoll", { chat_id: CHANNEL, ...poll });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot, theme, body: poll.question,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? meta : { ...meta, telegram: sent },
+  });
+  return J({ status: ok ? "posted" : "failed", slot });
+}
+
+// Sentiment poll on the day's standout fixture — "you think e go enter?". Falls back to a
+// "pick the market" engagement poll when nothing ripe is upcoming, so the slot always posts.
+async function pollPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const p = await topUpcomingPick();
+  if (p) {
+    const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
+    const q = `⚽ ${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n\nOnside model dey feel: ${betLabelOf(p)}${conf}.\n\nYou think e go enter?`;
+    return await sendPollSlot("poll", "poll:pick", q, ["✅ E go enter", "❌ E go fail", "👀 I dey watch"],
+      { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob }, dry, dmChats);
+  }
+  return await sendPollSlot("poll", "poll:market", "No big one wey ripe now — oya talk true:\n\nWhich market you dey trust pass?",
+    ["Over 1.5 ⚽", "Both teams to score", "Double chance", "Home to score"], { fallback: true }, dry, dmChats);
+}
+
+// Free banker of the day framed as a tail poll — the single highest-confidence upcoming pick.
+async function bankerPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const p = await topUpcomingPick();
+  if (!p) return new Response(JSON.stringify({ status: "skipped", slot: "banker", reason: "no upcoming pick" }), { status: 200, headers: { "content-type": "application/json" } });
+  const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
+  const q = `🔒 Onside banker of the day\n\n${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n${betLabelOf(p)}${conf}\n\nYou dey tail?`;
+  return await sendPollSlot("banker", "banker:top", q, ["🔥 I dey on am", "👀 I dey watch", "🙅 I pass"],
+    { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob }, dry, dmChats);
+}
+
+// Honest deterministic receipt of yesterday's settled picks: hit rate + claimed-vs-landed
+// calibration + standout wins AND a miss. Pure data — no Claude, no banned-phrase risk.
+async function receiptPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const { data } = await sb.from("deliveries")
+    .select("result, model_prob, market_label, bet_value, market_key, fixtures(home_team, away_team, ft_home, ft_away)")
+    .gte("settled_at", since).in("result", ["won", "lost"]).not("model_prob", "is", null).limit(1500);
+  const rows = (data ?? []) as any[];
+  if (rows.length < 5) return J({ status: "skipped", slot: "receipt", reason: "too few settled" });
+  const won = rows.filter((r) => r.result === "won").length;
+  const hit = won / rows.length;
+  const claimed = rows.reduce((s, r) => s + Number(r.model_prob), 0) / rows.length;
+  const line = (r: any) => `${fxName(r.fixtures)} — ${r.market_label ?? r.market_key}${r.bet_value ? ` ${r.bet_value}` : ""}${r.fixtures?.ft_home != null ? ` (${r.fixtures.ft_home}-${r.fixtures.ft_away})` : ""}`;
+  const wins = rows.filter((r) => r.result === "won").sort((a, b) => Number(b.model_prob) - Number(a.model_prob)).slice(0, 3);
+  const miss = rows.filter((r) => r.result === "lost")[0];
+  let text = `📊 Yesterday receipt — every pick graded, misses join\n\n`;
+  text += `${won}/${rows.length} land (${pct(hit)})\n`;
+  text += `We claim ${pct(claimed)} · e land ${pct(hit)}\n\n`;
+  for (const w of wins) text += `✅ ${line(w)}\n`;
+  if (miss) text += `❌ ${line(miss)}\n`;
+  text += `\nNo hype, na the board talk. Build your own AI agent make e hunt for you.`;
+  text = text.slice(0, 900) + FOOTER;
+  if (dry) return J({ status: "dry", slot: "receipt", text });
+  if (dmChats && dmChats.length) {
+    for (const chat of dmChats) await tg("sendMessage", { chat_id: chat, text, disable_web_page_preview: true });
+    return J({ status: "dm_sent", slot: "receipt" });
+  }
+  const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "receipt", theme: "receipt", body: text,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { n: rows.length, won, hit: Number(hit.toFixed(3)), claimed: Number(claimed.toFixed(3)) } : { telegram: sent },
+  });
+  return J({ status: ok ? "posted" : "failed", slot: "receipt", n: rows.length, won });
+}
+
 async function runTextSlot(slot: string): Promise<Response> {
   let theme = slot; let body = "";
   try {
@@ -605,6 +711,10 @@ Deno.serve(async (req) => {
   if (slot === "agent_hits") return await agentHitsPost(dry, dmChats);
   // Night: one short rule tip, rotating across the glossary's market families.
   if (slot === "rule_tip") return await ruleTipPost(dry, dmChats);
+  // Engagement slots: native polls (vote/tail) + an honest deterministic results receipt.
+  if (slot === "poll") return await pollPost(dry, dmChats);
+  if (slot === "banker") return await bankerPost(dry, dmChats);
+  if (slot === "receipt") return await receiptPost(dry, dmChats);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
   // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
