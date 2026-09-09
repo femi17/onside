@@ -2117,6 +2117,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
       // mandatory BTTS rule (mix/family agents that CHOSE btts) — New GG 64-65% band
       if (chosen.mk === "btts" && !bttsOk(cell)) continue;
+      // 1st-half Under 1.5 (mix chose it): bet only when full-match Under 3.5 model prob >= 0.76
+      if ((chosen.period ?? "ft") === "1h" && chosen.side === "under"
+          && ((chosen.mk === "total_goals_ou" && chosen.line === 1.5) || chosen.mk === "under_1_5")
+          && !(cell.confident && (1 - overP(cell.agg, 3.5)) >= 0.76)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2162,6 +2166,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (eff.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
     // mandatory BTTS platform rule — bets BTTS on the New GG 64-65% band
     if (eff.mk === "btts" && !bttsOk(cell)) continue;
+    // 1st-half Under 1.5: bet only when the full-match Under 3.5 model prob >= 0.76 (owner-directed
+    // 2026-09-09; Under-3.5 games are 1H Under 1.5 ~83%, so a >=76% Under 3.5 signal lands ~76%).
+    if ((strategy.period ?? "ft") === "1h" && eff.side === "under"
+        && ((eff.mk === "total_goals_ou" && eff.line === 1.5) || eff.mk === "under_1_5")
+        && !(cell.confident && (1 - overP(cell.agg, 3.5)) >= 0.76)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
