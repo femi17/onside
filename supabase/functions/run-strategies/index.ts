@@ -1865,6 +1865,22 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const ho = teamOdds("home_goals_ou"), ao = teamOdds("away_goals_ou");
     return ho != null && ao != null && ho >= 2.0 && ao >= 2.0;
   };
+  // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): rules 1 AND 3 together — Over 0.5
+  // model prob >= 0.98 (very high-scoring signal, ~77% Over 2.5) AND combined blend >= 4.5 (71.3%
+  // holdout, on par with rules 1/2). Two independent confirmations => higher precision. Applied to
+  // every over_2_5 pick from a DIRECT or MIX agent regardless of its own rule (a user rule can only
+  // ADD selectivity). The BTTS/New GG -> Over 2.5 conversion (rule 2, base market 'btts') is EXEMPT:
+  // its band games sit below blend 4.5, so it keeps its own governing rule. No confident model
+  // rating / no full form for both sides => fail closed (skip).
+  const over25Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
+    if (!cell.confident) return false;
+    const over05 = overP(cell.agg, 0.5);
+    if (over05 == null || over05 < 0.98) return false;              // rule 1
+    const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
+    const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
+    if (hB == null || aB == null) return false;
+    return (hB + aB) / 2 >= 4.5;                                    // rule 3
+  };
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
     let cell = aggCache.get(f.id);
@@ -1998,6 +2014,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (shown !== chosen.model_prob) { chosen.model_raw = chosen.model_prob; chosen.model_prob = shown; }
       // mandatory Under 3.5 platform rule — applies even to mix/family agents that CHOSE under_3_5
       if (chosen.mk === "under_3_5" && !under35Ok(await bookmakersFor(f.id, key), chosen.model_prob)) continue;
+      // mandatory Over 2.5 platform rule (rules 1+3) — mix/family agents that CHOSE over_2_5; BTTS exempt
+      if (chosen.mk === "over_2_5" && baseMk !== "btts" && !over25Ok(cell, hForm, aForm)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2032,6 +2050,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // delivery floor (owner-ruled 2026-08-17): never ship a pick the model itself calls
     // more-likely-to-miss — edge over the odds is not enough (see set path note)
     if (mp < 0.5) continue;
+    // mandatory Over 2.5 platform rule (rules 1+3) — every direct/mix over_2_5 pick; BTTS->O2.5 exempt
+    if (eff.mk === "over_2_5" && baseMk !== "btts" && !over25Ok(cell, hForm, aForm)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
