@@ -1830,18 +1830,15 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // AND-restrict ruleless agents to just one of the rules and defeat the OR independence.
       const DEFAULT_SCREENS: Record<string, Cond[]> = {
         under_3_5: [F("home_over15_odds", "gte", 2.0), F("away_over15_odds", "gte", 2.0)],
-        btts: [F("btts_prob", "between", 0.64, 0.66)],
         home_win: [F("home_1up_prob", "gte", 0.80)],
         away_win: [F("away_1up_prob", "gte", 0.80)],
       };
       const screen = DEFAULT_SCREENS[baseMk];
-      // BTTS is a weak bet at the New GG band (58% lands) but those games go OVER 2.5 ~65% (+EV),
-      // and today's live New GG picks went 5/6 Over 2.5 (incl. a 0-5 where BTTS lost) — owner-
-      // directed: a rule-less BTTS agent SCREENS on the BTTS 64-66% band but BETS Over 2.5.
-      if (screen) rule = {
-        filters: screen,
-        select: baseMk === "btts" ? [{ when: [], market_key: "over_2_5", side: "over", line: 2.5 }] : [],
-      };
+      // BTTS is governed by its own mandatory bttsOk gate below — it BETS BTTS on the New GG 64-65%
+      // band (owner-directed 2026-09-09, reversing the earlier BTTS -> Over 2.5 conversion). The
+      // New GG signal still feeds the Over 1.5 / Over 2.5 agents' own rules; only the BTTS agent
+      // changed. No select branch here anymore.
+      if (screen) rule = { filters: screen, select: [] };
       // per-market minimum confidence floors for ruleless agents. Double Chance moved OUT to its own
       // mandatory pick-point gates below (1X/X2 need shown >= 0.80; 12 uses dc12Ok structural rules —
       // it must NOT be floored at 0.80 because the model over-claims on raw DC-12 confidence).
@@ -1956,6 +1953,16 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
     if (hB != null && aB != null && (hB + aB) / 2 >= 4.2) return true; // high-scoring => not a draw
     return false;
+  };
+  // MANDATORY BTTS platform rule (owner-directed 2026-09-09): a BTTS agent BETS BTTS (no longer
+  // converts to Over 2.5) on the New GG band — model BTTS in 0.64-0.65. Enforced on every BTTS pick
+  // regardless of the agent's own rule (a user rule can only ADD selectivity). BTTS caps ~64% even
+  // at its best, so this band is the sweet spot; the Over 1.5/2.5 agents keep using the band as their
+  // own signal separately. No confident model rating => fail closed.
+  const bttsOk = (cell: Cell): boolean => {
+    if (!cell.confident) return false;
+    const b = round2(cell.agg.btts);
+    return b >= 0.64 && b <= 0.65;
   };
   const priced: Scored[] = [], unpriced: Scored[] = [];
   for (const f of fixtures) {
@@ -2100,6 +2107,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
       if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
       if ((chosen.mk === "double_chance_1x" || chosen.mk === "double_chance_x2") && (chosen.model_prob ?? 0) < 0.80) continue;
+      // mandatory BTTS rule (mix/family agents that CHOSE btts) — New GG 64-65% band
+      if (chosen.mk === "btts" && !bttsOk(cell)) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2143,6 +2152,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (eff.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
     // mandatory Double Chance 12 platform rule (favorite either side, or high-scoring => not a draw)
     if (eff.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
+    // mandatory BTTS platform rule — bets BTTS on the New GG 64-65% band
+    if (eff.mk === "btts" && !bttsOk(cell)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
