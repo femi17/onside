@@ -1842,8 +1842,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         filters: screen,
         select: baseMk === "btts" ? [{ when: [], market_key: "over_2_5", side: "over", line: 2.5 }] : [],
       };
-      // per-market minimum confidence floors enforced on top of the screen (owner-directed).
-      const MIN_FLOORS: Record<string, number> = { double_chance_1x: 0.80, double_chance_x2: 0.80, double_chance_12: 0.80, under_3_5: 0.73 };
+      // per-market minimum confidence floors for ruleless agents. Double Chance moved OUT to its own
+      // mandatory pick-point gates below (1X/X2 need shown >= 0.80; 12 uses dc12Ok structural rules —
+      // it must NOT be floored at 0.80 because the model over-claims on raw DC-12 confidence).
+      const MIN_FLOORS: Record<string, number> = { under_3_5: 0.73 };
       if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
     }
   } catch (_e) { /* market defaults are best-effort; never break core selection */ }
@@ -1939,6 +1941,20 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (as != null && as >= 0.85) return true;                    // rule 1
     if (blend != null && blend >= 4.5) return true;               // rule 2
     if (aw != null && aw >= 4) return true;                       // rule 3
+    return false;
+  };
+  // MANDATORY Double Chance platform rules (owner-directed 2026-09-09):
+  //   1X -> model 1X (shown) >= 0.80 (87.8% settled) · X2 -> model X2 (shown) >= 0.80 (81.5% settled)
+  //   12 -> home-win >= 0.70 OR away-win >= 0.70 OR blend >= 4.2 (87.9% / 98.5% / 80.4%)
+  // 1X/X2 gate on the delivered % (a confidence floor, enforced next to shownP); 12 gates on structure
+  // because the model OVER-claims on raw DC-12 confidence (only 73% at >=80%). dc12Ok below covers 12;
+  // 1X/X2 are inline shownP >= 0.80 checks. Each rule independent, deduped by the per-agent guard.
+  const dc12Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
+    if (!cell.confident) return false;
+    if (cell.agg.hw >= 0.70 || cell.agg.aw >= 0.70) return true;      // clear favorite either side
+    const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
+    const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
+    if (hB != null && aB != null && (hB + aB) / 2 >= 4.2) return true; // high-scoring => not a draw
     return false;
   };
   const priced: Scored[] = [], unpriced: Scored[] = [];
@@ -2081,6 +2097,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // mandatory Home/Away-to-score platform rules (mix/family agents that CHOSE to-score)
       if (chosen.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
       if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
+      // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
+      if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
+      if ((chosen.mk === "double_chance_1x" || chosen.mk === "double_chance_x2") && (chosen.model_prob ?? 0) < 0.80) continue;
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2122,6 +2141,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // mandatory Home/Away-to-score platform rules (3 independent rules each)
     if (eff.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
     if (eff.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
+    // mandatory Double Chance 12 platform rule (favorite either side, or high-scoring => not a draw)
+    if (eff.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
     // model-band screen: this exact bet at this % has proven to land far under its claim
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
@@ -2129,6 +2150,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (kp == null) {
       // mandatory Under 3.5 rule needs bookmaker odds to verify the both-O1.5 screen — no odds => skip
       if (eff.mk === "under_3_5") continue;
+      // mandatory Double Chance 1X/X2 floor still applies with no odds (shown == model)
+      if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && mp < 0.80) continue;
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)
@@ -2147,6 +2170,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (shownP == null || shownP < confFloor) continue;
     // mandatory Under 3.5 platform rule — enforced on every under_3_5 agent regardless of its own rule
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
+    // mandatory Double Chance 1X / X2 platform rule — model (shown) >= 80%
+    if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && shownP < 0.80) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
