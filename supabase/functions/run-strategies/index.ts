@@ -2275,9 +2275,12 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && mp < 0.85) continue;
       // away_to_score shown floor (>=75%) also applies with no odds
       if (eff.mk === "away_to_score" && mp < 0.75) continue;
-      // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
-      // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
-      if (mp >= 0.5 && passesDeferred(mp, null, null)
+      // no odds anywhere for this game — deliver the model's own confident call as a model-only
+      // pick, exactly like pickBest does for sets, instead of silently skipping it. The agent's
+      // confidence_floor MUST still apply here (shown == model with no odds): the priced/mix paths
+      // gate on confFloor, and this branch was letting sub-floor model-only picks through — e.g. an
+      // Over 0.5 @99% agent shipped an 88% model-only pick on an odds-less game (Dodoma Jiji).
+      if (mp >= confFloor && mp >= 0.5 && passesDeferred(mp, null, null)
         && bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, mp, null)) {
         unpriced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge: null, tier: null, model_prob: mp, market_prob: null, model_ver: usePilot ? "tier_v1" : "xg_v1" });
       }
