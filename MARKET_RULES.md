@@ -51,14 +51,24 @@ from public.model_signal_lab where n >= 300 and hit >= 80 order by wilson_lb des
 - **Goals-in-row 3 (no)** — Under 3.5 model ≥0.76 → flat 0.80.
 - **Home win / Away win** — farming only (~52% structural; no gate). **Corners** — farming only.
 
-## Roadmap: automate it (the cron the owner asked for)
-Today this is a manual practice (sweep + wire each time). The end state is a **Supabase cron** that keeps
-a `market_rules` table of validated independent rules per outcome (refreshed nightly from the labs with
-a strict bar: min n, min holdout hit, Wilson LB, calibration-vs-live check), and the engine READS that
-table at scoring time instead of hardcoded `*Ok` gates. Then **new and existing agents/accas auto-
-inherit the best rules and auto-update** as farming improves — no per-agent editing. This is a real
-refactor of the hardcoded gates into a data-driven system; it touches live selection, so it needs a
-replay + owner sign-off before shipping. Until then, follow the manual practice above.
+## Auto-integration (LIVE — owner-directed 2026-09-10, no manual prompting)
+Qualifying farmed signals now integrate **themselves**:
+- **`market_rules` table** holds validated cross-market rules per outcome (field/op/value + n/hit/wilson).
+- **`refresh_market_rules()`** cron (`refresh-market-rules`, 03:45 UTC, after the farm refreshes) rebuilds
+  it from `model_signal_lab` (both directions) with a STRICT bar: **hit ≥80, n ≥300, Wilson LB ≥0.75**,
+  native/self pairs dropped, top 4 per market. WHITELIST of eligible markets only:
+  over_1_5, over_2_5, home_to_score, double_chance_1x/x2/12, btts. Hard-floor markets (under_3_5,
+  away_to_score) and weak ones (home_win, away_win, corners, under_2_5, over_3_5) are **excluded** so an
+  auto-rule can never bypass a floor or ship a coin-flip.
+- **Engine** loads `market_rules` (module-cached) and applies each as an EXTRA independent OR path via
+  `autoPass(mk, cell)` inside `over25Ok/over15Ok/homeScoreOk/dc12Ok/bttsOk` and the DC 1X/X2 gates.
+  **Additive-only / safe-by-construction**: it can only ADD qualifying paths, never remove a hardcoded
+  floor. New strong signals appear automatically each night — no code change, no prompt.
+
+To add a market to the auto-system: add it to the whitelist in `refresh_market_rules()` and add
+`autoPass("<market>", cell)` to that market's gate. To change the bar, edit the thresholds in
+`refresh_market_rules()`. `autoPass` only supports agg-derived signal fields (home/away win/score/draw,
+btts, over25) — blend/form-based rules stay hardcoded.
 
 _Last integration sweep: 2026-09-10 (DC 1X + home-to-score cross-signals). Keep this file updated when
 rules change._
