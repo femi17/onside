@@ -670,6 +670,52 @@ async function receiptPost(dry: boolean, dmChats: number[] | null): Promise<Resp
   return J({ status: ok ? "posted" : "failed", slot: "receipt", n: rows.length, won });
 }
 
+// Public 5-leg acca (owner-directed 2026-09-10): "make we track am together, in public". Picks the 5
+// highest-confidence UPCOMING tier-tagged legs with sensible acca odds (1.25-2.5), one per fixture,
+// and posts the slip + combined odds. Deterministic — no Claude, no banned-phrase risk.
+async function accaPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const { data } = await sb.from("deliveries")
+    .select("fixture_id, model_prob, market_label, bet_value, market_key, criteria, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
+    .gte("delivered_at", startOfDay).not("model_prob", "is", null)
+    .order("model_prob", { ascending: false }).limit(250);
+  const t = now.getTime();
+  const tierOf = (r: any) => { const l = r.fixtures?.leagues; return (Array.isArray(l) ? l[0]?.tier : l?.tier) ?? null; };
+  const seen = new Set<string>(); const legs: any[] = [];
+  for (const r of (data ?? []) as any[]) {
+    if (!r.fixtures || Date.parse(r.fixtures.kickoff_utc) <= t) continue;
+    if (tierOf(r) == null) continue; // established leagues only (odds + availability)
+    const o = r.criteria?.odds; const odds = typeof o === "number" ? o : null;
+    if (odds == null || odds < 1.25 || odds > 2.5) continue; // sensible acca legs
+    const k = fxName(r.fixtures); if (seen.has(k)) continue; seen.add(k);
+    legs.push({ r, odds, src: r.criteria?.odds_src });
+    if (legs.length === 5) break;
+  }
+  if (legs.length < 5) return J({ status: "skipped", slot: "acca", reason: "fewer than 5 qualifying legs" });
+  const combined = legs.reduce((p, x) => p * x.odds, 1);
+  let text = `🎟️ The Onside 5 — make we track am together, in public 👇\n\n`;
+  legs.forEach((x, i) => { const pre = x.src === "quoted" ? "@" : "~"; text += `${i + 1}. ${fxName(x.r.fixtures)} · ${betLabelOf(x.r)} · ${pre}${x.odds.toFixed(2)}\n`; });
+  text += `\nCombined odds: ~${combined.toFixed(2)}\n\n`;
+  text += `Every leg graded live and open — some go land, some go miss, na the game. Make we watch am together.`;
+  text = text.slice(0, 900) + FOOTER;
+  if (dry) return J({ status: "dry", slot: "acca", legs: legs.length, combined: combined.toFixed(2), text });
+  if (dmChats && dmChats.length) {
+    for (const c of dmChats) await tg("sendMessage", { chat_id: c, text, disable_web_page_preview: true });
+    return J({ status: "dm_sent", slot: "acca" });
+  }
+  const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "acca", theme: "acca", body: text,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { legs: legs.length, combined: Number(combined.toFixed(2)) } : { telegram: sent },
+  });
+  return J({ status: ok ? "posted" : "failed", slot: "acca", combined: combined.toFixed(2) });
+}
+
 async function runTextSlot(slot: string): Promise<Response> {
   let theme = slot; let body = "";
   try {
@@ -715,6 +761,7 @@ Deno.serve(async (req) => {
   if (slot === "poll") return await pollPost(dry, dmChats);
   if (slot === "banker") return await bankerPost(dry, dmChats);
   if (slot === "receipt") return await receiptPost(dry, dmChats);
+  if (slot === "acca") return await accaPost(dry, dmChats);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
   // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
