@@ -766,7 +766,7 @@ async function settleRows(table: string, rows: any[], facts: Facts, statusCol = 
     await sb.from(table).update({ [statusCol]: r, current_value: liveValue(t.market_key, facts.hg, facts.ag, corners), settled_at: now }).eq("id", t.id);
   }
 }
-const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou"]);
+const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "teams_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou"]);
 async function revertVarSettles(table: string, statusCol: string, fixtureId: number, hg: number, ag: number, regTime: boolean, short?: string): Promise<number> {
   if (!regTime) return 0;
   const { data: rows } = await sb.from(table).select("id,market_key,side,line,period").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
