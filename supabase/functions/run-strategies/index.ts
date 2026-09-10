@@ -2404,10 +2404,33 @@ async function windowLeagueIds(fromIso: string, toIso: string): Promise<number[]
     .not("status", "in", `(${NOT_PICKABLE.join(",")})`).limit(3000);
   return Array.from(new Set((data ?? []).map((r: any) => r.league_id).filter((x: any) => x != null)));
 }
+// The tier-tagged (established) leagues — leagues.tier is set for ~118 competitions across every
+// major region and NULL for the ~1,091 obscure ones (poor bookmaker odds + availability + shaky
+// settlement feeds). Cached for the invocation. This is the quality floor "all" mode now respects.
+let _tierLeagueIds: number[] | null = null;
+async function tierLeagueIds(): Promise<number[]> {
+  if (_tierLeagueIds) return _tierLeagueIds;
+  const ids: number[] = [];
+  for (let off = 0; ; off += 1000) {
+    const { data } = await sb.from("leagues").select("id").not("tier", "is", null).range(off, off + 999);
+    if (!data?.length) break;
+    ids.push(...data.map((r: any) => r.id));
+    if (data.length < 1000) break;
+  }
+  _tierLeagueIds = ids;
+  return ids;
+}
 async function resolveLeagueIds(strategy: any, fromIso: string, toIso: string, mem: Map<number, LeagueMem>): Promise<number[] | "all"> {
   // legacy rows without league_mode: empty league_ids historically meant "all", else "fixed"
   const mode = strategy.league_mode ?? (Array.isArray(strategy.league_ids) && strategy.league_ids.length ? "fixed" : "all");
-  if (mode === "all") return "all";
+  if (mode === "all") {
+    // "all" no longer scans the ~1,100 obscure untagged leagues — those routinely aren't on the
+    // bookmaker (odds/availability) and their settlement feeds are unreliable, so a pick there is
+    // near-unusable. Scope to the tier-tagged established leagues (owner-ruled: avoid lowest leagues).
+    // Still ~118 competitions worldwide — ample volume — and keeps every pick bettable.
+    const tiered = await tierLeagueIds();
+    return tiered.length ? tiered : "all"; // fall back to unfiltered only if tagging is somehow empty
+  }
   if (mode === "fixed") return Array.isArray(strategy.league_ids) ? strategy.league_ids : [];
   // surprise: sample from day-eligible leagues. Fresh RNG each run (never seed from
   // strategy.id) so two runs of the same agent can roll different leagues.
