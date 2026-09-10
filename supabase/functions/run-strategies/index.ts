@@ -1898,6 +1898,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         case "away_score_prob": return cell.agg.awayScore;
         case "btts_prob": return cell.agg.btts;
         case "over25_prob": return overP(cell.agg, 2.5);
+        case "dc_1x_prob": return cell.agg.hw + cell.agg.dr;
+        case "dc_12_prob": return cell.agg.hw + cell.agg.aw;
+        case "dc_x2_prob": return cell.agg.aw + cell.agg.dr;
         default: return null;
       }
     };
