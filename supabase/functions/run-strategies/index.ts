@@ -1939,6 +1939,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (hs != null && hs >= 0.85 && hAvg != null && hAvg >= 1.5) return true;      // rule 1
     if (blend != null && blend >= 4.0 && hAvg != null && hAvg >= 1.8) return true; // rule 2
     if (hAvg != null && hAvg >= 2.0) return true;                                  // rule 3
+    // farmed cross-signals (integrated 2026-09-10): a strong home favorite scores (home_win >= 60%
+    // -> 88.6%); an away side kept quiet means home scores (away_score <= 70% -> 79.8%)
+    if (cell.agg.hw >= 0.60) return true;                                          // rule 4
+    if (cell.agg.awayScore <= 0.70) return true;                                   // rule 5
     return false;
   };
   // MANDATORY Away-to-score platform rule (owner-directed 2026-09-09): 3 independent rules (OR).
@@ -2124,7 +2128,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
       // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
       if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
-      if ((chosen.mk === "double_chance_1x" || chosen.mk === "double_chance_x2") && (chosen.model_prob ?? 0) < 0.80) continue;
+      if (chosen.mk === "double_chance_x2" && (chosen.model_prob ?? 0) < 0.80) continue;
+      if (chosen.mk === "double_chance_1x" && !((chosen.model_prob ?? 0) >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
       // mandatory 1UP rule (mix/family agents that CHOSE a 1UP market) — model (shown) >= 85%
       if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
       // away_to_score shown floor >= 75% (mix/family agents that CHOSE it)
@@ -2202,8 +2207,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (kp == null) {
       // mandatory Under 3.5 rule needs bookmaker odds to verify the both-O1.5 screen — no odds => skip
       if (eff.mk === "under_3_5") continue;
-      // mandatory Double Chance 1X/X2 floor still applies with no odds (shown == model)
-      if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && mp < 0.80) continue;
+      // mandatory Double Chance floor with no odds (shown == model); 1X also via farmed cross-signals
+      if (eff.mk === "double_chance_x2" && mp < 0.80) continue;
+      if (eff.mk === "double_chance_1x" && !(mp >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
       // mandatory 1UP floor with no odds (shown == model)
       if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && mp < 0.85) continue;
       // away_to_score shown floor (>=75%) also applies with no odds
@@ -2226,8 +2232,10 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (shownP == null || shownP < confFloor) continue;
     // mandatory Under 3.5 platform rule — enforced on every under_3_5 agent regardless of its own rule
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
-    // mandatory Double Chance 1X / X2 platform rule — model (shown) >= 80%
-    if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && shownP < 0.80) continue;
+    // mandatory Double Chance platform rule — X2: model (shown) >= 80%. 1X: model >= 80% OR (farmed
+    // cross-signals 2026-09-10) away-score <= 70% (78%) OR home-score >= 90% (83.6%) — independent paths.
+    if (eff.mk === "double_chance_x2" && shownP < 0.80) continue;
+    if (eff.mk === "double_chance_1x" && !(shownP >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
     // mandatory 1UP platform rule — model (shown) >= 85% (home_win_1up 95.5% / away_win_1up 90.9% at >=80%)
     if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && shownP < 0.85) continue;
     // Away-to-score shown floor (owner-directed 2026-09-10): the 70-75% band only lands ~70%; it jumps
