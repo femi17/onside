@@ -8,6 +8,14 @@ market. A game flagged by more than one rule collapses to a single pick via the 
 `UNIQUE(strategy_id, fixture_id)` delivery guard. A user's own rule only ADDS selectivity — it never
 lowers a mandatory floor.
 
+## COMPULSORY shown-% floors (owner-ruled — never let a % slip below the gate)
+`MIN_SHOWN` in scoreAndRank is the authoritative floor, checked LAST in all three paths (priced,
+mix/set, no-odds) after every selection rule — signals/autoPass/OR-paths can SELECT a game but can
+NEVER ship it below its gate: **DC 1X/X2/12 ≥0.80 · 1UP home/away ≥0.85 · Under 3.5 ≥0.73 ·
+Away-to-score ≥0.75** (Over 0.5 is per-agent confidence_floor = 0.99). Any new %-gated market MUST be
+added to MIN_SHOWN. This overrides farmed signals — e.g. away-score→1X (78%) only ships when the DC 1X
+shown % is also ≥0.80.
+
 ## The practice: farm → find strong un-integrated signals → integrate
 1. Sweep the farming tables (below) for cells that perform well but aren't wired into the engine yet.
 2. Bar to integrate: **hit ≥ ~78%** on a **meaningful sample** (n ≥ ~300 for signals, holdout ≥ 200
