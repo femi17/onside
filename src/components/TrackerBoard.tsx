@@ -480,10 +480,16 @@ function Card({
     mk === "excluded_home_goals" || mk === "home_goal_range" || (goalCountKind && t.side === "home") ? f?.home_team :
     mk === "excluded_away_goals" || mk === "away_goal_range" || (goalCountKind && t.side === "away") ? f?.away_team : "Total goals";
   const goalCountVal = goalCountKind === "exact" ? String(t.line ?? "") : (t.bet_value ?? "");
+  // the live count the band/exact/excluded bet is about — total goals, or the named team's goals —
+  // so a goal-bounds card reads "2 · band 0–3" and you watch the count climb toward/through the bound
+  const goalCountNow = mk === "home_goal_range" || mk === "excluded_home_goals" || t.side === "home" ? hg
+    : mk === "away_goal_range" || mk === "excluded_away_goals" || t.side === "away" ? ag : hg + ag;
   const goalCountReadout = goalCountKind && goalCountVal
     ? {
         top: goalCountTeam ?? "Total goals",
-        bottom: goalCountKind === "excluded" ? `not ${goalCountVal}` : goalCountKind === "range" ? `${goalCountVal} goals` : `exactly ${goalCountVal}`,
+        bottom: goalCountKind === "excluded" ? `${goalCountNow} · not ${goalCountVal}`
+          : goalCountKind === "range" ? `${goalCountNow} · band ${goalCountVal.replace("-", "–")}`
+          : `${goalCountNow} · need ${goalCountVal}`,
       }
     : null;
 
