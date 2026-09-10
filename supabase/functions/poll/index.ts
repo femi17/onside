@@ -301,6 +301,13 @@ function earlyResult(t: { market_key: string; side?: string | null; line?: numbe
     case "over_3_5": return tot >= 4 ? "won" : null;
     case "home_to_score": return hg >= 1 ? "won" : null;
     case "away_to_score": return ag >= 1 ? "won" : null;
+    // "Teams to score — Home/Away" clears the instant that team scores (inclusive), like
+    // home/away_to_score; both/yes needs both to have scored. none/no can only settle at FT.
+    case "teams_to_score":
+      if (t.side === "home") return hg >= 1 ? "won" : null;
+      if (t.side === "away") return ag >= 1 ? "won" : null;
+      if (t.side === "both" || t.side === "yes") return (hg >= 1 && ag >= 1) ? "won" : null;
+      return null;
     case "btts": return hg >= 1 && ag >= 1 ? "won" : null;
     case "home_win_1up": return hg >= ag + 1 ? "won" : null;
     case "away_win_1up": return ag >= hg + 1 ? "won" : null;
