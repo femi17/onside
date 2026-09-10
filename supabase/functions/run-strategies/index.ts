@@ -1806,6 +1806,15 @@ async function loadAutoRules(): Promise<Map<string, AutoRule[]>> {
   return m;
 }
 
+// COMPULSORY per-market shown-% floors (owner-directed 2026-09-10): no gated market may EVER deliver a
+// pick displaying below its gate — not via a farmed signal, an autoPass OR-path, or anything else.
+// This is the authoritative floor, checked LAST (after all selection), so nothing can slip under it.
+const MIN_SHOWN: Record<string, number> = {
+  double_chance_1x: 0.80, double_chance_x2: 0.80, double_chance_12: 0.80,
+  home_win_1up: 0.85, away_win_1up: 0.85,
+  under_3_5: 0.73, away_to_score: 0.75,
+};
+
 async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false): Promise<Scored[]> {
   // ADMIN PILOT cells: same rates, tier-seeded Elo trajectory (see TIER_SPLIT note). Local cache —
   // never written into the shared aggCache, so no other strategy can ever read a pilot matrix.
@@ -2165,6 +2174,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       const shown = blend50(chosen.model_prob, chosen.market_prob);
       if (shown == null || shown < confFloor) continue;
       if (shown !== chosen.model_prob) { chosen.model_raw = chosen.model_prob; chosen.model_prob = shown; }
+      // COMPULSORY floor — authoritative, nothing slips a gated market below it (mix/family path)
+      if (MIN_SHOWN[chosen.mk] != null && (chosen.model_prob ?? 0) < MIN_SHOWN[chosen.mk]) continue;
       // mandatory Under 3.5 platform rule — applies even to mix/family agents that CHOSE under_3_5
       if (chosen.mk === "under_3_5" && !under35Ok(await bookmakersFor(f.id, key), chosen.model_prob)) continue;
       // mandatory Over 2.5 platform rule (rules 1+3) — mix/family agents that CHOSE over_2_5; BTTS exempt
@@ -2255,6 +2266,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (kp == null) {
       // mandatory Under 3.5 rule needs bookmaker odds to verify the both-O1.5 screen — no odds => skip
       if (eff.mk === "under_3_5") continue;
+      // COMPULSORY floor also applies to model-only (no-odds) picks
+      if (MIN_SHOWN[eff.mk] != null && mp < MIN_SHOWN[eff.mk]) continue;
       // mandatory Double Chance floor with no odds (shown == model); 1X also via farmed cross-signals
       if (eff.mk === "double_chance_x2" && mp < 0.80) continue;
       if (eff.mk === "double_chance_1x" && !(mp >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
@@ -2278,6 +2291,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // pre-odds early exit during the transition)
     const shownP = blend50(mp, kp);
     if (shownP == null || shownP < confFloor) continue;
+    // COMPULSORY floor — authoritative, nothing (signals/autoPass/OR-paths) slips a gated market below it
+    if (MIN_SHOWN[eff.mk] != null && shownP < MIN_SHOWN[eff.mk]) continue;
     // mandatory Under 3.5 platform rule — enforced on every under_3_5 agent regardless of its own rule
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
     // mandatory Double Chance platform rule — X2: model (shown) >= 80%. 1X: model >= 80% OR (farmed
