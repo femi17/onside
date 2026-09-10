@@ -678,7 +678,7 @@ async function accaPost(dry: boolean, dmChats: number[] | null): Promise<Respons
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const { data } = await sb.from("deliveries")
-    .select("fixture_id, model_prob, market_label, bet_value, market_key, criteria, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
+    .select("id, fixture_id, model_prob, market_label, bet_value, market_key, criteria, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
     .gte("delivered_at", startOfDay).not("model_prob", "is", null)
     .order("model_prob", { ascending: false }).limit(250);
   const t = now.getTime();
@@ -711,9 +711,59 @@ async function accaPost(dry: boolean, dmChats: number[] | null): Promise<Respons
     slot: "acca", theme: "acca", body: text,
     telegram_message_id: ok ? sent.result?.message_id : null,
     status: ok ? "posted" : "failed",
-    meta: ok ? { legs: legs.length, combined: Number(combined.toFixed(2)) } : { telegram: sent },
+    meta: ok ? { legs: legs.length, combined: Number(combined.toFixed(2)), leg_ids: legs.map((x) => x.r.id) } : { telegram: sent },
   });
   return J({ status: ok ? "posted" : "failed", slot: "acca", combined: combined.toFixed(2) });
+}
+
+// Grade the public acca as ONE message, only once EVERY leg has settled (i.e. the last match ended)
+// — never per-leg, so users aren't bombarded. Idempotent: the graded acca post is flagged
+// meta.graded=true so a re-run is a no-op. Run this on a short cron; it skips until all legs are in.
+async function accaGradePost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+  const { data: posts } = await sb.from("channel_posts")
+    .select("id, meta, created_at")
+    .eq("slot", "acca").eq("status", "posted")
+    .gte("created_at", new Date(Date.now() - 3 * 86400000).toISOString())
+    .order("created_at", { ascending: false }).limit(10);
+  const post = (posts ?? []).find((p: any) => Array.isArray(p.meta?.leg_ids) && p.meta.leg_ids.length && !p.meta?.graded);
+  if (!post) return J({ status: "skipped", slot: "acca_grade", reason: "no ungraded acca" });
+  const legIds: number[] = post.meta.leg_ids;
+  const { data: legs } = await sb.from("deliveries")
+    .select("id, result, market_label, bet_value, market_key, fixtures(home_team, away_team, ft_home, ft_away, home_goals, away_goals)")
+    .in("id", legIds);
+  const rows = (legs ?? []) as any[];
+  const settledSet = new Set(["won", "lost", "void"]);
+  if (!rows.length || !rows.every((l) => settledSet.has(l.result))) {
+    return J({ status: "waiting", slot: "acca_grade", settled: rows.filter((l) => settledSet.has(l.result)).length, of: rows.length });
+  }
+  const live = rows.filter((l) => l.result !== "void");
+  const won = live.filter((l) => l.result === "won").length;
+  const accaWon = won === live.length;
+  const sc = (f: any) => f?.ft_home != null ? ` (${f.ft_home}-${f.ft_away})` : (f?.home_goals != null ? ` (${f.home_goals}-${f.away_goals})` : "");
+  let text = `🎟️ The Onside 5 — result 👇\n\n`;
+  for (const l of rows) {
+    const mark = l.result === "won" ? "✅" : l.result === "void" ? "➖" : "❌";
+    text += `${mark} ${fxName(l.fixtures)} · ${betLabelOf(l)}${sc(l.fixtures)}\n`;
+  }
+  text += `\n${won}/${live.length} landed — acca ${accaWon ? "LANDED ✅" : "missed ❌"}\n\n`;
+  text += accaWon
+    ? "Full sweep, graded open. No be everyday e dey happen — na value hunting."
+    : "Some legs collect, some miss — na the game. Every leg graded in public, we no dey hide am.";
+  text = text.slice(0, 900) + FOOTER;
+  if (dry) return J({ status: "dry", slot: "acca_grade", won, of: live.length, accaWon, text });
+  if (dmChats && dmChats.length) {
+    for (const c of dmChats) await tg("sendMessage", { chat_id: c, text, disable_web_page_preview: true });
+    return J({ status: "dm_sent", slot: "acca_grade" });
+  }
+  const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+  const ok = sent?.ok === true;
+  if (ok) {
+    // flag the original acca post graded so this never double-posts
+    await sb.from("channel_posts").update({ meta: { ...post.meta, graded: true } }).eq("id", post.id);
+    await sb.from("channel_posts").insert({ slot: "acca_grade", theme: "acca_grade", body: text, telegram_message_id: sent.result?.message_id, status: "posted", meta: { acca_post_id: post.id, won, of: live.length, accaWon } });
+  }
+  return J({ status: ok ? "posted" : "failed", slot: "acca_grade", won, of: live.length, accaWon });
 }
 
 async function runTextSlot(slot: string): Promise<Response> {
@@ -762,6 +812,7 @@ Deno.serve(async (req) => {
   if (slot === "banker") return await bankerPost(dry, dmChats);
   if (slot === "receipt") return await receiptPost(dry, dmChats);
   if (slot === "acca") return await accaPost(dry, dmChats);
+  if (slot === "acca_grade") return await accaGradePost(dry, dmChats);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
   // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
