@@ -476,14 +476,16 @@ function Card({
     mk === "excluded_goals" || mk === "excluded_home_goals" || mk === "excluded_away_goals" ? "excluded" as const :
     mk === "goal_range" || mk === "home_goal_range" || mk === "away_goal_range" ? "range" as const :
     mk === "exact_goals" ? "exact" as const : null;
-  const goalCountTeam =
-    mk === "excluded_home_goals" || mk === "home_goal_range" || (goalCountKind && t.side === "home") ? f?.home_team :
-    mk === "excluded_away_goals" || mk === "away_goal_range" || (goalCountKind && t.side === "away") ? f?.away_team : "Total goals";
+  // which side (if any) the bound is scoped to — null = a TOTAL (both teams contribute equally,
+  // so both scores render the same size, 1-1); home/away = one team's goals (that team big).
+  const goalCountTeamSide: "home" | "away" | null =
+    mk === "excluded_home_goals" || mk === "home_goal_range" || (goalCountKind && t.side === "home") ? "home" :
+    mk === "excluded_away_goals" || mk === "away_goal_range" || (goalCountKind && t.side === "away") ? "away" : null;
+  const goalCountTeam = goalCountTeamSide === "home" ? f?.home_team : goalCountTeamSide === "away" ? f?.away_team : "Total goals";
   const goalCountVal = goalCountKind === "exact" ? String(t.line ?? "") : (t.bet_value ?? "");
   // the live count the band/exact/excluded bet is about — total goals, or the named team's goals —
   // so a goal-bounds card reads "2 · band 0–3" and you watch the count climb toward/through the bound
-  const goalCountNow = mk === "home_goal_range" || mk === "excluded_home_goals" || t.side === "home" ? hg
-    : mk === "away_goal_range" || mk === "excluded_away_goals" || t.side === "away" ? ag : hg + ag;
+  const goalCountNow = goalCountTeamSide === "home" ? hg : goalCountTeamSide === "away" ? ag : hg + ag;
   const goalCountReadout = goalCountKind && goalCountVal
     ? {
         top: goalCountTeam ?? "Total goals",
@@ -636,9 +638,9 @@ function Card({
           // result / BTTS scoreline: [home] n – n [away]. Backed side is the dominant figure
           // (T5); BTTS weighs both teams equally since both must score.
           <div className={`mt-4 flex items-end gap-3 ${pulse ? "pop" : ""}`}>
-            <Tally n={isCardsScore ? cardsH : hg} side="home" big={isCardsScore ? cardsBigH : isLeadBy ? leadHomeUp : isRunStreak ? runHomeUp : isBtts || isBtts2 || (isSeesaw ? hg >= ag : homeBig)} compact={compact} bonus={homeBonus} />
+            <Tally n={isCardsScore ? cardsH : hg} side="home" big={isCardsScore ? cardsBigH : isLeadBy ? leadHomeUp : isRunStreak ? runHomeUp : goalCountKind ? goalCountTeamSide !== "away" : isBtts || isBtts2 || (isSeesaw ? hg >= ag : homeBig)} compact={compact} bonus={homeBonus} />
             <span className="pb-1.5 font-mono text-lg text-ink-mute">–</span>
-            <Tally n={isCardsScore ? cardsA : ag} side="away" big={isCardsScore ? cardsBigA : isLeadBy ? leadAwayUp : isRunStreak ? runAwayUp : isBtts || isBtts2 || (isSeesaw ? ag >= hg : !homeBig)} compact={compact} bonus={awayBonus} />
+            <Tally n={isCardsScore ? cardsA : ag} side="away" big={isCardsScore ? cardsBigA : isLeadBy ? leadAwayUp : isRunStreak ? runAwayUp : goalCountKind ? goalCountTeamSide !== "home" : isBtts || isBtts2 || (isSeesaw ? ag >= hg : !homeBig)} compact={compact} bonus={awayBonus} />
             {cardsReadout ? (
               <div className="ml-auto pb-1 text-right font-mono text-[9.5px] font-bold uppercase tracking-wide text-ink-mute">
                 {cardsReadout.top}
