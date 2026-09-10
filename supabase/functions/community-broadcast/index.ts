@@ -583,6 +583,26 @@ async function topUpcomingPick(): Promise<any | null> {
   return rows.find((r) => tierOf(r) != null) ?? rows[0] ?? null;
 }
 
+// Banker of the day = the single most-TRUSTED public pick, NOT merely the highest model_prob.
+// Restricted to the only markets that are both high-hit AND well-calibrated over 60d of settled
+// deliveries — Over 0.5 (~92%) and Over 1.5 (~82%, claim≈hit, n=1300+). Deliberately EXCLUDES the
+// shakier markets that overclaim or sit sub-75% (away/home-to-score, DC, BTTS, 1UP, Over 2.5): a
+// banker must never be a floor-grazing away-to-score (the Dukagjini 78% miss). Floor 0.80, and a
+// real tier-tagged league only (no obscure fixtures as our public best pick) — skip if none qualify.
+const BANKER_MARKETS = ["over_0_5", "over_1_5"];
+async function topBankerPick(): Promise<any | null> {
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const { data } = await sb.from("deliveries")
+    .select("id, fixture_id, model_prob, market_label, bet_value, market_key, side, line, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
+    .gte("delivered_at", startOfDay).in("market_key", BANKER_MARKETS).gte("model_prob", 0.80)
+    .order("model_prob", { ascending: false }).limit(100);
+  const tierOf = (r: any) => { const l = r.fixtures?.leagues; return (Array.isArray(l) ? l[0]?.tier : l?.tier) ?? null; };
+  const rows = dedupeByFixture((data ?? []) as any[])
+    .filter((r) => r.fixtures && Date.parse(r.fixtures.kickoff_utc) > now.getTime() && tierOf(r) != null);
+  return rows[0] ?? null;
+}
+
 function betLabelOf(p: any): string {
   return `${p.market_label ?? p.market_key}${p.bet_value ? ` ${p.bet_value}` : ""}`;
 }
@@ -623,8 +643,8 @@ async function pollPost(dry: boolean, dmChats: number[] | null): Promise<Respons
 
 // Free banker of the day framed as a tail poll — the single highest-confidence upcoming pick.
 async function bankerPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
-  const p = await topUpcomingPick();
-  if (!p) return new Response(JSON.stringify({ status: "skipped", slot: "banker", reason: "no upcoming pick" }), { status: 200, headers: { "content-type": "application/json" } });
+  const p = await topBankerPick();
+  if (!p) return new Response(JSON.stringify({ status: "skipped", slot: "banker", reason: "no banker-grade pick (Over 0.5/1.5 @ >=0.80, tier league)" }), { status: 200, headers: { "content-type": "application/json" } });
   const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
   const q = `🔒 Onside banker of the day\n\n${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n${betLabelOf(p)}${conf}\n\nYou dey tail?`;
   return await sendPollSlot("banker", "banker:top", q, ["🔥 I dey on am", "👀 I dey watch", "🙅 I pass"],
