@@ -519,7 +519,7 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
     case "odd_even": return W((tot % 2 === 1) === (side === "odd"));
     case "home_odd_even": return W((h % 2 === 1) === (side === "odd"));
     case "away_odd_even": return W((a % 2 === 1) === (side === "odd"));
-    case "goal_range": case "home_goal_range": { const n = k === "home_goal_range" || side === "home" ? h : side === "away" ? a : tot; return gradeRange(val, n); }
+    case "goal_range": case "home_goal_range": case "away_goal_range": { const n = (k === "home_goal_range" || side === "home") ? h : (k === "away_goal_range" || side === "away") ? a : tot; return gradeRange(val, n); }
     case "excluded_goals": case "excluded_home_goals": case "excluded_away_goals": { const n = k === "excluded_home_goals" ? h : k === "excluded_away_goals" ? a : tot; const r = gradeRange(val, n); return r === null ? null : W(r === "lost"); }
     case "btts": return W((h > 0 && a > 0) === (side !== "no"));
     case "btts_2plus": return W((h >= 2 && a >= 2) === (side !== "no"));
