@@ -277,13 +277,13 @@ async function ensureOrientation(fx: any): Promise<void> {
 
 function liveValue(mk: string, hg: number, ag: number, corners: number): number {
   if (mk === "over_8_5_corners" || mk === "corners_ou") return corners;
-  if (mk === "home_to_score" || mk === "home_goals_ou") return hg;
-  if (mk === "away_to_score" || mk === "away_goals_ou") return ag;
+  if (mk === "home_to_score" || mk === "home_goals_ou" || mk === "home_goal_range") return hg;
+  if (mk === "away_to_score" || mk === "away_goals_ou" || mk === "away_goal_range") return ag;
   if (mk === "btts") return Math.min(hg, 1) + Math.min(ag, 1);
   if (["home_win", "away_win", "draw", "home_win_1up", "away_win_1up", "home_win_2up", "away_win_2up", "draw_2up", "home_win_never_down", "away_win_never_down", "draw_never_down", "double_chance_1x_1up", "double_chance_x2_1up", "result_1h_or_ft"].includes(mk)) return hg - ag;
   return hg + ag;
 }
-function earlyResult(t: { market_key: string; side?: string | null; line?: number | null }, hg: number, ag: number, elapsed: number | null = null): "won" | "lost" | null {
+function earlyResult(t: { market_key: string; side?: string | null; line?: number | null; bet_value?: string | null }, hg: number, ag: number, elapsed: number | null = null): "won" | "lost" | null {
   const mk = t.market_key;
   const tot = hg + ag;
   // any-line goal totals lock the moment the count passes the line (side-aware); VAR reverts
@@ -322,8 +322,23 @@ function earlyResult(t: { market_key: string; side?: string | null; line?: numbe
     case "over_3_5_eg": return elapsed != null && elapsed <= 50 && tot >= 3 ? "won" : null;
     case "under_2_5": return tot >= 3 ? "lost" : null;
     case "under_3_5": return tot >= 4 ? "lost" : null;
+    // Goal bounds (range): the instant the count goes ABOVE the range's upper bound it's LOST;
+    // an open-ended N+ pays WON once the count reaches N. Closed ranges only WIN at FT.
+    case "goal_range": case "home_goal_range": case "away_goal_range": {
+      const n = mk === "home_goal_range" ? hg : mk === "away_goal_range" ? ag : (t.side === "home" ? hg : t.side === "away" ? ag : tot);
+      return rangeEarly(t.bet_value ?? null, n);
+    }
     default: return null;
   }
+}
+// live early-settle for a goal-range val ("0-3", "2-3", "4+", "0"): lost once the count exceeds the
+// upper bound; won once an open-ended N+ is reached. Undecided (null) otherwise — FT grades the rest.
+function rangeEarly(val: string | null, n: number): "won" | "lost" | null {
+  if (!val) return null;
+  const plus = val.match(/(\d+)\s*\+/); if (plus) return n >= Number(plus[1]) ? "won" : null;
+  const rng = val.match(/(\d+)\s*-\s*(\d+)/); if (rng) return n > Number(rng[2]) ? "lost" : null;
+  const one = val.match(/^(\d+)$/); if (one) return n > Number(one[1]) ? "lost" : null;
+  return null;
 }
 async function updateRowsLive(table: string, rows: any[], liveFx: any, statusCol = "status"): Promise<number> {
   const hg = liveFx.goals?.home ?? 0, ag = liveFx.goals?.away ?? 0;
@@ -766,10 +781,10 @@ async function settleRows(table: string, rows: any[], facts: Facts, statusCol = 
     await sb.from(table).update({ [statusCol]: r, current_value: liveValue(t.market_key, facts.hg, facts.ag, corners), settled_at: now }).eq("id", t.id);
   }
 }
-const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "teams_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou"]);
+const EARLY_MARKETS = new Set(["over_0_5", "over_1_5", "over_2_5", "over_3_5", "home_to_score", "away_to_score", "teams_to_score", "btts", "under_2_5", "under_3_5", "total_goals_ou", "home_goals_ou", "away_goals_ou", "goal_range", "home_goal_range", "away_goal_range"]);
 async function revertVarSettles(table: string, statusCol: string, fixtureId: number, hg: number, ag: number, regTime: boolean, short?: string): Promise<number> {
   if (!regTime) return 0;
-  const { data: rows } = await sb.from(table).select("id,market_key,side,line,period").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
+  const { data: rows } = await sb.from(table).select("id,market_key,side,line,period,bet_value").eq("fixture_id", fixtureId).in(statusCol, ["won", "lost"]).not("settled_at", "is", null);
   const openVal = statusCol === "status" ? "live" : "pending";
   let n = 0;
   for (const r of rows ?? []) {
@@ -877,15 +892,15 @@ async function poll() {
   for (const fx of live) liveMap.set(fx.fixture.id, fx);
   const ourIds = new Set<number>([...(windowFx ?? []).map((f: any) => f.id), ...trackedIds]);
 
-  const { data: activeTickets } = await sb.from("tickets").select("id,market_key,side,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeTickets } = await sb.from("tickets").select("id,market_key,side,line,period,bet_value,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
   const byFixture = new Map<number, any[]>();
   for (const t of activeTickets ?? []) { const arr = byFixture.get(t.fixture_id) ?? []; arr.push(t); byFixture.set(t.fixture_id, arr); }
 
-  const { data: activeAP } = await sb.from("agent_picks").select("id,market_key,side,line,period,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeAP } = await sb.from("agent_picks").select("id,market_key,side,line,period,bet_value,fixture_id").in("status", ["pending", "live"]).neq("market_key", "custom").not("fixture_id", "is", null);
   const apByFixture = new Map<number, any[]>();
   for (const t of activeAP ?? []) { const arr = apByFixture.get(t.fixture_id) ?? []; arr.push(t); apByFixture.set(t.fixture_id, arr); }
 
-  const { data: activeDL } = await sb.from("deliveries").select("id,market_key,side,line,period,fixture_id").eq("result", "pending").neq("market_key", "custom").not("fixture_id", "is", null);
+  const { data: activeDL } = await sb.from("deliveries").select("id,market_key,side,line,period,bet_value,fixture_id").eq("result", "pending").neq("market_key", "custom").not("fixture_id", "is", null);
   const dlByFixture = new Map<number, any[]>();
   for (const t of activeDL ?? []) { const arr = dlByFixture.get(t.fixture_id) ?? []; arr.push(t); dlByFixture.set(t.fixture_id, arr); }
 
