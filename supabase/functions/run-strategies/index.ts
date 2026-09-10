@@ -2590,7 +2590,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         h2h: h2h && h2h.n ? h2h : null,
         // home_score/away_score: the to-score probabilities — stored so *_score_prob rules are
         // Guide-verifiable on the card (same closure as home_win_prob, 2026-08-18)
-        model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), btts: round2(agg.btts), home_score: round2(agg.homeScore), away_score: round2(agg.awayScore) } : null,
+        model: (agg && conf) ? { home: round2(agg.hw), draw: round2(agg.dr), away: round2(agg.aw), over25: round2(overP(agg, 2.5)), over05: round2(overP(agg, 0.5)), btts: round2(agg.btts), home_score: round2(agg.homeScore), away_score: round2(agg.awayScore) } : null,
         // stat-model expectations so corner/card picks can explain themselves with real numbers
         ...(cellR?.corn?.ok ? { corners_exp: Math.round((cellR.corn.lh + cellR.corn.la) * 10) / 10 } : {}),
         ...(cellR?.card?.ok ? { cards_exp: Math.round((cellR.card.lh + cellR.card.la) * 10) / 10 } : {}),
