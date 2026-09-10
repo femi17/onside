@@ -574,7 +574,7 @@ async function topUpcomingPick(): Promise<any | null> {
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const { data } = await sb.from("deliveries")
-    .select("model_prob, market_label, bet_value, market_key, side, line, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
+    .select("id, fixture_id, model_prob, market_label, bet_value, market_key, side, line, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
     .gte("delivered_at", startOfDay).not("model_prob", "is", null)
     .order("model_prob", { ascending: false }).limit(100);
   const rows = dedupeByFixture((data ?? []) as any[])
@@ -615,7 +615,7 @@ async function pollPost(dry: boolean, dmChats: number[] | null): Promise<Respons
     const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
     const q = `⚽ ${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n\nOnside model dey feel: ${betLabelOf(p)}${conf}.\n\nYou think e go enter?`;
     return await sendPollSlot("poll", "poll:pick", q, ["✅ E go enter", "❌ E go fail", "👀 I dey watch"],
-      { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob }, dry, dmChats);
+      { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob, delivery_id: p.id, fixture_id: p.fixture_id }, dry, dmChats);
   }
   return await sendPollSlot("poll", "poll:market", "No big one wey ripe now — oya talk true:\n\nWhich market you dey trust pass?",
     ["Over 1.5 ⚽", "Both teams to score", "Double chance", "Home to score"], { fallback: true }, dry, dmChats);
@@ -766,6 +766,47 @@ async function accaGradePost(dry: boolean, dmChats: number[] | null): Promise<Re
   return J({ status: ok ? "posted" : "failed", slot: "acca_grade", won, of: live.length, accaWon });
 }
 
+// Poll FOLLOW-UP (owner-directed 2026-09-10): NOT another prediction poll. When the polled pick's
+// match has settled (landed/missed), report the result and ask users if they'd added it to their
+// slip. One follow-up per poll (idempotent via meta.followed_up on the poll post). Short cron; waits.
+async function pollGradePost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
+  const { data: posts } = await sb.from("channel_posts")
+    .select("id, meta, created_at")
+    .eq("slot", "poll").eq("theme", "poll:pick").eq("status", "posted")
+    .gte("created_at", new Date(Date.now() - 3 * 86400000).toISOString())
+    .order("created_at", { ascending: false }).limit(10);
+  const post = (posts ?? []).find((p: any) => p.meta?.delivery_id && !p.meta?.followed_up);
+  if (!post) return J({ status: "skipped", slot: "poll_grade", reason: "no ungraded poll pick" });
+  const { data: dl } = await sb.from("deliveries")
+    .select("result, market_label, bet_value, market_key, fixtures(home_team, away_team, ft_home, ft_away, home_goals, away_goals)")
+    .eq("id", post.meta.delivery_id).maybeSingle();
+  if (!dl || !["won", "lost", "void"].includes((dl as any).result)) {
+    return J({ status: "waiting", slot: "poll_grade", result: (dl as any)?.result ?? "gone" });
+  }
+  const d: any = dl;
+  const won = d.result === "won";
+  const sc = d.fixtures?.ft_home != null ? ` (${d.fixtures.ft_home}-${d.fixtures.ft_away})`
+    : (d.fixtures?.home_goals != null ? ` (${d.fixtures.home_goals}-${d.fixtures.away_goals})` : "");
+  const bet = `${d.market_label ?? d.market_key}${d.bet_value ? ` ${d.bet_value}` : ""}`;
+  const verdict = d.result === "void" ? "➖ VOID" : won ? "✅ E LAND" : "❌ E MISS";
+  const q = `${verdict} — ${fxName(d.fixtures)} · ${bet}${sc}\n\nEarlier we ask if e go enter. Now oya be honest — you add am to your slip?`;
+  const options = ["✅ E dey my slip", "❌ I no add am", "👀 I only dey watch"];
+  const poll = { question: q.slice(0, 300), options, is_anonymous: true };
+  if (dry) return J({ status: "dry", slot: "poll_grade", ...poll });
+  if (dmChats && dmChats.length) {
+    for (const c of dmChats) await tg("sendPoll", { chat_id: c, ...poll });
+    return J({ status: "dm_sent", slot: "poll_grade" });
+  }
+  const sent = await tg("sendPoll", { chat_id: CHANNEL, ...poll });
+  const ok = sent?.ok === true;
+  if (ok) {
+    await sb.from("channel_posts").update({ meta: { ...post.meta, followed_up: true } }).eq("id", post.id);
+    await sb.from("channel_posts").insert({ slot: "poll_grade", theme: "poll_grade", body: poll.question, telegram_message_id: sent.result?.message_id, status: "posted", meta: { poll_post_id: post.id, result: d.result } });
+  }
+  return J({ status: ok ? "posted" : "failed", slot: "poll_grade", result: d.result });
+}
+
 async function runTextSlot(slot: string): Promise<Response> {
   let theme = slot; let body = "";
   try {
@@ -813,6 +854,7 @@ Deno.serve(async (req) => {
   if (slot === "receipt") return await receiptPost(dry, dmChats);
   if (slot === "acca") return await accaPost(dry, dmChats);
   if (slot === "acca_grade") return await accaGradePost(dry, dmChats);
+  if (slot === "poll_grade") return await pollGradePost(dry, dmChats);
 
   // Afternoon: try the perfect-agent card first; fall back to the product_gap lesson if no sweep.
   // (Manual slot now — the cron's afternoon runs product_gap since the morning owns the sweeps.)
