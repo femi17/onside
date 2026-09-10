@@ -2127,6 +2127,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((chosen.mk === "double_chance_1x" || chosen.mk === "double_chance_x2") && (chosen.model_prob ?? 0) < 0.80) continue;
       // mandatory 1UP rule (mix/family agents that CHOSE a 1UP market) — model (shown) >= 85%
       if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
+      // away_to_score shown floor >= 75% (mix/family agents that CHOSE it)
+      if (chosen.mk === "away_to_score" && (chosen.model_prob ?? 0) < 0.75) continue;
       // mandatory BTTS rule (mix/family agents that CHOSE btts) — New GG 64-65% band
       if (chosen.mk === "btts" && !bttsOk(cell)) continue;
       // 1st-half Under 1.5 (mix chose it): bet only when full-match Under 3.5 model prob >= 0.76
@@ -2204,6 +2206,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && mp < 0.80) continue;
       // mandatory 1UP floor with no odds (shown == model)
       if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && mp < 0.85) continue;
+      // away_to_score shown floor (>=75%) also applies with no odds
+      if (eff.mk === "away_to_score" && mp < 0.75) continue;
       // no odds anywhere for this game — deliver the model's own confident call (>= 50%) as a
       // model-only pick, exactly like pickBest does for sets, instead of silently skipping it
       if (mp >= 0.5 && passesDeferred(mp, null, null)
@@ -2226,6 +2230,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if ((eff.mk === "double_chance_1x" || eff.mk === "double_chance_x2") && shownP < 0.80) continue;
     // mandatory 1UP platform rule — model (shown) >= 85% (home_win_1up 95.5% / away_win_1up 90.9% at >=80%)
     if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && shownP < 0.85) continue;
+    // Away-to-score shown floor (owner-directed 2026-09-10): the 70-75% band only lands ~70%; it jumps
+    // to 83%+ at >=75%. Floors away_to_score at 0.75 on top of awayScoreOk so weak structural picks drop.
+    if (eff.mk === "away_to_score" && shownP < 0.75) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
