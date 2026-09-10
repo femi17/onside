@@ -1788,6 +1788,24 @@ async function pickBest(cands: Cand[], cell: Cell, f: Fixture, key: string, minE
   }
   return null;
 }
+// Auto-integrated farmed rules (public.market_rules, refreshed nightly by refresh_market_rules).
+// Cached module-wide so it's one tiny read per invocation, reused across every strategy in the run.
+// This is how qualifying farming integrates itself — no code change, no prompt (owner-directed 2026-09-10).
+type AutoRule = { field: string; op: string; value: number };
+let _autoRules: Map<string, AutoRule[]> | null = null;
+async function loadAutoRules(): Promise<Map<string, AutoRule[]>> {
+  if (_autoRules) return _autoRules;
+  const m = new Map<string, AutoRule[]>();
+  try {
+    const { data } = await sb.from("market_rules").select("market_key, field, op, value");
+    for (const r of (data ?? []) as any[]) {
+      const a = m.get(r.market_key) ?? []; a.push({ field: r.field, op: r.op, value: Number(r.value) }); m.set(r.market_key, a);
+    }
+  } catch { /* best-effort — no auto-rules if the read fails, hardcoded gates still hold */ }
+  _autoRules = m;
+  return m;
+}
+
 async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false): Promise<Scored[]> {
   // ADMIN PILOT cells: same rates, tier-seeded Elo trajectory (see TIER_SPLIT note). Local cache —
   // never written into the shared aggCache, so no other strategy can ever read a pilot matrix.
@@ -1864,6 +1882,28 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (MIN_FLOORS[baseMk] != null) confFloor = Math.max(confFloor, MIN_FLOORS[baseMk]);
     }
   } catch (_e) { /* market defaults are best-effort; never break core selection */ }
+  // Auto-integrated farmed cross-signals: each market gets these as EXTRA independent OR paths on top
+  // of its hardcoded gate — additive only, never lowers a floor (hard-floor markets are excluded from
+  // market_rules). New qualifying signals appear here automatically via the nightly refresh — no prompt.
+  const autoRules = await loadAutoRules();
+  const autoPass = (mk: string, cell: Cell): boolean => {
+    if (!cell.confident) return false;
+    const fs = autoRules.get(mk); if (!fs || !fs.length) return false;
+    const v = (f: string): number | null => {
+      switch (f) {
+        case "home_win_prob": return cell.agg.hw;
+        case "away_win_prob": return cell.agg.aw;
+        case "draw_prob": return cell.agg.dr;
+        case "home_score_prob": return cell.agg.homeScore;
+        case "away_score_prob": return cell.agg.awayScore;
+        case "btts_prob": return cell.agg.btts;
+        case "over25_prob": return overP(cell.agg, 2.5);
+        default: return null;
+      }
+    };
+    return fs.some((f) => { const x = v(f.field); return x != null && (f.op === "lte" ? x <= f.value : x >= f.value); });
+  };
+
   // MANDATORY Under 3.5 platform rule (owner-directed 2026-09-09): EVERY under_3_5 pick — from ANY
   // agent, whether or not it set its own rule, single-market OR chosen inside a mix — must clear a
   // 73% floor AND come from a game where BOTH teams' Over 1.5 odds are >= 2.00 (the low-scoring
@@ -1895,6 +1935,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // separately and is EXEMPT from this. No confident model rating => fail closed (skip).
   const over25Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
+    if (autoPass("over_2_5", cell)) return true;
     const over05 = overP(cell.agg, 0.5);
     if (over05 != null && over05 >= 0.98) return true;             // rule 1 passes on its own
     const btts = round2(cell.agg.btts);
@@ -1915,6 +1956,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // rating / no full form for both sides => fail closed (skip).
   const over15Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
+    if (autoPass("over_1_5", cell)) return true;
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
     const blend = hB != null && aB != null ? (hB + aB) / 2 : null;
@@ -1931,6 +1973,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   //   Rule 3: home goals avg >= 2.0                                 (81.8% holdout)
   const homeScoreOk = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
+    if (autoPass("home_to_score", cell)) return true;
     const hAvg = hf && hf.n ? hf.gf5 / hf.n : null;
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
@@ -1970,6 +2013,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // 1X/X2 are inline shownP >= 0.80 checks. Each rule independent, deduped by the per-agent guard.
   const dc12Ok = (cell: Cell, hf?: Form, af?: Form): boolean => {
     if (!cell.confident) return false;
+    if (autoPass("double_chance_12", cell)) return true;
     if (cell.agg.hw >= 0.70 || cell.agg.aw >= 0.70) return true;      // clear favorite either side
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
@@ -1983,6 +2027,7 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   // own signal separately. No confident model rating => fail closed.
   const bttsOk = (cell: Cell): boolean => {
     if (!cell.confident) return false;
+    if (autoPass("btts", cell)) return true;
     const b = round2(cell.agg.btts);
     return b >= 0.64 && b <= 0.65;
   };
@@ -2128,8 +2173,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
       // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
       if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
-      if (chosen.mk === "double_chance_x2" && (chosen.model_prob ?? 0) < 0.80) continue;
-      if (chosen.mk === "double_chance_1x" && !((chosen.model_prob ?? 0) >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
+      if (chosen.mk === "double_chance_x2" && (chosen.model_prob ?? 0) < 0.80 && !autoPass("double_chance_x2", cell)) continue;
+      if (chosen.mk === "double_chance_1x" && !((chosen.model_prob ?? 0) >= 0.80 || autoPass("double_chance_1x", cell) || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
       // mandatory 1UP rule (mix/family agents that CHOSE a 1UP market) — model (shown) >= 85%
       if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
       // away_to_score shown floor >= 75% (mix/family agents that CHOSE it)
@@ -2234,8 +2279,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
     // mandatory Double Chance platform rule — X2: model (shown) >= 80%. 1X: model >= 80% OR (farmed
     // cross-signals 2026-09-10) away-score <= 70% (78%) OR home-score >= 90% (83.6%) — independent paths.
-    if (eff.mk === "double_chance_x2" && shownP < 0.80) continue;
-    if (eff.mk === "double_chance_1x" && !(shownP >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
+    if (eff.mk === "double_chance_x2" && shownP < 0.80 && !autoPass("double_chance_x2", cell)) continue;
+    if (eff.mk === "double_chance_1x" && !(shownP >= 0.80 || autoPass("double_chance_1x", cell) || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
     // mandatory 1UP platform rule — model (shown) >= 85% (home_win_1up 95.5% / away_win_1up 90.9% at >=80%)
     if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && shownP < 0.85) continue;
     // Away-to-score shown floor (owner-directed 2026-09-10): the 70-75% band only lands ~70%; it jumps
