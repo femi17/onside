@@ -641,14 +641,30 @@ async function pollPost(dry: boolean, dmChats: number[] | null): Promise<Respons
     ["Over 1.5 ⚽", "Both teams to score", "Double chance", "Home to score"], { fallback: true }, dry, dmChats);
 }
 
-// Free banker of the day framed as a tail poll — the single highest-confidence upcoming pick.
+// Free banker of the day — the single highest-confidence upcoming pick, posted as a plain tip
+// (owner-directed 2026-09-11: NOT a tail poll; the only polls are the sentiment poll + its settle
+// follow-up). Deterministic text — no Claude, no banned-phrase risk.
 async function bankerPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
+  const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
   const p = await topBankerPick();
-  if (!p) return new Response(JSON.stringify({ status: "skipped", slot: "banker", reason: "no banker-grade pick (Over 0.5/1.5 @ >=0.80, tier league)" }), { status: 200, headers: { "content-type": "application/json" } });
+  if (!p) return J({ status: "skipped", slot: "banker", reason: "no banker-grade pick (Over 0.5/1.5 @ >=0.80, tier league)" });
   const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
-  const q = `🔒 Onside banker of the day\n\n${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n${betLabelOf(p)}${conf}\n\nYou dey tail?`;
-  return await sendPollSlot("banker", "banker:top", q, ["🔥 I dey on am", "👀 I dey watch", "🙅 I pass"],
-    { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob }, dry, dmChats);
+  let text = `🔒 Onside banker of the day\n\n${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n${betLabelOf(p)}${conf}\n\nOur single most confident pick today — no hype, na the board talk.`;
+  text = text.slice(0, 900) + FOOTER;
+  if (dry) return J({ status: "dry", slot: "banker", text });
+  if (dmChats && dmChats.length) {
+    for (const chat of dmChats) await tg("sendMessage", { chat_id: chat, text, disable_web_page_preview: true });
+    return J({ status: "dm_sent", slot: "banker" });
+  }
+  const sent = await tg("sendMessage", { chat_id: CHANNEL, text, disable_web_page_preview: true });
+  const ok = sent?.ok === true;
+  await sb.from("channel_posts").insert({
+    slot: "banker", theme: "banker:top", body: text,
+    telegram_message_id: ok ? sent.result?.message_id : null,
+    status: ok ? "posted" : "failed",
+    meta: ok ? { fixture: fxName(p.fixtures), market: betLabelOf(p), model_prob: p.model_prob } : { telegram: sent },
+  });
+  return J({ status: ok ? "posted" : "failed", slot: "banker" });
 }
 
 // Honest deterministic receipt of yesterday's settled picks: hit rate + claimed-vs-landed
@@ -868,7 +884,7 @@ Deno.serve(async (req) => {
   if (slot === "agent_hits") return await agentHitsPost(dry, dmChats);
   // Night: one short rule tip, rotating across the glossary's market families.
   if (slot === "rule_tip") return await ruleTipPost(dry, dmChats);
-  // Engagement slots: native polls (vote/tail) + an honest deterministic results receipt.
+  // Engagement slots: the sentiment poll (+ its settle follow-up) + banker tip + honest receipt.
   if (slot === "poll") return await pollPost(dry, dmChats);
   if (slot === "banker") return await bankerPost(dry, dmChats);
   if (slot === "receipt") return await receiptPost(dry, dmChats);
