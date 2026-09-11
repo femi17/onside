@@ -167,7 +167,7 @@ function isDue(s: any, now: Date): boolean {
   return true;
 }
 
-type Fixture = { id: number; league_id: number; kickoff_utc: string; home_team_id: number | null; away_team_id: number | null };
+type Fixture = { id: number; league_id: number; season: number | null; kickoff_utc: string; home_team_id: number | null; away_team_id: number | null };
 
 // factorials to 30 — corners/cards Poissons run to ~14 events, well past the goals matrix's 10
 const FACT: number[] = [1];
@@ -1815,7 +1815,38 @@ const MIN_SHOWN: Record<string, number> = {
   under_3_5: 0.73, away_to_score: 0.75,
 };
 
+// ---------- League standings (opt-in): live table position from API-Football ----------
+// We never store standings; the engine fetches the current table for a (league, season) once per
+// run and caches it in-process (a team's rank barely moves intra-day). Only agents whose rule tests
+// home_league_rank / away_league_rank pay this cost — every other agent skips the fetch entirely and
+// sees these signals as null (a rank rule then fails closed via evalCond, exactly like h2h fields).
+// Group-stage leagues flatten to each team's own in-group rank, which is the position we want.
+const STANDINGS_CACHE = new Map<string, Map<number, number>>(); // "league|season" -> teamId -> rank
+async function rankMapFor(leagueId: number, season: number | null): Promise<Map<number, number> | null> {
+  if (season == null) return null;
+  const cacheKey = `${leagueId}|${season}`;
+  const hit = STANDINGS_CACHE.get(cacheKey);
+  if (hit) return hit;
+  const out = new Map<number, number>();
+  try {
+    const apiKey = await getSecret("api_football_key");
+    const res = await fetch(`https://v3.football.api-sports.io/standings?league=${leagueId}&season=${season}`, { headers: { "x-apisports-key": apiKey } });
+    if (res.ok) {
+      const j = await res.json();
+      const groups = j?.response?.[0]?.league?.standings ?? [];
+      for (const g of groups) for (const row of (g ?? [])) {
+        const tid = row?.team?.id, rk = row?.rank;
+        if (typeof tid === "number" && typeof rk === "number") out.set(tid, rk);
+      }
+    }
+  } catch { /* leave empty on any failure — rank rules then fail closed */ }
+  STANDINGS_CACHE.set(cacheKey, out); // cache even an empty map so a dead league isn't re-fetched
+  return out;
+}
+
 async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false): Promise<Scored[]> {
+  // does THIS agent's rule use league standings? only then do we fetch tables (see rankMapFor)
+  const needsRank = ruleTests(rule, (f) => f === "home_league_rank" || f === "away_league_rank");
   // ADMIN PILOT cells: same rates, tier-seeded Elo trajectory (see TIER_SPLIT note). Local cache —
   // never written into the shared aggCache, so no other strategy can ever read a pilot matrix.
   const tierCells = new Map<number, Cell>();
@@ -1983,7 +2014,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   //   Rule 1: model home-to-score >= 0.85 AND home goals avg >= 1.5 (87.0% on graded picks — live)
   //   Rule 2: combined blend >= 4.0 AND home goals avg >= 1.8       (84.3% holdout)
   //   Rule 3: home goals avg >= 2.0                                 (81.8% holdout)
-  const homeScoreOk = (cell: Cell, hf?: Form, af?: Form): boolean => {
+  const homeScoreOk = (cell: Cell, hf?: Form, af?: Form, hRank?: number | null, aRank?: number | null): boolean => {
+    // rule 6 (standings, farmed 2026-09-11): home is a top-4 table favourite and the away side sits
+    // 10th or lower -> home scores 89.8% (n=1862, walk-forward). Only reachable for agents whose rule
+    // supplies ranks; null ranks leave this dormant, so every existing to-score agent is unchanged.
+    if (hRank != null && aRank != null && hRank <= 4 && aRank >= 10) return true;  // rule 6
     if (!cell.confident) return false;
     if (autoPass("home_to_score", cell)) return true;
     const hAvg = hf && hf.n ? hf.gf5 / hf.n : null;
@@ -2005,7 +2040,11 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
   //   Rule 1: model away-to-score >= 0.85   (89.0% farmed)
   //   Rule 2: combined blend >= 4.5         (77.9% holdout)
   //   Rule 3: away won >= 4 of last 5       (76.6% holdout)
-  const awayScoreOk = (cell: Cell, hf?: Form, af?: Form): boolean => {
+  const awayScoreOk = (cell: Cell, hf?: Form, af?: Form, hRank?: number | null, aRank?: number | null): boolean => {
+    // rule 4 (standings, farmed 2026-09-11): away is a top-4 table favourite and the home side sits
+    // 10th or lower -> away scores 82.9% (n=1914, walk-forward). Dormant unless the agent supplies
+    // ranks; the shownP >= 0.75 away-to-score floor still applies on top (weak structural picks drop).
+    if (aRank != null && hRank != null && aRank <= 4 && hRank >= 10) return true;  // rule 4
     if (!cell.confident) return false;
     const hB = hf && hf.n ? (hf.gf5 + hf.ga5) / hf.n : null;
     const aB = af && af.n ? (af.gf5 + af.ga5) / af.n : null;
@@ -2060,6 +2099,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // each team's last-5 form — powers the implicit recent-form sense check (formVeto)
     const hForm = f.home_team_id != null ? formMap.get(f.home_team_id) : undefined;
     const aForm = f.away_team_id != null ? formMap.get(f.away_team_id) : undefined;
+    // league table positions — only fetched (once per league/season, cached) for agents whose rule
+    // uses them; feeds both the rank rule fields and the to-score gates' standings OR-rule
+    let homeRank: number | null = null, awayRank: number | null = null;
+    if (needsRank && f.home_team_id != null && f.away_team_id != null) {
+      const rm = await rankMapFor(f.league_id, f.season);
+      if (rm) { homeRank = rm.get(f.home_team_id) ?? null; awayRank = rm.get(f.away_team_id) ?? null; }
+    }
 
     // Rules apply to EVERY strategy, including sets (families/mixes): filters gate the game,
     // select branches choose the market. Form + opponent-strength signals are available here.
@@ -2120,6 +2166,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
         over05_prob: cell.confident ? round2(overP(cell.agg, 0.5)) : null,
         home_1up_prob: cell.confident && cell.agg.early?.["home_win_1up"] != null ? round2(cell.agg.early["home_win_1up"]) : null,
         away_1up_prob: cell.confident && cell.agg.early?.["away_win_1up"] != null ? round2(cell.agg.early["away_win_1up"]) : null,
+        // live league table positions (null unless this agent's rule tests them — see rankMapFor)
+        home_league_rank: homeRank,
+        away_league_rank: awayRank,
       };
       // rules see the same model % the card will show (the blend) — edge stays raw like the tiers
       const sig = signalsFor(bms, blend50(bmp, bkp), bkp, (bmp != null && bkp != null) ? bmp - bkp : null,
@@ -2183,8 +2232,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       // mandatory Over 1.5 platform rule (3 independent rules) — mix/family agents that CHOSE over_1_5
       if (chosen.mk === "over_1_5" && baseMk !== "btts" && !over15Ok(cell, hForm, aForm)) continue;
       // mandatory Home/Away-to-score platform rules (mix/family agents that CHOSE to-score)
-      if (chosen.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
-      if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
+      if (chosen.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm, homeRank, awayRank)) continue;
+      if (chosen.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm, homeRank, awayRank)) continue;
       // mandatory Double Chance rules (mix/family agents that CHOSE a DC market)
       if (chosen.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
       if (chosen.mk === "double_chance_x2" && (chosen.model_prob ?? 0) < 0.80 && !autoPass("double_chance_x2", cell)) continue;
@@ -2242,8 +2291,8 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     // mandatory Over 1.5 platform rule (3 independent rules) — every direct/mix over_1_5 pick
     if (eff.mk === "over_1_5" && baseMk !== "btts" && !over15Ok(cell, hForm, aForm)) continue;
     // mandatory Home/Away-to-score platform rules (3 independent rules each)
-    if (eff.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm)) continue;
-    if (eff.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm)) continue;
+    if (eff.mk === "home_to_score" && !homeScoreOk(cell, hForm, aForm, homeRank, awayRank)) continue;
+    if (eff.mk === "away_to_score" && !awayScoreOk(cell, hForm, aForm, homeRank, awayRank)) continue;
     // mandatory Double Chance 12 platform rule (favorite either side, or high-scoring => not a draw)
     if (eff.mk === "double_chance_12" && !dc12Ok(cell, hForm, aForm)) continue;
     // mandatory BTTS platform rule — bets BTTS on the New GG 64-65% band
@@ -2552,7 +2601,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const rolledLeagueIds = strategy.league_mode === "surprise" && leagues !== "all" ? leagues : null;
   if (leagues !== "all" && leagues.length === 0) return 0; // no in-window leagues to hunt this run
 
-  let q = sb.from("fixtures").select("id, league_id, kickoff_utc, home_team_id, away_team_id")
+  let q = sb.from("fixtures").select("id, league_id, season, kickoff_utc, home_team_id, away_team_id")
     .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
     .not("status", "in", `(${NOT_PICKABLE.join(",")})`)
     .order("kickoff_utc", { ascending: true }).limit(200);
