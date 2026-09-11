@@ -5,6 +5,13 @@ import MobileLogo from "@/components/MobileLogo";
 import AdminAnalytics, { type AdminStats, type DailyActivity, type RecentPick, type LlmUsageRow, type FeedbackData } from "@/components/AdminAnalytics";
 import { getAnthropicCredit } from "@/lib/anthropicCost";
 
+// Always render live — never serve a cached snapshot. The admin_analytics RPC runs through fetch,
+// which Next can cache on a server component, so a new subscriber (or any live number) would show
+// stale until the cache expired. force-dynamic + revalidate 0 makes every load re-run the RPCs.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
+
 // Platform analytics — admin-only. Gated on profiles.is_admin here and again inside the
 // admin_analytics RPC (defence in depth). Non-admins get a 404, not a redirect.
 export default async function AnalyticsPage() {
