@@ -65,8 +65,15 @@ Deno.serve(async (req) => {
     } else {
       await tg("sendMessage", { chat_id: chatId, text: "Welcome to Onside. To link your account, open the app, go to Profile, and tap Connect Telegram." });
     }
+  } else if (text.startsWith("/stop")) {
+    // pause only the daily morning digest — live pick deliveries + goal alerts still come through
+    await sb.from("profiles").update({ daily_digest: false }).eq("telegram_chat_id", chatId);
+    await tg("sendMessage", { chat_id: chatId, text: "🔕 Morning digest paused. Your live pick alerts still come through. Reply /resume to turn the daily digest back on." });
+  } else if (text.startsWith("/resume") || text.startsWith("/start_digest")) {
+    await sb.from("profiles").update({ daily_digest: true }).eq("telegram_chat_id", chatId);
+    await tg("sendMessage", { chat_id: chatId, text: "☀️ Morning digest is back on. You'll get your agents' picks + yesterday's result each morning." });
   } else {
-    await tg("sendMessage", { chat_id: chatId, text: "Your Onside agent picks are delivered here automatically. Manage your agents in the app." });
+    await tg("sendMessage", { chat_id: chatId, text: "Your Onside agent picks are delivered here automatically. Manage your agents in the app. (Reply /stop to pause the morning digest.)" });
   }
   return new Response("ok");
 });
