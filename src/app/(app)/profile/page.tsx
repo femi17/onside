@@ -11,6 +11,7 @@ import AppVersionStatus from "@/components/AppVersionStatus";
 import DeleteAccount from "@/components/DeleteAccount";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
+import ReferralCard from "@/components/ReferralCard";
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -105,6 +106,9 @@ async function ProfileData() {
         </div>
         {isPaid && <CancelSubscription />}
       </section>
+
+      {/* invite friends — two-sided referral (30d Pro for you, 14d for them on their first sub) */}
+      <ReferralCard />
 
       {/* profile details */}
       <section className="mt-4 rounded-2xl bg-chalk p-5 text-ink shadow-xl">

@@ -12,6 +12,7 @@ import InstallNudge from "@/components/InstallNudge";
 import UpdateWatcher from "@/components/UpdateWatcher";
 import FounderQuestion from "@/components/FounderQuestion";
 import SeenPing from "@/components/SeenPing";
+import ReferralCapture from "@/components/ReferralCapture";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
 
@@ -137,6 +138,8 @@ export default async function AppLayout({
       <FounderQuestion />
       {/* hourly-throttled "was seen today" ping for retention analytics (client-only, fire-and-forget) */}
       <SeenPing />
+      {/* credits a referrer once, after a referred user signs in (reads the middleware ref cookie) */}
+      <ReferralCapture />
     </div>
     </ConfirmProvider>
   );

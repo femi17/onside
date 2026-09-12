@@ -103,6 +103,23 @@ export async function POST(req: Request) {
     .eq("id", user.id);
   if (error) return NextResponse.json({ error: "Couldn't activate your plan — try again." }, { status: 500 });
 
+  // Two-sided referral reward (fires once, on this user's first subscription): the referrer gets
+  // +30 days Pro, and this referee gets +14 days on the month just granted. Service-role writes here
+  // bypass trg_protect_plan. Best-effort — a referral hiccup must never block a paid activation.
+  try {
+    const { data: me } = await admin.from("profiles").select("referred_by, referral_rewarded_at").eq("id", user.id).maybeSingle();
+    if (me?.referred_by && !me.referral_rewarded_at) {
+      const refereeUntil = new Date(until); refereeUntil.setDate(refereeUntil.getDate() + 14);
+      await admin.from("profiles").update({ plan_until: refereeUntil.toISOString(), referral_rewarded_at: new Date().toISOString() }).eq("id", user.id);
+      const { data: ref } = await admin.from("profiles").select("plan, plan_until").eq("id", me.referred_by).maybeSingle();
+      if (ref) {
+        const base = ref.plan_until && Date.parse(ref.plan_until) > Date.now() ? new Date(ref.plan_until) : new Date();
+        base.setDate(base.getDate() + 30);
+        await admin.from("profiles").update({ plan: ref.plan === "pro_max" ? "pro_max" : "pro", plan_until: base.toISOString() }).eq("id", me.referred_by);
+      }
+    }
+  } catch { /* referral reward is best-effort */ }
+
   if (isUpgrade) {
     // stop the old Pro subscription billing ₦500 behind the new plan (non-fatal — worst case the
     // webhook's charge would extend a plan the user no longer has, and they can cancel from Profile)
