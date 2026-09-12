@@ -40,6 +40,12 @@ export type FeedbackData = {
   recent: { prompt_key: string; answer: string; note: string | null; answered_at: string; who: string }[];
 };
 
+// admin_community_posts() — newest community posts (the founder-solicited "ideas" list)
+export type IdeaPost = {
+  id: string; who: string; body: string; kind: string;
+  likes: number; comments: number; at: string; hidden: boolean;
+};
+
 // admin_daily_activity() — the three per-day activity counts (real users only)
 export type DailyActivity = {
   uploads_daily: { day: string; n: number }[];
@@ -68,7 +74,7 @@ const naira = (x: number) => {
   return `₦${n(x)}`;
 };
 
-export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedback }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null; llm?: LlmUsageRow[] | null; feedback?: FeedbackData | null }) {
+export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedback, ideas }: { s: AdminStats; daily?: DailyActivity | null; picks?: RecentPick[] | null; anthropic?: AnthropicCredit | null; llm?: LlmUsageRow[] | null; feedback?: FeedbackData | null; ideas?: IdeaPost[] | null }) {
   const paid = s.revenue.pro + s.revenue.pro_max;
   const settled = s.agents.won + s.agents.lost;
   const hit = settled ? `${Math.round((s.agents.won / settled) * 100)}%` : "—";
@@ -300,7 +306,39 @@ export default function AdminAnalytics({ s, daily, picks, anthropic, llm, feedba
           <FeedbackPanel f={feedback} />
         </Section>
       )}
+
+      {/* Ideas from the community — the founder asked users to post what they want; read & reply */}
+      {ideas && (
+        <Section label="Ideas from the community">
+          <IdeasPanel ideas={ideas} />
+        </Section>
+      )}
     </>
+  );
+}
+
+// The founder-solicited ideas feed — newest community posts, so requests get a fast reply.
+function IdeasPanel({ ideas }: { ideas: IdeaPost[] }) {
+  return (
+    <Panel title="Latest posts" sub="Newest first — reply in the app to keep users engaged">
+      {ideas.length ? (
+        <div className="mt-4 flex flex-col divide-y divide-ink/[0.06]">
+          {ideas.map((p) => (
+            <div key={p.id} className="py-2.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-[12.5px] font-bold text-ink">
+                  {p.who}{p.hidden ? <span className="font-mono text-[10px] text-ink-mute"> · hidden</span> : null}
+                </span>
+                <span className="flex-none font-mono text-[10.5px] text-ink-mute">
+                  {new Date(p.at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} · ♥ {p.likes} · 💬 {p.comments}
+                </span>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">{p.body}</p>
+            </div>
+          ))}
+        </div>
+      ) : <Empty>No community posts yet — you just asked 118 users, their ideas will land here.</Empty>}
+    </Panel>
   );
 }
 
