@@ -41,6 +41,9 @@ export type AgentPick = TrackedTicket & {
   // the Onside score — the same ranking build_onside_double uses (bookies' % + market-type
   // adjustment + agent-record nudge), computed at read time; null = no odds to score against
   onside_score?: number | null;
+  // Over-1.5 upgrade: an Over 0.5 pick the engine also rates a strong Over 1.5 (raw model >= 0.95).
+  // The card offers taking the better odds. Set by run-strategies at delivery time.
+  o15_upgrade?: boolean | null;
 };
 
 // "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
@@ -432,6 +435,16 @@ function Item({
           </div>
           <div className="mt-0.5 min-w-0">
             <div className="flex items-center gap-1.5">
+              {/* Over-1.5 upgrade chip: this Over 0.5 pick is also a strong Over 1.5 (raw model
+                  >= 0.95, ~85% historically) — take the better odds. Set by the engine at delivery. */}
+              {p.o15_upgrade && (
+                <span
+                  className="flex-none rounded bg-grass-deep/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-grass-deep"
+                  title="The engine also rates this a strong Over 1.5 (~85%). You can take the better odds."
+                >
+                  🔼 Over 1.5
+                </span>
+              )}
               {/* the card % is the MODEL'S CHANCE for this exact bet (the explainer's "put
                   together, the model gives X an N% chance") — owner-ruled: that's the number
                   users compare picks by. Older picks without a stored model_prob fall back to

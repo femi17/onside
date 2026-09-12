@@ -2716,6 +2716,11 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       // displayed odds: { odd, src } where src is quoted (real median book price) | derived
       // (de-vigged from related quotes) | model (fair odd from the model when nothing is quoted)
       ...(price ? { odds: price.odd, odds_src: price.src } : {}),
+      // Over-1.5 upgrade flag (owner-directed 2026-09-12): an Over 0.5 pick whose RAW model chance
+      // of a goal is >= 0.95 is also a strong Over 1.5 (~85% historically — the goal-certainty games
+      // are inherently high-scoring). The feed tags these "🔼 Over 1.5" so users can take the better
+      // odds. Post-delivery scrutiny lives here (no separate agent); flag is on the SAME pick.
+      ...(r.mk === "over_0_5" && ((r.model_raw ?? r.model_prob) ?? 0) >= 0.95 ? { o15_upgrade: true } : {}),
     };
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,

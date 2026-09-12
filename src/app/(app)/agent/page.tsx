@@ -138,6 +138,7 @@ export default async function AgentPage() {
     reasons: ((r.criteria as { reasons?: unknown } | null)?.reasons as AgentPick["reasons"]) ?? null,
     odds: ((r.criteria as { odds?: number } | null)?.odds) ?? null,
     odds_src: ((r.criteria as { odds_src?: string } | null)?.odds_src as AgentPick["odds_src"]) ?? null,
+    o15_upgrade: ((r.criteria as { o15_upgrade?: boolean } | null)?.o15_upgrade) ?? null,
     delivered_at: (r.delivered_at as string) ?? null,
     onside_score: onsideScore(r),
   }));
