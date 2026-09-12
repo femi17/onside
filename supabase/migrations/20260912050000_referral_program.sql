@@ -12,6 +12,12 @@ alter table public.profiles alter column referral_code set default upper(substr(
 create unique index if not exists profiles_referral_code_uidx on public.profiles(referral_code);
 create index if not exists profiles_referred_by_idx on public.profiles(referred_by);
 
+-- referred_by must SET NULL on referrer deletion, else deleting a referrer's account is blocked
+alter table public.profiles drop constraint if exists profiles_referred_by_fkey;
+alter table public.profiles
+  add constraint profiles_referred_by_fkey foreign key (referred_by)
+  references public.profiles(id) on delete set null;
+
 create or replace function public.attribute_referral(p_code text)
 returns boolean language plpgsql security definer set search_path to '' as $function$
 declare v_ref uuid;
