@@ -37,6 +37,9 @@ Open onside.com.ng → browser menu → "Add to Home Screen", then Profile → N
 
 4️⃣ Our record is public → onside.com.ng/record
 
+5️⃣ Tell us what to build → onside.com.ng/community
+What's the ONE thing that would make you use Onside every day? Post it in the community — the team reads every one.
+
 18+ · Bet responsibly · Not financial advice`;
 
 Deno.serve(async (req) => {
@@ -73,7 +76,9 @@ Deno.serve(async (req) => {
     await sb.from("profiles").update({ daily_digest: true }).eq("telegram_chat_id", chatId);
     await tg("sendMessage", { chat_id: chatId, text: "☀️ Morning digest is back on. You'll get your agents' picks + yesterday's result each morning." });
   } else {
-    await tg("sendMessage", { chat_id: chatId, text: "Your Onside agent picks are delivered here automatically. Manage your agents in the app. (Reply /stop to pause the morning digest.)" });
+    // any other message is likely a user telling us something — nudge it to the community (public,
+    // admin-visible) rather than dead-ending it here. Picks still arrive automatically.
+    await tg("sendMessage", { chat_id: chatId, text: "🙏 Thanks! The best place for ideas and requests is the community — post it at onside.com.ng/community and the team reads every one. What's the ONE thing that would make you use Onside every day?\n\n(Your picks still arrive here automatically. Reply /stop to pause the morning digest.)" });
   }
   return new Response("ok");
 });
