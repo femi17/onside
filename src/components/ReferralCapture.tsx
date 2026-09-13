@@ -11,7 +11,9 @@ export default function ReferralCapture() {
     if (!m) return;
     const code = decodeURIComponent(m[1]);
     const sb = createClient();
-    sb.rpc("attribute_referral", { p_code: code }).finally(() => {
+    // Promise.resolve wraps the thenable query builder into a real Promise (the builder type
+    // has no typed .finally); cookie is cleared after the RPC settles, success or failure.
+    Promise.resolve(sb.rpc("attribute_referral", { p_code: code })).finally(() => {
       document.cookie = "onside_ref=; Max-Age=0; path=/";
     });
   }, []);
