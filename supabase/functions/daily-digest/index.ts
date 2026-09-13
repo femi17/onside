@@ -75,6 +75,7 @@ Deno.serve(async (req) => {
   const { data: todayPicks } = await sb.from("deliveries")
     .select("user_id, market_label, market_key, model_prob, tier, fixtures(home_team, away_team, kickoff_utc, leagues(name))")
     .in("user_id", ids).eq("result", "pending").gte("delivered_at", todayStart)
+    .neq("market_key", "over_0_5") // Over 0.5 is never shown on Telegram (owner-directed 2026-09-13)
     .order("model_prob", { ascending: false });
   const byUserToday = new Map<string, any[]>();
   for (const r of todayPicks ?? []) (byUserToday.get(r.user_id) ?? byUserToday.set(r.user_id, []).get(r.user_id)!).push(r);
@@ -98,7 +99,8 @@ Deno.serve(async (req) => {
   const { data: bankerRows } = await sb.from("deliveries")
     .select("market_label, model_prob, fixtures!inner(home_team, away_team, kickoff_utc, leagues!inner(name, tier))")
     .eq("result", "pending").gte("delivered_at", todayStart)
-    .not("model_prob", "is", null).order("model_prob", { ascending: false }).limit(50);
+    .not("model_prob", "is", null).neq("market_key", "over_0_5")
+    .order("model_prob", { ascending: false }).limit(50);
   const bankerRow = (bankerRows ?? []).find((r: any) => {
     const lg = r.fixtures?.leagues; const tier = Array.isArray(lg) ? lg[0]?.tier : lg?.tier;
     const ko = r.fixtures?.kickoff_utc;

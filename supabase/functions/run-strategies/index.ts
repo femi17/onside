@@ -2809,14 +2809,16 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // NOTE: agent picks are NOT auto-posted to the community feed (removed by request — the
   // "Publish my agents here" toggle now only feeds the aggregate leaderboard, never game lists).
 
-  if (delivered.length && !QUIET_RUN && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
+  // Over 0.5 never goes to Telegram (owner-directed 2026-09-13: cheap-looking odds, private signal)
+  const tgDelivered = delivered.filter((r) => (r.market_key ?? "") !== "over_0_5");
+  if (tgDelivered.length && !QUIET_RUN && Array.isArray(strategy.channels) && strategy.channels.includes("telegram")) {
     const { data: prof } = await sb.from("profiles").select("telegram_chat_id").eq("id", strategy.user_id).maybeSingle();
     const chatId = prof?.telegram_chat_id;
     if (chatId) {
-      const { data: fx } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc, leagues(name, country, tier)").in("id", delivered.map((r) => r.fixture_id));
+      const { data: fx } = await sb.from("fixtures").select("id, home_team, away_team, kickoff_utc, leagues(name, country, tier)").in("id", tgDelivered.map((r) => r.fixture_id));
       const fxMap = new Map((fx ?? []).map((g: any) => [g.id, g]));
       const rankByFx = new Map(ranked.map((r) => [r.f.id, r]));
-      const blocks = delivered.map((r) => {
+      const blocks = tgDelivered.map((r) => {
         const g: any = fxMap.get(r.fixture_id);
         const rk: any = rankByFx.get(r.fixture_id);
         const match = g ? `${g.home_team} v ${g.away_team}` : `Fixture ${r.fixture_id}`;
@@ -2834,7 +2836,7 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
         const names = (lgs ?? []).map((l: any) => `${flagFor(l.country ?? null, l.tier ?? null)} ${l.name}`.trim()).filter(Boolean);
         if (names.length) rolledNote = `\n🎲 rolled: ${names.join(", ")}`;
       }
-      const header = `🤖 ${strategy.name} — ${delivered.length} pick${delivered.length === 1 ? "" : "s"}`;
+      const header = `🤖 ${strategy.name} — ${tgDelivered.length} pick${tgDelivered.length === 1 ? "" : "s"}`;
       const legend = `\n🟢 high · 🟡 solid · 🟠 lower confidence`;
       await sendTelegram(chatId, `${header}${rolledNote}\n\n${blocks.join("\n\n")}\n${legend}`);
     }

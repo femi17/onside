@@ -113,7 +113,7 @@ async function buildBrief(slot: string): Promise<{ theme: string; facts: string;
   if (slot === "top_picks" || slot === "morning_slate" || slot === "kickoff_buzz") {
     const { data } = await sb.from("deliveries")
       .select("edge, market_label, bet_value, market_key, fixtures(home_team, away_team, kickoff_utc, status, leagues(name))")
-      .gte("delivered_at", startOfDay).order("edge", { ascending: false }).limit(60);
+      .gte("delivered_at", startOfDay).neq("market_key", "over_0_5").order("edge", { ascending: false }).limit(60);
     let rows = dedupeByFixture((data ?? []) as any[]).filter((r) => r.fixtures);
 
     if (slot === "kickoff_buzz") {
@@ -138,7 +138,7 @@ async function buildBrief(slot: string): Promise<{ theme: string; facts: string;
     const since = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
     const { data } = await sb.from("deliveries")
       .select("result, edge, market_label, bet_value, market_key, fixtures(home_team, away_team, ft_home, ft_away, leagues(name))")
-      .gte("settled_at", since).in("result", ["won", "lost"]).limit(800);
+      .gte("settled_at", since).in("result", ["won", "lost"]).neq("market_key", "over_0_5").limit(800);
     const rows = (data ?? []) as any[];
     if (rows.length === 0) return evergreen();
     const won = rows.filter((r) => r.result === "won").length;
@@ -575,7 +575,7 @@ async function topUpcomingPick(): Promise<any | null> {
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const { data } = await sb.from("deliveries")
     .select("id, fixture_id, model_prob, market_label, bet_value, market_key, side, line, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
-    .gte("delivered_at", startOfDay).not("model_prob", "is", null)
+    .gte("delivered_at", startOfDay).not("model_prob", "is", null).neq("market_key", "over_0_5")
     .order("model_prob", { ascending: false }).limit(100);
   const rows = dedupeByFixture((data ?? []) as any[])
     .filter((r) => r.fixtures && Date.parse(r.fixtures.kickoff_utc) > now.getTime());
@@ -589,7 +589,9 @@ async function topUpcomingPick(): Promise<any | null> {
 // shakier markets that overclaim or sit sub-75% (away/home-to-score, DC, BTTS, 1UP, Over 2.5): a
 // banker must never be a floor-grazing away-to-score (the Dukagjini 78% miss). Floor 0.80, and a
 // real tier-tagged league only (no obscure fixtures as our public best pick) — skip if none qualify.
-const BANKER_MARKETS = ["over_0_5", "over_1_5"];
+// Over 0.5 is EXCLUDED from all public/Telegram posts (owner-directed 2026-09-13): its ~1.03 odds
+// look cheap, and it's the owner's private signal for deriving Over 1.5. Banker = Over 1.5 only.
+const BANKER_MARKETS = ["over_1_5"];
 async function topBankerPick(): Promise<any | null> {
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
@@ -647,7 +649,7 @@ async function pollPost(dry: boolean, dmChats: number[] | null): Promise<Respons
 async function bankerPost(dry: boolean, dmChats: number[] | null): Promise<Response> {
   const J = (o: any) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
   const p = await topBankerPick();
-  if (!p) return J({ status: "skipped", slot: "banker", reason: "no banker-grade pick (Over 0.5/1.5 @ >=0.80, tier league)" });
+  if (!p) return J({ status: "skipped", slot: "banker", reason: "no banker-grade pick (Over 1.5 @ >=0.80, tier league)" });
   const conf = p.model_prob != null ? ` (${pct(Number(p.model_prob))})` : "";
   let text = `🔒 Onside banker of the day\n\n${fxName(p.fixtures)}${league(p.fixtures) ? ` · ${league(p.fixtures)}` : ""}\n${betLabelOf(p)}${conf}\n\nOur single most confident pick today — no hype, na the board talk.`;
   text = text.slice(0, 900) + FOOTER;
@@ -674,7 +676,7 @@ async function receiptPost(dry: boolean, dmChats: number[] | null): Promise<Resp
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { data } = await sb.from("deliveries")
     .select("result, model_prob, market_label, bet_value, market_key, fixtures(home_team, away_team, ft_home, ft_away)")
-    .gte("settled_at", since).in("result", ["won", "lost"]).not("model_prob", "is", null).limit(1500);
+    .gte("settled_at", since).in("result", ["won", "lost"]).not("model_prob", "is", null).neq("market_key", "over_0_5").limit(1500);
   const rows = (data ?? []) as any[];
   if (rows.length < 5) return J({ status: "skipped", slot: "receipt", reason: "too few settled" });
   const won = rows.filter((r) => r.result === "won").length;
@@ -715,7 +717,7 @@ async function accaPost(dry: boolean, dmChats: number[] | null): Promise<Respons
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const { data } = await sb.from("deliveries")
     .select("id, fixture_id, model_prob, market_label, bet_value, market_key, criteria, fixtures(home_team, away_team, kickoff_utc, leagues(name, tier))")
-    .gte("delivered_at", startOfDay).not("model_prob", "is", null)
+    .gte("delivered_at", startOfDay).not("model_prob", "is", null).neq("market_key", "over_0_5")
     .order("model_prob", { ascending: false }).limit(250);
   const t = now.getTime();
   const tierOf = (r: any) => { const l = r.fixtures?.leagues; return (Array.isArray(l) ? l[0]?.tier : l?.tier) ?? null; };
