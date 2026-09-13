@@ -20,11 +20,11 @@ const PLANS = [
     feats: ["5 leagues for your AI agent", "Track all your bets", "1 accumulator / day", "1 agent · hunts every day (locked once built)", "Agent picks up to 8 games", "3 slips of history"],
   },
   {
-    key: "pro", name: "Pro", price: "₦500/mo",
+    key: "pro", name: "Pro", price: "₦2,000/mo",
     feats: ["15 leagues for your AI agent", "Track all your bets", "3 accumulators / day", "Up to 3 agents · tune & retire anytime", "Up to 15 games per pick", "10 slips of history"],
   },
   {
-    key: "pro_max", name: "Pro Max", price: "₦1,000/mo",
+    key: "pro_max", name: "Pro Max", price: "₦4,000/mo",
     feats: ["All 300+ leagues for your AI agent", "Track all your bets", "10 accumulators / day", "Up to 7 agents · unlimited runs", "Up to 24 games per pick", "Learning agents", "Unlimited history"],
   },
 ];

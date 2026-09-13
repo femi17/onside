@@ -45,7 +45,7 @@ export default async function EditStrategyPage({ params }: { params: Promise<{ i
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-flood/15 font-mono text-xl text-flood-deep">🔒</div>
           <h1 className="font-disp text-xl font-extrabold text-ink">Tuning your agent is a Pro feature.</h1>
           <p className="mx-auto mt-2 max-w-sm text-[13.5px] leading-relaxed text-ink-mute">
-            Your agent keeps hunting every day exactly as you built it. Pro (₦500/mo) lets you
+            Your agent keeps hunting every day exactly as you built it. Pro (₦2,000/mo) lets you
             tune the rule, change the market and leagues, and run up to 3 agents at once.
           </p>
           <div className="mt-5 flex justify-center gap-2.5">

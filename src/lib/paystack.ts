@@ -29,9 +29,12 @@ export function supabaseAdmin() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+// Name carries a version tag: on a price change we bump the tag so getPlanCode mints a FRESH
+// Paystack plan at the new amount instead of matching the old one by name. Existing subscribers
+// keep billing on their old plan code (grandfathered) until they resubscribe.
 const PLAN_NAME: Record<PaidPlan, string> = {
-  pro: "Onside Pro (Monthly)",
-  pro_max: "Onside Pro Max (Monthly)",
+  pro: "Onside Pro (Monthly) v2",
+  pro_max: "Onside Pro Max (Monthly) v2",
 };
 
 // Returns the Paystack plan code for a tier, creating the plan once and caching it in the DB.

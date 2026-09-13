@@ -76,7 +76,7 @@ export default function TermsPage() {
           deposits, stakes, top-ups, or gambling of any kind, and no winnings are ever paid out through Onside or Paystack.
         </p>
         <ul className="mt-3 flex list-disc flex-col gap-1.5 pl-5">
-          <LI><b className="text-chalk">Plans &amp; pricing (NGN):</b> Free — ₦0; Pro — ₦500/month; Pro Max — ₦1,000/month.</LI>
+          <LI><b className="text-chalk">Plans &amp; pricing (NGN):</b> Free — ₦0; Pro — ₦2,000/month; Pro Max — ₦4,000/month.</LI>
           <LI><b className="text-chalk">Recurring billing:</b> paid plans renew automatically each month via Paystack until you cancel.</LI>
           <LI><b className="text-chalk">Cancellation:</b> cancel any time from your Profile. You keep your paid plan until the end of the period you&apos;ve already paid for, then move to Free. We do not charge you again after you cancel.</LI>
           <LI><b className="text-chalk">Refunds:</b> subscription fees are generally non-refundable once a billing period has begun, since access is granted immediately. If you were charged in error (e.g. a duplicate charge or a charge after cancellation), contact us at {SUPPORT} within 14 days and we will investigate and refund valid cases.</LI>

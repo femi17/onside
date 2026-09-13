@@ -5,8 +5,8 @@ export type PaidPlan = "pro" | "pro_max";
 export const PLAN_PRICING: Record<PaidPlan, { label: string; naira: number; kobo: number; perks: string[] }> = {
   pro: {
     label: "Pro",
-    naira: 500,
-    kobo: 50000,
+    naira: 2000,
+    kobo: 200000,
     perks: [
       "50 leagues for your AI agent",
       "3 accumulators / day",
@@ -17,8 +17,8 @@ export const PLAN_PRICING: Record<PaidPlan, { label: string; naira: number; kobo
   },
   pro_max: {
     label: "Pro Max",
-    naira: 1000,
-    kobo: 100000,
+    naira: 4000,
+    kobo: 400000,
     perks: [
       "All 300+ leagues for your AI agent",
       "10 accumulators / day",
