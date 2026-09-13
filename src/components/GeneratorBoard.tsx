@@ -1049,7 +1049,7 @@ export default function GeneratorBoard({
             </button>
             {free && (
               <p className="mt-2.5 font-mono text-[10.5px] text-onpitch-mute">
-                Free plan: 1 tracked slip a day{usedToday > 0 ? " (used)" : ""} · 3 legs max
+                Free plan: 1 tracked slip a day{usedToday > 0 ? " (used)" : ""} · 8 legs max
               </p>
             )}
           </div>
@@ -1170,7 +1170,7 @@ export default function GeneratorBoard({
 
         <p className="mt-3 font-mono text-[10.5px] text-onpitch-mute">
           {eligible.length} game{eligible.length === 1 ? "" : "s"} in your pool
-          {free && <> · free plan: 1 generated slip a day{usedToday > 0 ? " (used)" : ""} · 3 legs max</>}
+          {free && <> · free plan: 1 generated slip a day{usedToday > 0 ? " (used)" : ""} · 8 legs max</>}
         </p>
       </div>
       )}
