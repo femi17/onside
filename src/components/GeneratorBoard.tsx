@@ -230,7 +230,7 @@ export default function GeneratorBoard({
   const router = useRouter();
 
   const free = plan !== "pro" && plan !== "pro_max";
-  const maxLegs = free ? 3 : 5;
+  const maxLegs = free ? 8 : 5;
   const [legs, setLegs] = useState(Math.min(3, maxLegs));
   const [fam, setFam] = useState<"all" | Fam>("all");
   const [targetStr, setTargetStr] = useState("");
@@ -244,7 +244,7 @@ export default function GeneratorBoard({
   // ---- Quick spec state ----
   // mode: users with zero agents land on Quick spec (they have no pool to assemble from)
   const [genMode, setGenMode] = useState<"agents" | "quick">(agentCount === 0 ? "quick" : "agents");
-  const quickMaxLegs = free ? 3 : 24; // client mirror of the GEN_ACCA_LEGS trigger caps
+  const quickMaxLegs = free ? 8 : 24; // client mirror of the GEN_ACCA_LEGS trigger caps
   const [chips, setChips] = useState<Set<string>>(new Set()); // NO defaults — owner ruling
   const [quickLegs, setQuickLegs] = useState(Math.min(3, free ? 3 : 24));
   // kick-off window in hours from now (0 = anytime today) — maps onto the engine's inclusive
