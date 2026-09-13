@@ -29,7 +29,7 @@ export default function ReferralCard() {
     <section className="mt-4 rounded-2xl bg-chalk p-5 text-ink shadow-xl">
       <div className="mb-1 font-disp text-[17px] font-bold">Invite friends</div>
       <p className="text-[13px] text-ink-mute">
-        Share your link — when a friend subscribes, <b className="text-ink">you get 30 days of Pro free</b> and they get 14 days on their first month.
+        Share your link — when a friend subscribes, <b className="text-ink">you get 30 days of Pro free</b> and they get 14 days on their first month. Earn up to 12 months this way.
       </p>
 
       <div className="mt-3 flex items-center gap-2 rounded-xl border border-ink/15 bg-ink/[0.03] p-2.5">

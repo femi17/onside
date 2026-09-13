@@ -104,18 +104,32 @@ export async function POST(req: Request) {
   if (error) return NextResponse.json({ error: "Couldn't activate your plan — try again." }, { status: 500 });
 
   // Two-sided referral reward (fires once, on this user's first subscription): the referrer gets
-  // +30 days Pro, and this referee gets +14 days on the month just granted. Service-role writes here
-  // bypass trg_protect_plan. Best-effort — a referral hiccup must never block a paid activation.
+  // +30 days Pro (capped — see below), and this referee gets +14 days on the month just granted.
+  // Service-role writes here bypass trg_protect_plan. Best-effort — a referral hiccup must never
+  // block a paid activation.
+  const REFERRAL_REWARD_CAP = 12; // max paid friends that ever earn a referrer +30d (lifetime).
+  // Bounds the give-away: genuine referrals up to the cap are self-funding (each is a real new
+  // subscriber), but nobody — fake accounts, self-referral rings, test-card signups — can mint
+  // unlimited free Pro. Tune this one number to tighten (e.g. 6 or 3).
   try {
     const { data: me } = await admin.from("profiles").select("referred_by, referral_rewarded_at").eq("id", user.id).maybeSingle();
     if (me?.referred_by && !me.referral_rewarded_at) {
+      // The referee always gets their +14d (they just paid) and is marked rewarded so this fires once.
       const refereeUntil = new Date(until); refereeUntil.setDate(refereeUntil.getDate() + 14);
       await admin.from("profiles").update({ plan_until: refereeUntil.toISOString(), referral_rewarded_at: new Date().toISOString() }).eq("id", user.id);
-      const { data: ref } = await admin.from("profiles").select("plan, plan_until").eq("id", me.referred_by).maybeSingle();
-      if (ref) {
-        const base = ref.plan_until && Date.parse(ref.plan_until) > Date.now() ? new Date(ref.plan_until) : new Date();
-        base.setDate(base.getDate() + 30);
-        await admin.from("profiles").update({ plan: ref.plan === "pro_max" ? "pro_max" : "pro", plan_until: base.toISOString() }).eq("id", me.referred_by);
+      // Cap the REFERRER side only. Count how many of this referrer's friends have ever been rewarded
+      // (this one now included); grant the +30d only while that count is within the cap.
+      const { count } = await admin.from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("referred_by", me.referred_by)
+        .not("referral_rewarded_at", "is", null);
+      if ((count ?? 0) <= REFERRAL_REWARD_CAP) {
+        const { data: ref } = await admin.from("profiles").select("plan, plan_until").eq("id", me.referred_by).maybeSingle();
+        if (ref) {
+          const base = ref.plan_until && Date.parse(ref.plan_until) > Date.now() ? new Date(ref.plan_until) : new Date();
+          base.setDate(base.getDate() + 30);
+          await admin.from("profiles").update({ plan: ref.plan === "pro_max" ? "pro_max" : "pro", plan_until: base.toISOString() }).eq("id", me.referred_by);
+        }
       }
     }
   } catch { /* referral reward is best-effort */ }
