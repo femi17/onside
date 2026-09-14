@@ -81,7 +81,7 @@ export default function TermsPage() {
           <LI><b className="text-chalk">Cancellation:</b> cancel any time from your Profile. You keep your paid plan until the end of the period you&apos;ve already paid for, then move to Free. We do not charge you again after you cancel.</LI>
           <LI><b className="text-chalk">Refunds:</b> subscription fees are generally non-refundable once a billing period has begun, since access is granted immediately. If you were charged in error (e.g. a duplicate charge or a charge after cancellation), contact us at {SUPPORT} within 14 days and we will investigate and refund valid cases.</LI>
           <LI><b className="text-chalk">Failed payments:</b> if a renewal fails, your account moves to the Free plan.</LI>
-          <LI><b className="text-chalk">Price changes:</b> we may change prices with reasonable advance notice; changes never apply to a period you have already paid for.</LI>
+          <LI><b className="text-chalk">Price changes:</b> we may change prices at any time. A price change never affects a billing period you have already paid for — it takes effect from your next renewal.</LI>
         </ul>
 
         <H>5. No guarantees &amp; not financial advice</H>
