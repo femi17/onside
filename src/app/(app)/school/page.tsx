@@ -101,12 +101,8 @@ export default async function SchoolPage() {
       <StickyHeader>
         <div className="mx-auto max-w-5xl px-5 pb-3 pt-6 md:px-8">
           <MobileLogo />
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">VVIP · the daily banker</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">VVIP</p>
           <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">Onside School.</h1>
-          <p className="mt-2 max-w-prose text-sm leading-relaxed text-onpitch-mute">
-            One double a day — the Onside Double, played as its two Over&nbsp;2.5 legs. Flat stake, real record, no
-            chasing. Built for stakers who treat betting like a business.
-          </p>
         </div>
       </StickyHeader>
 
