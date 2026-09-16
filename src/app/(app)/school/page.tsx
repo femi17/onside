@@ -18,6 +18,7 @@ import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 export const dynamic = "force-dynamic"; // the record grows daily
 
 const FINISHED = ["FT", "AET", "PEN"];
+const LIVE = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];
 
 export default async function SchoolPage({ searchParams }: { searchParams: Promise<{ preview?: string }> }) {
   const supabase = await createClient();
@@ -88,7 +89,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     fixtureIds.length
       ? supabase
           .from("fixtures")
-          .select("id, ft_home, ft_away, home_goals, away_goals, status, kickoff_utc, leagues(name, flag_url, tier)")
+          .select("id, ft_home, ft_away, home_goals, away_goals, status, elapsed, kickoff_utc, leagues(name, flag_url, tier)")
           .in("id", fixtureIds)
       : Promise.resolve({ data: [] as never[] }),
     deliveryIds.length
@@ -111,7 +112,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const model = (del?.criteria as { reasons?: { model?: { over25?: number } } } | undefined)?.reasons?.model;
       const over25 = model?.over25 ?? null;
       const odds = over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
-      const settled = f && FINISHED.includes(String(f.status));
+      const statusStr = f ? String(f.status ?? "") : "";
+      const settled = FINISHED.includes(statusStr);
+      const inPlay = LIVE.includes(statusStr);
       const h = f ? ((f.ft_home ?? f.home_goals) as number | null) : null;
       const a = f ? ((f.ft_away ?? f.away_goals) as number | null) : null;
       const tot = settled && h != null && a != null ? h + a : null;
@@ -119,8 +122,10 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       return {
         game: String(l.game ?? ""),
         odds,
-        score: tot != null && h != null && a != null ? `${h}-${a}` : null,
+        score: settled && h != null && a != null ? `${h}-${a}` : null,
         hit: tot != null ? tot >= 3 : null,
+        live: inPlay && h != null && a != null ? `${h}-${a}` : null,
+        elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
         kickoff: (f?.kickoff_utc as string | null) ?? null,
         league: lg?.name ?? null,
         flag: lg?.flag_url ?? null,

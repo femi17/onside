@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 
 export type SchoolLeg = {
   game: string;
   odds: number | null;
   score: string | null;
   hit: boolean | null;
+  live: string | null; // current score while in play, e.g. "1-0"
+  elapsed: number | null; // live minute
   kickoff: string | null;
   league: string | null;
   flag: string | null;
@@ -48,6 +51,18 @@ export default function SchoolBoard({
   joinSlot?: ReactNode;
 }) {
   const [stake, setStake] = useState(10000);
+  const router = useRouter();
+
+  // once today's pick has kicked off (any leg live or past kickoff), poll the server for fresh
+  // scores so the card updates from "18:30" → live score+minute → final without a manual reload.
+  const trackLive =
+    !!upcoming &&
+    upcoming.legs.some((l) => l.live != null || (l.kickoff != null && Date.parse(l.kickoff) <= Date.now()));
+  useEffect(() => {
+    if (!trackLive) return;
+    const id = setInterval(() => router.refresh(), 60000);
+    return () => clearInterval(id);
+  }, [trackLive, router]);
 
   // cumulative P/L over the SETTLED record only — the upcoming pick doesn't count until it plays
   const running = useMemo(() => {
@@ -246,7 +261,15 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
   const dayPL = won ? stake * (r.combined - 1) : -stake;
   const toWin = stake * (r.combined - 1);
   const isLocked = pending && locked;
-  const badge = pending ? "bg-flood/15 text-flood-deep" : won ? "bg-grass/15 text-grass-deep" : "bg-brick/15 text-brick";
+  const anyLive = r.legs.some((l) => l.live != null);
+  const badge = pending
+    ? anyLive
+      ? "bg-brick/15 text-brick"
+      : "bg-flood/15 text-flood-deep"
+    : won
+      ? "bg-grass/15 text-grass-deep"
+      : "bg-brick/15 text-brick";
+  const badgeText = pending ? (anyLive ? "Live" : "Not started") : won ? "Won" : "Lost";
 
   return (
     <div className="betslip betslip-chalk relative flex h-full w-full flex-col overflow-hidden rounded-2xl bg-chalk p-4 text-ink shadow-xl">
@@ -255,8 +278,9 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
           <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
             {pending ? "Today" : day(r.date)}
           </span>
-          <span className={`rounded px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide ${badge}`}>
-            {pending ? "Not started" : won ? "Won" : "Lost"}
+          <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide ${badge}`}>
+            {anyLive && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />}
+            {badgeText}
           </span>
         </div>
 
@@ -276,17 +300,23 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
                 </span>
               </span>
               <span className="flex flex-none flex-col items-end gap-0.5">
-                {pending ? (
-                  l.kickoff && <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
-                ) : (
+                {l.score != null ? (
                   <span
                     className={`font-mono text-[13px] font-bold tabular-nums ${
                       l.hit ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
                     }`}
                   >
-                    {l.score ?? "—"}
+                    {l.score}
                   </span>
-                )}
+                ) : l.live != null ? (
+                  <span className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums text-brick">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />
+                    {l.live}
+                    {l.elapsed != null ? ` · ${l.elapsed}'` : ""}
+                  </span>
+                ) : l.kickoff ? (
+                  <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
+                ) : null}
                 <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
                   {l.odds ? "~" + l.odds.toFixed(2) : "—"}
                 </span>
