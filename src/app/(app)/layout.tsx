@@ -15,6 +15,7 @@ import SeenPing from "@/components/SeenPing";
 import ReferralCapture from "@/components/ReferralCapture";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
+import { SCHOOL_OPEN } from "@/lib/school";
 
 const NAV = [
   { label: "Tracker", href: "/tracker" },
@@ -49,11 +50,11 @@ export default async function AppLayout({
   // staff-only nav — admins sign in as normal users but see Analytics here. Moderation is a
   // lightweight tool, so it lives as a top-right link on the Community page instead of the menu.
   const adminLinks = [{ label: "Analytics", href: "/analytics" }];
-  // Onside School is an owner-only pilot until it has a 20-settled-game record. Gate the link (and the
-  // /school route itself) behind is_admin, alongside the staff links, until the record is proven.
-  const pilotLinks = [{ label: "Onside School", href: "/school" }];
-  const nav = profile?.is_admin ? [...NAV, ...pilotLinks, ...adminLinks] : NAV;
-  const mobileNav = profile?.is_admin ? [...MOBILE_NAV, ...pilotLinks, ...adminLinks] : MOBILE_NAV;
+  // Onside School: owner-only while the pilot is closed. Flip SCHOOL_OPEN (src/lib/school.ts) to surface
+  // the link for every signed-in user; the /school route gates itself on the same flag.
+  const schoolLinks = profile?.is_admin || SCHOOL_OPEN ? [{ label: "Onside School", href: "/school" }] : [];
+  const nav = [...NAV, ...schoolLinks, ...(profile?.is_admin ? adminLinks : [])];
+  const mobileNav = [...MOBILE_NAV, ...schoolLinks, ...(profile?.is_admin ? adminLinks : [])];
 
   // first-run: send brand-new accounts through onboarding (route lives outside this layout group).
   if (profile && profile.onboarded === false) redirect("/onboarding");

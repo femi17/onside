@@ -1,8 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
-export type SchoolLeg = { game: string; odds: number | null; score: string | null; hit: boolean | null };
+export type SchoolLeg = {
+  game: string;
+  odds: number | null;
+  score: string | null;
+  hit: boolean | null;
+  kickoff: string | null;
+  league: string | null;
+  flag: string | null;
+  tier: string | null;
+};
 export type SchoolRecord = {
   date: string;
   legs: SchoolLeg[];
@@ -15,11 +24,32 @@ const naira = (n: number) => (n < 0 ? "−₦" : "₦") + Math.round(Math.abs(n)
 const short = (n: number) => (n >= 1000 ? "₦" + Math.round(n / 1000) + "k" : "₦" + n);
 const day = (iso: string) =>
   new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+// kickoff clock in the users' timezone (Africa/Lagos), e.g. "18:30"
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Lagos" });
 
-export default function SchoolBoard({ records }: { records: SchoolRecord[] }) {
+function Flag({ url, tier }: { url: string | null; tier: string | null }) {
+  if (tier === "uefa") return <span className="text-[13px] leading-none">🏆</span>;
+  if (url)
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt="" className="h-3 w-4 flex-none rounded-[2px] object-cover" />;
+  return <span className="text-[13px] leading-none">⚽</span>;
+}
+
+export default function SchoolBoard({
+  records,
+  upcoming = null,
+  locked = false,
+  joinSlot = null,
+}: {
+  records: SchoolRecord[];
+  upcoming?: SchoolRecord | null;
+  locked?: boolean;
+  joinSlot?: ReactNode;
+}) {
   const [stake, setStake] = useState(10000);
 
-  // oldest → newest for cumulative math; newest first for the deck
+  // cumulative P/L over the SETTLED record only — the upcoming pick doesn't count until it plays
   const running = useMemo(() => {
     let c = 0;
     return records.map((r) => (c += r.result === "won" ? stake * (r.combined - 1) : -stake));
@@ -29,20 +59,25 @@ export default function SchoolBoard({ records }: { records: SchoolRecord[] }) {
     const wins = records.filter((r) => r.result === "won").length;
     const total = running.length ? running[running.length - 1] : 0;
     const avg = records.length ? records.reduce((a, r) => a + r.combined, 0) / records.length : 0;
-    const staked = stake * records.length; // ₦stake risked each day, one bet a day
+    const staked = stake * records.length;
     const roi = staked ? Math.round((total / staked) * 100) : 0;
     return { wins, losses: records.length - wins, rate: records.length ? Math.round((wins / records.length) * 100) : 0, avg, total, roi, staked, returned: staked + total };
   }, [records, running, stake]);
 
   return (
-    <div className="mx-auto max-w-md px-5 md:px-8">
-      {/* headline P/L — capital explicit: staked → back → profit */}
+    <div className="mx-auto max-w-4xl px-5 md:px-8">
+     <div className="flex flex-col gap-6 md:flex-row-reverse md:items-start md:gap-8">
+      {/* profit summary — right sidebar on desktop, top block on mobile */}
+      <aside className="md:sticky md:top-4 md:w-[280px] md:flex-none">
       <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
         <p className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-onpitch-mute">
           Profit · {short(stake)}/day × {records.length} days
         </p>
         <p className={`mt-1 font-disp text-4xl font-extrabold tracking-tight tabular-nums ${sum.total >= 0 ? "text-grass" : "text-brick"}`}>
           {naira(sum.total)}
+        </p>
+        <p className="mt-1 text-[11px] leading-snug text-onpitch-mute">
+          {locked ? "This could’ve been yours — join to bet the next one." : "What our record has paid you at this stake."}
         </p>
         <div className="mt-3 grid grid-cols-3 gap-2 border-t border-white/10 pt-3 text-center font-mono tabular-nums">
           <div>
@@ -62,12 +97,17 @@ export default function SchoolBoard({ records }: { records: SchoolRecord[] }) {
           </div>
         </div>
         <p className="mt-2 text-center font-mono text-[10.5px] text-onpitch-mute tabular-nums">
-          {sum.wins}–{sum.losses} · {sum.rate}% · avg {sum.avg.toFixed(2)}
+          {sum.wins}–{sum.losses} · {sum.rate}% · avg ~{sum.avg.toFixed(2)}
         </p>
       </div>
 
-      {/* stake */}
-      <div className="mt-4 flex items-center gap-2">
+      {/* join card rides in the sidebar, directly under the summary (non-members only) */}
+      {joinSlot && <div className="mt-4">{joinSlot}</div>}
+      </aside>
+
+      {/* main column: stake + record deck (today's pick rides in as the first card) */}
+      <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-2">
         <div className="flex h-11 flex-1 items-center rounded-xl border border-white/10 bg-pitch-2 px-3">
           <span className="mr-1 font-disp font-bold text-onpitch-mute">₦</span>
           <input
@@ -93,21 +133,36 @@ export default function SchoolBoard({ records }: { records: SchoolRecord[] }) {
         ))}
       </div>
 
-      <Deck records={records} running={running} stake={stake} />
+      <Deck records={records} upcoming={upcoming} stake={stake} locked={locked} />
+      </div>
+     </div>
 
       <p className="mt-5 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-        Real record · flat stakes · 18+
+        Real record · flat stakes · ~ odds are our estimate, books may pay more · 18+
       </p>
     </div>
   );
 }
 
-function Deck({ records, running, stake }: { records: SchoolRecord[]; running: number[]; stake: number }) {
-  const deck = records.map((r, i) => ({ r, i })).reverse(); // newest first
+function Deck({
+  records,
+  upcoming,
+  stake,
+  locked,
+}: {
+  records: SchoolRecord[];
+  upcoming: SchoolRecord | null;
+  stake: number;
+  locked: boolean;
+}) {
+  // today's pick (if any) leads, then the settled record newest → oldest
+  const deck = useMemo(() => {
+    const settled = [...records].reverse();
+    return upcoming ? [upcoming, ...settled] : settled;
+  }, [records, upcoming]);
   const [top, setTop] = useState(0);
-  const [flipped, setFlipped] = useState(false);
   const [dx, setDx] = useState(0);
-  const drag = useRef({ x: 0, moved: false, active: false });
+  const drag = useRef({ x: 0, active: false });
 
   if (deck.length === 0) {
     return (
@@ -119,24 +174,18 @@ function Deck({ records, running, stake }: { records: SchoolRecord[]; running: n
 
   const go = (n: number) => {
     setTop((t) => Math.min(deck.length - 1, Math.max(0, t + n)));
-    setFlipped(false);
     setDx(0);
   };
   const down = (e: React.PointerEvent) => {
-    drag.current = { x: e.clientX, moved: false, active: true };
+    drag.current = { x: e.clientX, active: true };
   };
   const move = (e: React.PointerEvent) => {
-    if (!drag.current.active) return;
-    const d = e.clientX - drag.current.x;
-    if (Math.abs(d) > 6) drag.current.moved = true;
-    setDx(d);
+    if (drag.current.active) setDx(e.clientX - drag.current.x);
   };
   const up = () => {
     if (!drag.current.active) return;
-    const d = dx;
     drag.current.active = false;
-    if (Math.abs(d) > 90) go(d < 0 ? 1 : -1);
-    else if (!drag.current.moved) setFlipped((f) => !f);
+    if (Math.abs(dx) > 90) go(dx < 0 ? 1 : -1);
     else setDx(0);
   };
 
@@ -146,12 +195,12 @@ function Deck({ records, running, stake }: { records: SchoolRecord[]; running: n
         <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
           {top + 1}/{deck.length}
         </span>
-        <span className="font-mono text-[10.5px] text-onpitch-mute">swipe · tap to flip</span>
+        <span className="font-mono text-[10.5px] text-onpitch-mute">swipe →</span>
       </div>
 
-      <div className="relative h-[300px] select-none" style={{ perspective: "1200px", touchAction: "pan-y" }}>
-        {deck.map(({ r, i }, pos) => {
-          const depth = pos - top;
+      <div className="relative h-[272px] select-none" style={{ touchAction: "pan-y" }}>
+        {deck.map((r, i) => {
+          const depth = i - top;
           if (depth < 0 || depth > 2) return null;
           const isTop = depth === 0;
           const t = isTop
@@ -159,7 +208,7 @@ function Deck({ records, running, stake }: { records: SchoolRecord[]; running: n
             : `translateY(${depth * 10}px) scale(${1 - depth * 0.04})`;
           return (
             <div
-              key={r.date + i}
+              key={r.date + "-" + i}
               className="absolute inset-0"
               style={{
                 transform: t,
@@ -173,7 +222,7 @@ function Deck({ records, running, stake }: { records: SchoolRecord[]; running: n
               onPointerUp={isTop ? up : undefined}
               onPointerCancel={isTop ? up : undefined}
             >
-              <Card r={r} running={running[i]} stake={stake} flipped={isTop && flipped} />
+              <Card r={r} stake={stake} locked={locked && r.result === "pending"} />
             </div>
           );
         })}
@@ -191,59 +240,84 @@ function Deck({ records, running, stake }: { records: SchoolRecord[]; running: n
   );
 }
 
-function Card({ r, running, stake, flipped }: { r: SchoolRecord; running: number; stake: number; flipped: boolean }) {
+function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: boolean }) {
+  const pending = r.result === "pending";
   const won = r.result === "won";
   const dayPL = won ? stake * (r.combined - 1) : -stake;
+  const toWin = stake * (r.combined - 1);
+  const isLocked = pending && locked;
+  const badge = pending ? "bg-flood/15 text-flood-deep" : won ? "bg-grass/15 text-grass-deep" : "bg-brick/15 text-brick";
+
   return (
-    <div className="relative h-full w-full" style={{ transformStyle: "preserve-3d", transition: "transform .5s cubic-bezier(.2,.7,.25,1)", transform: flipped ? "rotateY(180deg)" : "rotateY(0)" }}>
-      {/* front */}
-      <div className="betslip betslip-chalk absolute inset-0 flex flex-col rounded-2xl bg-chalk p-4 text-ink shadow-xl" style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}>
+    <div className="betslip betslip-chalk relative flex h-full w-full flex-col overflow-hidden rounded-2xl bg-chalk p-4 text-ink shadow-xl">
+      <div className={`flex h-full flex-col ${isLocked ? "blur-[6px]" : ""}`}>
         <div className="flex items-center justify-between">
-          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">{day(r.date)}</span>
-          <span className="rounded bg-ink px-1.5 py-0.5 font-mono text-[11px] font-bold tabular-nums text-chalk-2">@{r.combined.toFixed(2)}</span>
-        </div>
-        <div className="mt-3 flex flex-1 flex-col justify-center gap-2 border-y border-dashed border-ink/15 py-3">
-          {r.legs.map((l, k) => (
-            <div key={k} className="flex items-center justify-between gap-3">
-              <span className="truncate text-[14px] font-bold text-ink">{l.game}</span>
-              <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">{l.odds ? l.odds.toFixed(2) : "—"}</span>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-end justify-between">
-          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Over 2.5 · both</span>
-          <span className="font-disp text-lg font-extrabold tabular-nums text-ink">{naira(stake * r.combined)}</span>
-        </div>
-      </div>
-      {/* back */}
-      <div
-        className="betslip betslip-chalk absolute inset-0 flex flex-col rounded-2xl bg-chalk p-4 text-ink shadow-xl"
-        style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
-      >
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">{day(r.date)}</span>
-          <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase ${won ? "bg-grass/15 text-grass-deep" : "bg-brick/15 text-brick"}`}>
-            {won ? "Won" : "Lost"}
+          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
+            {pending ? "Today" : day(r.date)}
+          </span>
+          <span className={`rounded px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide ${badge}`}>
+            {pending ? "Not started" : won ? "Won" : "Lost"}
           </span>
         </div>
-        <div className="mt-3 flex flex-1 flex-col justify-center gap-2 border-y border-dashed border-ink/15 py-3">
+
+        <div className="my-3 flex flex-1 flex-col justify-center gap-2.5 border-y border-dashed border-ink/15 py-3">
           {r.legs.map((l, k) => (
-            <div key={k} className="flex items-center justify-between gap-3">
-              <span className="truncate text-[14px] font-bold text-ink">{l.game}</span>
-              <span className="flex items-center gap-1.5">
-                <span className="font-mono text-[13px] font-bold tabular-nums text-ink">{l.score ?? "—"}</span>
-                <span className={`text-[13px] font-bold ${l.hit ? "text-grass-deep" : "text-brick"}`}>{l.hit ? "✓" : "✕"}</span>
+            <div key={k} className="flex items-start justify-between gap-3">
+              <span className="flex min-w-0 items-start gap-2">
+                <span className="mt-0.5 flex-none">
+                  <Flag url={l.flag} tier={l.tier} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[14px] font-bold leading-tight text-ink">{l.game}</span>
+                  <span className="mt-0.5 block truncate text-[11px] leading-tight">
+                    <span className="font-bold text-flood-deep">Over 2.5</span>
+                    {l.league && <span className="text-ink-mute"> · {l.league}</span>}
+                  </span>
+                </span>
+              </span>
+              <span className="flex flex-none flex-col items-end gap-0.5">
+                {pending ? (
+                  l.kickoff && <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
+                ) : (
+                  <span
+                    className={`font-mono text-[13px] font-bold tabular-nums ${
+                      l.hit ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
+                    }`}
+                  >
+                    {l.score ?? "—"}
+                  </span>
+                )}
+                <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
+                  {l.odds ? "~" + l.odds.toFixed(2) : "—"}
+                </span>
               </span>
             </div>
           ))}
         </div>
-        <div className="mt-3 flex items-end justify-between">
-          <span className={`font-disp text-xl font-extrabold tabular-nums ${dayPL >= 0 ? "text-grass-deep" : "text-brick"}`}>{naira(dayPL)}</span>
-          <span className="font-mono text-[10.5px] text-ink-mute tabular-nums">
-            run <span className={running >= 0 ? "text-grass-deep" : "text-brick"}>{naira(running)}</span>
-          </span>
+
+        <div className="flex items-stretch gap-2">
+          <div className="flex-1 rounded-xl bg-ink/[0.05] px-3 py-2">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">{pending ? "To win" : "Profit"}</div>
+            <div className={`font-disp text-lg font-extrabold tabular-nums ${pending ? "text-ink" : dayPL >= 0 ? "text-grass-deep" : "text-brick"}`}>
+              {pending ? naira(toWin) : naira(dayPL)}
+            </div>
+          </div>
+          <div className="rounded-xl bg-ink/[0.05] px-3 py-2 text-right">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">Odds</div>
+            <div className="font-disp text-lg font-extrabold tabular-nums text-ink">~{r.combined.toFixed(2)}</div>
+          </div>
         </div>
       </div>
+
+      {isLocked && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-chalk/40 p-4 text-center backdrop-blur-[3px]">
+          <span className="text-2xl">🔒</span>
+          <p className="max-w-[14rem] text-sm font-bold text-ink">Members see the founder&apos;s insight before kickoff.</p>
+          <a href="#join" className="rounded-xl bg-flood px-4 py-2 font-disp text-sm font-bold text-pitch transition hover:bg-flood/90">
+            Join Onside School
+          </a>
+        </div>
+      )}
     </div>
   );
 }
