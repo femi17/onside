@@ -125,6 +125,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       return {
         game: String(l.game ?? ""),
         odds,
+        prob: over25 != null ? Math.round(over25 * 100) : null, // model's Over 2.5 % for this leg
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
         hit,
         elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
@@ -136,9 +137,13 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       };
     });
     const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
+    // model chance BOTH legs go Over 2.5 (independent) — the double's pre-match probability
+    const prob = legs.every((l) => l.prob != null)
+      ? Math.round(legs.reduce((p, l) => p * ((l.prob as number) / 100), 1) * 100)
+      : null;
     const graded = legs.every((l) => l.hit != null && l.odds != null);
     const result: "won" | "lost" | "pending" = !graded ? "pending" : legs.every((l) => l.hit) ? "won" : "lost";
-    return { date: String(d.set_date), legs, combined, result };
+    return { date: String(d.set_date), legs, combined, result, prob };
   });
 
   // record = graded days only, oldest → newest so cumulative P/L reads left to right
