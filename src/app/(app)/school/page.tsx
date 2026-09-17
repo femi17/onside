@@ -113,19 +113,22 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const over25 = model?.over25 ?? null;
       const odds = over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
       const statusStr = f ? String(f.status ?? "") : "";
-      const settled = FINISHED.includes(statusStr);
+      const finished = FINISHED.includes(statusStr);
       const inPlay = LIVE.includes(statusStr);
       const h = f ? ((f.ft_home ?? f.home_goals) as number | null) : null;
       const a = f ? ((f.ft_away ?? f.away_goals) as number | null) : null;
-      const tot = settled && h != null && a != null ? h + a : null;
+      const curTot = h != null && a != null ? h + a : null;
+      // Over 2.5 is monotonic — WON the instant 3 goals are on the board (live OR full time); LOST only
+      // at full time under 3. So a leg settles early when it meets target instead of waiting for FT.
+      const hit = curTot != null && curTot >= 3 ? true : finished ? false : null;
       const lg = leagueOf(f);
       return {
         game: String(l.game ?? ""),
         odds,
-        score: settled && h != null && a != null ? `${h}-${a}` : null,
-        hit: tot != null ? tot >= 3 : null,
-        live: inPlay && h != null && a != null ? `${h}-${a}` : null,
+        score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
+        hit,
         elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
+        finished,
         kickoff: (f?.kickoff_utc as string | null) ?? null,
         league: lg?.name ?? null,
         flag: lg?.flag_url ?? null,

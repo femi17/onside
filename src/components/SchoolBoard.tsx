@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 export type SchoolLeg = {
   game: string;
   odds: number | null;
-  score: string | null;
-  hit: boolean | null;
-  live: string | null; // current score while in play, e.g. "1-0"
+  score: string | null; // current score (live or final), e.g. "2-1"
+  hit: boolean | null; // Over 2.5: true once 3 goals land, false only at FT under 3, null pending
   elapsed: number | null; // live minute
+  finished: boolean;
   kickoff: string | null;
   league: string | null;
   flag: string | null;
@@ -57,7 +57,7 @@ export default function SchoolBoard({
   // scores so the card updates from "18:30" → live score+minute → final without a manual reload.
   const trackLive =
     !!upcoming &&
-    upcoming.legs.some((l) => l.live != null || (l.kickoff != null && Date.parse(l.kickoff) <= Date.now()));
+    upcoming.legs.some((l) => (l.elapsed != null && !l.finished) || (l.kickoff != null && Date.parse(l.kickoff) <= Date.now()));
   useEffect(() => {
     if (!trackLive) return;
     const id = setInterval(() => router.refresh(), 60000);
@@ -261,7 +261,7 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
   const dayPL = won ? stake * (r.combined - 1) : -stake;
   const toWin = stake * (r.combined - 1);
   const isLocked = pending && locked;
-  const anyLive = r.legs.some((l) => l.live != null);
+  const anyLive = r.legs.some((l) => l.elapsed != null && !l.finished);
   const badge = pending
     ? anyLive
       ? "bg-brick/15 text-brick"
@@ -302,17 +302,15 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
               <span className="flex flex-none flex-col items-end gap-0.5">
                 {l.score != null ? (
                   <span
-                    className={`font-mono text-[13px] font-bold tabular-nums ${
-                      l.hit ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
+                    className={`flex items-center gap-1 font-mono text-[13px] font-bold tabular-nums ${
+                      l.hit === true ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
                     }`}
                   >
+                    {l.hit == null && l.elapsed != null && (
+                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />
+                    )}
                     {l.score}
-                  </span>
-                ) : l.live != null ? (
-                  <span className="flex items-center gap-1 font-mono text-[12px] font-bold tabular-nums text-brick">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />
-                    {l.live}
-                    {l.elapsed != null ? ` · ${l.elapsed}'` : ""}
+                    {l.hit === true ? " ✓" : l.hit == null && l.elapsed != null ? ` · ${l.elapsed}'` : ""}
                   </span>
                 ) : l.kickoff ? (
                   <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
