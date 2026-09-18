@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 export type SchoolLeg = {
   game: string;
   odds: number | null;
-  prob: number | null; // model's Over 2.5 % for this leg
   score: string | null; // current score (live or final), e.g. "2-1"
   hit: boolean | null; // Over 2.5: true once 3 goals land, false only at FT under 3, null pending
   elapsed: number | null; // live minute
@@ -20,7 +19,6 @@ export type SchoolRecord = {
   date: string;
   legs: SchoolLeg[];
   combined: number;
-  prob: number | null; // model chance BOTH legs land (the double's pre-match %)
   result: "won" | "lost" | "pending";
 };
 
@@ -319,7 +317,6 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
                 ) : null}
                 <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
                   {l.odds ? "~" + l.odds.toFixed(2) : "—"}
-                  {l.prob != null ? <span className="text-ink-mute"> · {l.prob}%</span> : null}
                 </span>
               </span>
             </div>
@@ -336,7 +333,6 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
           <div className="rounded-xl bg-ink/[0.05] px-3 py-2 text-right">
             <div className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">Odds</div>
             <div className="font-disp text-lg font-extrabold tabular-nums text-ink">~{r.combined.toFixed(2)}</div>
-            {r.prob != null && <div className="font-mono text-[10px] font-bold text-flood-deep">{r.prob}% chance</div>}
           </div>
         </div>
       </div>
