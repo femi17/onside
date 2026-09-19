@@ -154,7 +154,7 @@ export default function SchoolBoard({
      </div>
 
       <p className="mt-5 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-        Real record · flat stakes · ~ odds are our estimate, books may pay more · 18+
+        Real record · flat stakes · ~ odds are our estimate, books may pay more or less · 18+
       </p>
     </div>
   );
@@ -214,7 +214,7 @@ function Deck({
         <span className="font-mono text-[10.5px] text-onpitch-mute">swipe →</span>
       </div>
 
-      <div className="relative h-[272px] select-none" style={{ touchAction: "pan-y" }}>
+      <div className="relative h-[300px] select-none" style={{ touchAction: "pan-y" }}>
         {deck.map((r, i) => {
           const depth = i - top;
           if (depth < 0 || depth > 2) return null;
@@ -244,10 +244,6 @@ function Deck({
         })}
       </div>
 
-      {/* SportyBet booking code for the card on top — load the exact slip in one paste. Hidden while the
-          upcoming pick is locked for non-members (and RLS wouldn't have sent the code anyway). */}
-      {deck[top]?.code && !(locked && deck[top].result === "pending") && <CodeBar code={deck[top].code as string} />}
-
       <div className="mt-4 flex gap-2">
         <button onClick={() => go(-1)} disabled={top === 0} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
           ‹
@@ -260,10 +256,12 @@ function Deck({
   );
 }
 
-// Copyable SportyBet booking code beneath the deck — one tap copies it to load the slip in the app.
-function CodeBar({ code }: { code: string }) {
+// SportyBet booking code printed at the foot of the betslip (light/ink theme to match the slip). One
+// tap copies it to load the exact slip in the app. stopPropagation so a tap/copy doesn't start a swipe.
+function BookingStrip({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
-  const copy = async () => {
+  const copy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
@@ -273,17 +271,20 @@ function CodeBar({ code }: { code: string }) {
     }
   };
   return (
-    <button
-      type="button"
-      onClick={copy}
-      className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-pitch-2 px-4 py-2.5 text-left transition hover:border-flood/40"
-    >
+    <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-ink/20 bg-ink/[0.04] px-3 py-1.5">
       <span className="min-w-0">
-        <span className="block font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">SportyBet booking code</span>
-        <span className="block truncate font-disp text-lg font-extrabold tracking-[0.08em] text-chalk">{code}</span>
+        <span className="block font-mono text-[9px] uppercase tracking-wide text-ink-mute">SportyBet code</span>
+        <span className="block truncate font-disp text-[15px] font-extrabold leading-none tracking-[0.1em] text-flood-deep">{code}</span>
       </span>
-      <span className="flex-none font-mono text-[12px] font-bold text-flood">{copied ? "Copied" : "Copy"}</span>
-    </button>
+      <button
+        type="button"
+        onClick={copy}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="flex-none rounded-lg border border-ink/15 px-2.5 py-1 font-mono text-[11px] font-bold text-flood-deep transition hover:border-flood-deep/40"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
   );
 }
 
@@ -367,6 +368,9 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
             <div className="font-disp text-lg font-extrabold tabular-nums text-ink">~{r.combined.toFixed(2)}</div>
           </div>
         </div>
+
+        {/* SportyBet booking code printed on the slip (members/admin only — RLS gates the value) */}
+        {r.code && <BookingStrip code={r.code} />}
       </div>
 
       {isLocked && (
