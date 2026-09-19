@@ -9,7 +9,7 @@ export const SCHOOL_PRICE = 10000; // ₦ / month
 
 // Transfer account shown to paying users.
 export const SCHOOL_BANK = {
-  bank: "UBA",
-  account: "2062312976",
-  name: "Emmanuel Oduola",
+  bank: "Moniepoint",
+  account: "6612407443",
+  name: "Thinka Platforms Ltd",
 };
