@@ -20,6 +20,7 @@ export type SchoolRecord = {
   legs: SchoolLeg[];
   combined: number;
   result: "won" | "lost" | "pending";
+  code?: string | null; // SportyBet booking/verify code for this day's slip (members/admin only)
 };
 
 const CHIPS = [5000, 10000, 50000, 100000];
@@ -243,6 +244,10 @@ function Deck({
         })}
       </div>
 
+      {/* SportyBet booking code for the card on top — load the exact slip in one paste. Hidden while the
+          upcoming pick is locked for non-members (and RLS wouldn't have sent the code anyway). */}
+      {deck[top]?.code && !(locked && deck[top].result === "pending") && <CodeBar code={deck[top].code as string} />}
+
       <div className="mt-4 flex gap-2">
         <button onClick={() => go(-1)} disabled={top === 0} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
           ‹
@@ -252,6 +257,33 @@ function Deck({
         </button>
       </div>
     </div>
+  );
+}
+
+// Copyable SportyBet booking code beneath the deck — one tap copies it to load the slip in the app.
+function CodeBar({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — the code is on screen anyway */
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 bg-pitch-2 px-4 py-2.5 text-left transition hover:border-flood/40"
+    >
+      <span className="min-w-0">
+        <span className="block font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">SportyBet booking code</span>
+        <span className="block truncate font-disp text-lg font-extrabold tracking-[0.08em] text-chalk">{code}</span>
+      </span>
+      <span className="flex-none font-mono text-[12px] font-bold text-flood">{copied ? "Copied" : "Copy"}</span>
+    </button>
   );
 }
 

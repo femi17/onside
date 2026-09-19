@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import StickyHeader from "@/components/StickyHeader";
 import MobileLogo from "@/components/MobileLogo";
 import AdminAnalytics, { type AdminStats, type DailyActivity, type RecentPick, type LlmUsageRow, type FeedbackData, type IdeaPost } from "@/components/AdminAnalytics";
+import SchoolCodeUploader from "@/components/SchoolCodeUploader";
 import { getAnthropicCredit } from "@/lib/anthropicCost";
 
 // Always render live — never serve a cached snapshot. The admin_analytics RPC runs through fetch,
@@ -53,6 +54,9 @@ export default async function AnalyticsPage() {
             Couldn&apos;t load analytics.
           </p>
         )}
+
+        {/* Onside School — upload the SportyBet booking code shown under each day's /school card */}
+        <SchoolCodeUploader />
       </div>
     </div>
   );

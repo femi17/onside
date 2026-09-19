@@ -105,6 +105,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   };
   const dv = new Map((deliveries ?? []).map((d) => [(d as { id: string }).id, d as { criteria: Record<string, unknown> }]));
 
+  // SportyBet booking codes per day. RLS returns codes only to admins + active admitted members (the
+  // code reveals the paywalled pick), so non-members get none. Keyed by the card's set_date; the owner
+  // uploads them from /analytics.
+  const codeDates = [...new Set(picked.map((d) => String(d.set_date)))];
+  const { data: codeRows } = codeDates.length
+    ? await supabase.from("school_codes").select("set_date, code").in("set_date", codeDates)
+    : { data: [] as { set_date: string; code: string }[] };
+  const codeByDate = new Map((codeRows ?? []).map((c) => [String(c.set_date), String(c.code)]));
+
   const mapped: SchoolRecord[] = picked.map((d) => {
     const legs = (d.legs as Array<Record<string, unknown>>).map((l) => {
       const f = fx.get(Number(l.fixture_id));
@@ -138,7 +147,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
     const graded = legs.every((l) => l.hit != null && l.odds != null);
     const result: "won" | "lost" | "pending" = !graded ? "pending" : legs.every((l) => l.hit) ? "won" : "lost";
-    return { date: String(d.set_date), legs, combined, result };
+    return { date: String(d.set_date), legs, combined, result, code: codeByDate.get(String(d.set_date)) ?? null };
   });
 
   // record = graded days only, oldest → newest so cumulative P/L reads left to right
