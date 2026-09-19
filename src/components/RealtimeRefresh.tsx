@@ -4,18 +4,19 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-// Subscribes to the live DB changes the poller writes and refreshes on the spot — but ONLY for
-// the fixtures actually shown on this page. Previously it watched the UNFILTERED global
-// `fixture_stats` feed, so every stat write for every live game worldwide fired a
-// router.refresh() (which re-runs the whole server render). During match windows that was a
-// refresh storm that made navigation crawl. We now bind per tracked fixture (filtered
-// server-side) and coalesce bursts into a single refresh.
+// Refreshes the page on live DB changes. We subscribe ONLY to `tickets` (RLS-scoped to this user, so
+// it carries just their own bets) for instant settlement updates. We deliberately do NOT subscribe to
+// `fixtures` / `fixture_stats`: those are high-write internal tables (fixtures alone takes millions of
+// score/status updates), and having them in the realtime publication made the server decode every
+// live-game write worldwide — the top Disk-IO / CPU sink (2026-09-19). They were removed from the
+// publication; live scores now refresh on the 60s interval below and the match clock ticks client-side
+// (see adjustElapsed), so a goal shows within ~a minute. Tighten the interval if snappier scores are
+// wanted, weighed against server-render load.
 export default function RealtimeRefresh({ fixtureIds = [] }: { fixtureIds?: number[] }) {
   const router = useRouter();
-  const key = fixtureIds.join(","); // stable dependency
+  const key = fixtureIds.join(","); // stable dependency (re-subscribe when the tracked set changes)
   useEffect(() => {
     const supabase = createClient();
-    const ids = key ? key.split(",") : [];
 
     // collapse a burst of change events into at most one refresh per window
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -27,21 +28,14 @@ export default function RealtimeRefresh({ fixtureIds = [] }: { fixtureIds?: numb
       }, 1200);
     };
 
-    let channel = supabase
+    const channel = supabase
       .channel("onside-live")
       // tickets are RLS-scoped to the current user, so this only carries their own bets
-      .on("postgres_changes", { event: "*", schema: "public", table: "tickets" }, refresh);
+      .on("postgres_changes", { event: "*", schema: "public", table: "tickets" }, refresh)
+      .subscribe();
 
-    // per-game bindings: a goal (fixtures) or a corner/momentum change (fixture_stats) for a game
-    // on THIS page updates immediately, without subscribing to the worldwide live feed
-    for (const id of ids) {
-      channel = channel
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "fixtures", filter: `id=eq.${id}` }, refresh)
-        .on("postgres_changes", { event: "*", schema: "public", table: "fixture_stats", filter: `fixture_id=eq.${id}` }, refresh);
-    }
-    channel.subscribe();
-
-    // safety net if the socket drops; long enough that it isn't itself a load
+    // primary path for live score/stat updates now that fixtures aren't pushed: poll a fresh render
+    // every 60s (also the reconnect safety net). Long enough that it isn't itself a load.
     const fallback = setInterval(() => router.refresh(), 60000);
     return () => {
       if (timer) clearTimeout(timer);
