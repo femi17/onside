@@ -81,9 +81,15 @@ function boundaryFor(status: string | null): number | null {
 }
 
 // advance the live minute between polls: stored elapsed + minutes since the poll last
-// wrote it (only during running halves). Capped at the half boundary so the clock never
-// ticks 90 -> 91 and then snaps back when the next poll re-reports 90 — added time is
-// shown separately as "90+N" from the feed's `extra`.
+// wrote it (only during running halves), bounded ONLY by the half itself (45 / 90 / 120) so
+// the clock never ticks past the boundary and snaps back — added time shows separately as
+// "90+N" from the feed's `extra`.
+//
+// The poller writes elapsed ONLY when the score or status changes (an IO-churn guard added
+// 2026-09-14), so between events `updated_at` marks the last goal / half-kickoff — a TRUE
+// reading of the minute at that instant, and `elapsed + drift` tracks the real clock from it.
+// An earlier 15-minute drift cap here froze the clock 15' after the last event (e.g. a goalless
+// 2nd half stuck at 61' while the game was at 89'); the half boundary is the only cap we need.
 export function adjustElapsed(
   status: string | null,
   elapsed: number | null,
@@ -95,7 +101,7 @@ export function adjustElapsed(
   if (boundary == null) return elapsed; // not a running half — leave as-is
   if (!updatedAt || !nowMs) return Math.min(elapsed, boundary);
   const drift = Math.floor((nowMs - new Date(updatedAt).getTime()) / 60000);
-  const raw = elapsed + Math.max(0, Math.min(drift, 15));
+  const raw = elapsed + Math.max(0, drift);
   return Math.min(raw, boundary);
 }
 
