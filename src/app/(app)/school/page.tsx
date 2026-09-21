@@ -85,7 +85,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     ),
   ];
 
-  const [{ data: fixtures }, { data: deliveries }] = await Promise.all([
+  const [{ data: fixtures }, { data: deliveries }, { data: realOdds }] = await Promise.all([
     fixtureIds.length
       ? supabase
           .from("fixtures")
@@ -95,7 +95,14 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     deliveryIds.length
       ? supabase.from("deliveries").select("id, criteria").in("id", deliveryIds)
       : Promise.resolve({ data: [] as never[] }),
+    // real bookie odds an admin has typed per leg — overrides the model estimate where present
+    fixtureIds.length
+      ? supabase.from("school_leg_odds").select("fixture_id, odds").in("fixture_id", fixtureIds)
+      : Promise.resolve({ data: [] as never[] }),
   ]);
+  const realOddsOf = new Map(
+    ((realOdds ?? []) as Array<{ fixture_id: number; odds: number }>).map((r) => [Number(r.fixture_id), Number(r.odds)])
+  );
 
   const fx = new Map((fixtures ?? []).map((f) => [Number((f as { id: number }).id), f as Record<string, unknown>]));
   type Lg = { name?: string; flag_url?: string | null; tier?: string | null };
@@ -120,7 +127,12 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const del = dv.get(String(l.delivery_id));
       const model = (del?.criteria as { reasons?: { model?: { over25?: number } } } | undefined)?.reasons?.model;
       const over25 = model?.over25 ?? null;
-      const odds = over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
+      const estOdds = over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
+      // prefer the real bookie odds an admin typed for this leg; fall back to the model estimate
+      const fid = Number(l.fixture_id);
+      const real = realOddsOf.get(fid) ?? null;
+      const odds = real ?? estOdds;
+      const oddsReal = real != null;
       const statusStr = f ? String(f.status ?? "") : "";
       const finished = FINISHED.includes(statusStr);
       const inPlay = LIVE.includes(statusStr);
@@ -133,7 +145,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const lg = leagueOf(f);
       return {
         game: String(l.game ?? ""),
+        fixtureId: fid,
         odds,
+        oddsReal,
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
         hit,
         elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
@@ -195,6 +209,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       <SchoolBoard
         records={records}
         upcoming={upcoming}
+        admin={isAdmin}
         locked={!admitted}
         joinSlot={
           !admitted ? (

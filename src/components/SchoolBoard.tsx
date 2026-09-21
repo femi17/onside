@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 export type SchoolLeg = {
   game: string;
+  fixtureId: number;
   odds: number | null;
+  oddsReal: boolean; // true = real bookie odds an admin typed; false = model estimate (shown "~")
   score: string | null; // current score (live or final), e.g. "2-1"
   hit: boolean | null; // Over 2.5: true once 3 goals land, false only at FT under 3, null pending
   elapsed: number | null; // live minute
@@ -43,11 +46,13 @@ function Flag({ url, tier }: { url: string | null; tier: string | null }) {
 export default function SchoolBoard({
   records,
   upcoming = null,
+  admin = false,
   locked = false,
   joinSlot = null,
 }: {
   records: SchoolRecord[];
   upcoming?: SchoolRecord | null;
+  admin?: boolean;
   locked?: boolean;
   joinSlot?: ReactNode;
 }) {
@@ -149,12 +154,14 @@ export default function SchoolBoard({
         ))}
       </div>
 
-      <Deck records={records} upcoming={upcoming} stake={stake} locked={locked} />
+      <Deck records={records} upcoming={upcoming} stake={stake} locked={locked} admin={admin} />
+
+      <MonthlyBreakdown records={records} stake={stake} />
       </div>
      </div>
 
       <p className="mt-5 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-        Real record · flat stakes · ~ odds are our estimate, books may pay more or less · 18+
+        Real record · flat stakes · odds are the price we took · ~ = model estimate until confirmed · 18+
       </p>
     </div>
   );
@@ -165,11 +172,13 @@ function Deck({
   upcoming,
   stake,
   locked,
+  admin,
 }: {
   records: SchoolRecord[];
   upcoming: SchoolRecord | null;
   stake: number;
   locked: boolean;
+  admin: boolean;
 }) {
   // today's pick (if any) leads, then the settled record newest → oldest
   const deck = useMemo(() => {
@@ -238,7 +247,7 @@ function Deck({
               onPointerUp={isTop ? up : undefined}
               onPointerCancel={isTop ? up : undefined}
             >
-              <Card r={r} stake={stake} locked={locked && r.result === "pending"} />
+              <Card r={r} stake={stake} locked={locked && r.result === "pending"} admin={admin} />
             </div>
           );
         })}
@@ -288,12 +297,14 @@ function BookingStrip({ code }: { code: string }) {
   );
 }
 
-function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: boolean }) {
+function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; locked?: boolean; admin?: boolean }) {
   const pending = r.result === "pending";
   const won = r.result === "won";
   const dayPL = won ? stake * (r.combined - 1) : -stake;
   const toWin = stake * (r.combined - 1);
   const isLocked = pending && locked;
+  // combined odds is an estimate until every leg has a real bookie price entered
+  const estimated = r.legs.some((l) => !l.oddsReal);
   const anyLive = r.legs.some((l) => l.elapsed != null && !l.finished);
   const badge = pending
     ? anyLive
@@ -348,9 +359,17 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
                 ) : l.kickoff ? (
                   <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
                 ) : null}
-                <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
-                  {l.odds ? "~" + l.odds.toFixed(2) : "—"}
-                </span>
+                {admin ? (
+                  <OddsInput
+                    fixtureId={l.fixtureId}
+                    real={l.oddsReal ? l.odds : null}
+                    estimate={l.oddsReal ? null : l.odds}
+                  />
+                ) : (
+                  <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
+                    {l.odds ? (l.oddsReal ? "" : "~") + l.odds.toFixed(2) : "—"}
+                  </span>
+                )}
               </span>
             </div>
           ))}
@@ -365,7 +384,10 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
           </div>
           <div className="rounded-xl bg-ink/[0.05] px-3 py-2 text-right">
             <div className="font-mono text-[10px] uppercase tracking-wide text-ink-mute">Odds</div>
-            <div className="font-disp text-lg font-extrabold tabular-nums text-ink">~{r.combined.toFixed(2)}</div>
+            <div className="font-disp text-lg font-extrabold tabular-nums text-ink">
+              {estimated ? "~" : ""}
+              {r.combined.toFixed(2)}
+            </div>
           </div>
         </div>
 
@@ -382,6 +404,101 @@ function Card({ r, stake, locked }: { r: SchoolRecord; stake: number; locked?: b
           </a>
         </div>
       )}
+    </div>
+  );
+}
+
+// Admin-only inline editor for a leg's REAL bookie odds. Saving upserts via the is_admin-gated RPC and
+// refreshes the page so the card, profit and monthly totals recompute on real money. Empty/≤1 clears
+// back to the model estimate. Pointer events are stopped so typing/tapping never starts a deck swipe.
+function OddsInput({ fixtureId, real, estimate }: { fixtureId: number; real: number | null; estimate: number | null }) {
+  const router = useRouter();
+  const [v, setV] = useState(real != null ? String(real) : "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setV(real != null ? String(real) : "");
+  }, [real]);
+
+  async function save() {
+    const num = parseFloat(v);
+    const next = Number.isFinite(num) && num > 1 ? Math.round(num * 100) / 100 : null;
+    if ((next ?? null) === (real ?? null)) return; // unchanged — skip the write
+    setBusy(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("school_set_leg_odds", { p_fixture_id: fixtureId, p_odds: next });
+    setBusy(false);
+    if (!error) router.refresh();
+  }
+
+  return (
+    <input
+      inputMode="decimal"
+      value={v}
+      onChange={(e) => setV(e.target.value.replace(/[^\d.]/g, ""))}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      placeholder={estimate != null ? "~" + estimate.toFixed(2) : "odds"}
+      disabled={busy}
+      aria-label="Real bookie odds for this leg"
+      className={`w-16 rounded border px-1.5 py-0.5 text-right font-mono text-[13px] font-bold tabular-nums outline-none transition disabled:opacity-50 ${
+        real != null ? "border-flood/40 bg-flood/5 text-flood-deep" : "border-ink/20 bg-ink/[0.03] text-ink-mute focus:border-flood"
+      }`}
+    />
+  );
+}
+
+// "How much made each month" — groups the settled record by calendar month (newest first) with each
+// month's profit, W–L and ROI at the current stake. Sits under the deck so members can see the run
+// month by month, not just the all-time total in the sidebar.
+function MonthlyBreakdown({ records, stake }: { records: SchoolRecord[]; stake: number }) {
+  const months = useMemo(() => {
+    const m = new Map<string, { key: string; wins: number; losses: number; profit: number; staked: number }>();
+    for (const r of records) {
+      const key = r.date.slice(0, 7); // YYYY-MM
+      const cur = m.get(key) ?? { key, wins: 0, losses: 0, profit: 0, staked: 0 };
+      const won = r.result === "won";
+      cur.wins += won ? 1 : 0;
+      cur.losses += won ? 0 : 1;
+      cur.profit += won ? stake * (r.combined - 1) : -stake;
+      cur.staked += stake;
+      m.set(key, cur);
+    }
+    return [...m.values()].sort((a, b) => (a.key < b.key ? 1 : -1)); // newest month first
+  }, [records, stake]);
+
+  if (months.length === 0) return null;
+
+  const label = (key: string) =>
+    new Date(key + "-01T00:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  return (
+    <div className="mt-8">
+      <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-onpitch-mute">By month</p>
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-pitch-2">
+        {months.map((mo, i) => {
+          const roi = mo.staked ? Math.round((mo.profit / mo.staked) * 100) : 0;
+          return (
+            <div
+              key={mo.key}
+              className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "border-t border-white/10" : ""}`}
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-chalk">{label(mo.key)}</div>
+                <div className="mt-0.5 font-mono text-[11px] tabular-nums text-onpitch-mute">
+                  {mo.wins}–{mo.losses} · {roi >= 0 ? "+" : "−"}
+                  {Math.abs(roi)}%
+                </div>
+              </div>
+              <div className={`font-disp text-lg font-extrabold tabular-nums ${mo.profit >= 0 ? "text-grass" : "text-brick"}`}>
+                {naira(mo.profit)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
