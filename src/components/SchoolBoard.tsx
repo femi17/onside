@@ -496,16 +496,19 @@ export function SchoolFunnel({
         ))}
       </div>
     </div>,
-    // 1 · what
+    // 1 · what — the founder's insight, the proven record, the goal: grow your money
     <div key="w">
       <Eyebrow n="01" t="What this is" />
-      <H2>One considered bet. Every single day.</H2>
+      <H2>
+        The founder&apos;s insight. Built to <span className="text-flood">grow your money.</span>
+      </H2>
       <p className="mb-4 max-w-[46ch] text-onpitch">
-        Each morning the engine builds the <b className="text-flood">Onside Double</b> — the two safest goals picks from the strongest agents. We stake
-        it flat, and you get the exact same slip before kickoff.
+        Every morning you get one call — the single bet the founder stakes real money on, in your hands before kickoff. Not tips for the thrill: a
+        disciplined play off a record that&apos;s public, proven, and yours to check any day.
       </p>
-      <RuleCard t="No 20-leg accumulators" d="Two legs. The kind that actually land, not the lottery ticket that never does." />
-      <RuleCard t="No chasing, no tipster noise" d="The same pick for everyone, logged in public. If it loses, you see it lose." />
+      <RuleCard t="Here to make you money" d="A small flat stake, one call a day, compounding over a proven month — grown like a business, not gambled." />
+      <RuleCard t="A proven, public record" d="Every result logged where anyone can see it — the wins and the losses. Nothing hidden, nothing rewritten." />
+      <RuleCard t="The same edge as the founder" d="No inside tier, no VIP-of-the-VIP. You bet exactly what the founder bets, at the same price." />
     </div>,
     // 2 · rules
     <div key="r">
