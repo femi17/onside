@@ -204,7 +204,7 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
         {r.code && (
           <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-ink/20 bg-ink/[0.04] px-3 py-1.5">
             <span className="min-w-0">
-              <span className="block font-mono text-[9px] uppercase tracking-wide text-ink-mute">SportyBet code</span>
+              <span className="block font-mono text-[9px] uppercase tracking-wide text-ink-mute">Verify on SportyBet — the founder&apos;s live slip</span>
               <span className="block truncate font-disp text-[15px] font-extrabold leading-none tracking-[0.1em] text-flood-deep">{r.code}</span>
             </span>
           </div>
@@ -562,8 +562,8 @@ export function SchoolFunnel({
       <Eyebrow n="05" t="Take your seat" />
       <H2>Join the room. See tomorrow first.</H2>
       <p className="mb-4 max-w-[46ch] text-onpitch">
-        Members get the next day&apos;s double <b>before kickoff</b>, every day, plus the SportyBet code to load it in one tap — and the full record,
-        month by month.
+        Members get the next day&apos;s double <b>before kickoff</b>, every day — plus the SportyBet code to <b>verify the founder actually staked it</b>,
+        and the full record, month by month. Proof, not promises.
       </p>
       {enroll}
     </div>,
