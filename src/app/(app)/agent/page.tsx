@@ -114,6 +114,28 @@ export default async function AgentPage() {
   };
   const kept: Record<string, unknown>[] = (data ?? []).filter((r: Record<string, unknown>) => !guideFails(r));
 
+  // School selection signal: among the Over 0.5 picks, mark the day's TWO highest Over-2.5 games (by the
+  // model's over25). Farmed as the best 2-of-~50 to pick for an Over 2.5 double (~89% legs vs ~59% random).
+  const o25Top = (() => {
+    const byDay = new Map<string, { id: string; o25: number }[]>();
+    for (const r of kept) {
+      if ((r.market_key as string) !== "over_0_5") continue;
+      const o25 = (r.criteria as { reasons?: { model?: { over25?: number } } } | null)?.reasons?.model?.over25;
+      const da = r.delivered_at as string | null;
+      if (o25 == null || !da) continue;
+      const dayKey = new Date(da).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+      const arr = byDay.get(dayKey);
+      if (arr) arr.push({ id: r.id as string, o25: Number(o25) });
+      else byDay.set(dayKey, [{ id: r.id as string, o25: Number(o25) }]);
+    }
+    const top = new Set<string>();
+    for (const arr of byDay.values()) {
+      arr.sort((a, b) => b.o25 - a.o25);
+      arr.slice(0, 2).forEach((x) => top.add(x.id));
+    }
+    return top;
+  })();
+
   const picks: AgentPick[] = kept.map((r: Record<string, unknown>) => ({
     id: r.id as string,
     market_key: (r.market_key as string) ?? null,
@@ -139,6 +161,7 @@ export default async function AgentPage() {
     odds: ((r.criteria as { odds?: number } | null)?.odds) ?? null,
     odds_src: ((r.criteria as { odds_src?: string } | null)?.odds_src as AgentPick["odds_src"]) ?? null,
     o15_upgrade: ((r.criteria as { o15_upgrade?: boolean } | null)?.o15_upgrade) ?? null,
+    o25_top: o25Top.has(r.id as string),
     delivered_at: (r.delivered_at as string) ?? null,
     onside_score: onsideScore(r),
   }));

@@ -44,6 +44,8 @@ export type AgentPick = TrackedTicket & {
   // Over-1.5 upgrade: an Over 0.5 pick the engine also rates a strong Over 1.5 (raw model >= 0.95).
   // The card offers taking the better odds. Set by run-strategies at delivery time.
   o15_upgrade?: boolean | null;
+  // one of the day's two highest Over-2.5 games among the Over 0.5 picks (School selection signal)
+  o25_top?: boolean | null;
 };
 
 // "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
@@ -435,14 +437,14 @@ function Item({
           </div>
           <div className="mt-0.5 min-w-0">
             <div className="flex items-center gap-1.5">
-              {/* Over-1.5 upgrade chip: this Over 0.5 pick is also a strong Over 1.5 (raw model
-                  >= 0.95, ~85% historically) — take the better odds. Set by the engine at delivery. */}
-              {p.o15_upgrade && (
+              {/* Over-2.5 chip: one of the day's two highest Over-2.5 games among the Over 0.5 picks —
+                  the strongest goals leans in the feed, ranked at read time (see agent/page.tsx). */}
+              {p.o25_top && (
                 <span
                   className="flex-none rounded bg-grass-deep/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-grass-deep"
-                  title="The engine also rates this a strong Over 1.5 (~85%). You can take the better odds."
+                  title="One of today's two strongest Over 2.5 games in this feed — the model rates goals highest here."
                 >
-                  🔼 Over 1.5
+                  🔼 Over 2.5
                 </span>
               )}
               {/* the card % is the MODEL'S CHANCE for this exact bet (the explainer's "put
