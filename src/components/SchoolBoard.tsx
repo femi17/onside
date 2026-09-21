@@ -7,11 +7,12 @@ import { createClient } from "@/lib/supabase/client";
 export type SchoolLeg = {
   game: string;
   fixtureId: number;
+  market: string; // over_1_5 | over_2_5 | over_3_5 | over_4_5 (admin-settable line)
   odds: number | null;
   oddsReal: boolean; // true = real bookie odds an admin typed; false = model estimate (shown "~")
   score: string | null; // current score (live or final), e.g. "2-1"
-  hit: boolean | null; // Over 2.5: true once 3 goals land, false only at FT under 3, null pending
-  elapsed: number | null; // live minute
+  hit: boolean | null; // line cleared? true once the goals land, false only at FT under, null pending
+  elapsed: number | null;
   finished: boolean;
   kickoff: string | null;
   league: string | null;
@@ -23,15 +24,23 @@ export type SchoolRecord = {
   legs: SchoolLeg[];
   combined: number;
   result: "won" | "lost" | "pending";
-  code?: string | null; // SportyBet booking/verify code for this day's slip (members/admin only)
+  code?: string | null; // SportyBet booking code for the day (members/admin only)
 };
 
-const CHIPS = [5000, 10000, 50000, 100000];
+const MARKETS: Array<[string, string]> = [
+  ["over_1_5", "Over 1.5"],
+  ["over_2_5", "Over 2.5"],
+  ["over_3_5", "Over 3.5"],
+  ["over_4_5", "Over 4.5"],
+];
+const MARKET_LABEL: Record<string, string> = Object.fromEntries(MARKETS);
+
 const naira = (n: number) => (n < 0 ? "−₦" : "₦") + Math.round(Math.abs(n)).toLocaleString("en-US");
 const short = (n: number) => (n >= 1000 ? "₦" + Math.round(n / 1000) + "k" : "₦" + n);
 const day = (iso: string) =>
   new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-// kickoff clock in the users' timezone (Africa/Lagos), e.g. "18:30"
+const monthLabel = (key: string) =>
+  new Date(key + "-01T00:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Lagos" });
 
@@ -43,269 +52,78 @@ function Flag({ url, tier }: { url: string | null; tier: string | null }) {
   return <span className="text-[13px] leading-none">⚽</span>;
 }
 
-export default function SchoolBoard({
-  records,
-  upcoming = null,
-  admin = false,
-  locked = false,
-  joinSlot = null,
-}: {
-  records: SchoolRecord[];
-  upcoming?: SchoolRecord | null;
-  admin?: boolean;
-  locked?: boolean;
-  joinSlot?: ReactNode;
-}) {
-  const [stake, setStake] = useState(10000);
+/* ------------------------------------------------------------------ shared slip + admin editor */
+
+// Admin-only per-leg control: swap the LINE (over 1.5/2.5/3.5/4.5) + type the real odds taken. Saves via
+// the is_admin-gated RPC and refreshes so the card + record re-grade. Invisible to members. Pointer
+// events are stopped so tapping never starts a deck swipe.
+function LegEditor({ fixtureId, market, odds }: { fixtureId: number; market: string; odds: number | null }) {
   const router = useRouter();
-
-  // once today's pick has kicked off (any leg live or past kickoff), poll the server for fresh
-  // scores so the card updates from "18:30" → live score+minute → final without a manual reload.
-  const trackLive =
-    !!upcoming &&
-    upcoming.legs.some((l) => (l.elapsed != null && !l.finished) || (l.kickoff != null && Date.parse(l.kickoff) <= Date.now()));
+  const [mkt, setMkt] = useState(market);
+  const [v, setV] = useState(odds != null ? String(odds) : "");
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (!trackLive) return;
-    const id = setInterval(() => router.refresh(), 60000);
-    return () => clearInterval(id);
-  }, [trackLive, router]);
+    setMkt(market);
+    setV(odds != null ? String(odds) : "");
+  }, [market, odds]);
 
-  // cumulative P/L over the SETTLED record only — the upcoming pick doesn't count until it plays
-  const running = useMemo(() => {
-    let c = 0;
-    return records.map((r) => (c += r.result === "won" ? stake * (r.combined - 1) : -stake));
-  }, [records, stake]);
-
-  const sum = useMemo(() => {
-    const wins = records.filter((r) => r.result === "won").length;
-    const total = running.length ? running[running.length - 1] : 0;
-    const avg = records.length ? records.reduce((a, r) => a + r.combined, 0) / records.length : 0;
-    const staked = stake * records.length;
-    const roi = staked ? Math.round((total / staked) * 100) : 0;
-    return { wins, losses: records.length - wins, rate: records.length ? Math.round((wins / records.length) * 100) : 0, avg, total, roi, staked, returned: staked + total };
-  }, [records, running, stake]);
-
-  return (
-    <div className="mx-auto max-w-4xl px-5 md:px-8">
-     <div className="flex flex-col gap-6 md:flex-row-reverse md:items-start md:gap-8">
-      {/* profit summary — right sidebar on desktop, top block on mobile */}
-      <aside className="md:sticky md:top-4 md:w-[280px] md:flex-none">
-      <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-onpitch-mute">
-          Profit · {short(stake)}/day × {records.length} days
-        </p>
-        <p className={`mt-1 font-disp text-4xl font-extrabold tracking-tight tabular-nums ${sum.total >= 0 ? "text-grass" : "text-brick"}`}>
-          {naira(sum.total)}
-        </p>
-        <p className="mt-1 text-[11px] leading-snug text-onpitch-mute">
-          {locked ? "This could’ve been yours — join to bet the next one." : "What our record has paid you at this stake."}
-        </p>
-        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-white/10 pt-3 text-center font-mono tabular-nums">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-onpitch-mute">Staked</div>
-            <div className="mt-0.5 text-sm font-bold text-chalk">{naira(sum.staked)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-onpitch-mute">Back</div>
-            <div className="mt-0.5 text-sm font-bold text-chalk">{naira(sum.returned)}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-onpitch-mute">ROI</div>
-            <div className={`mt-0.5 text-sm font-bold ${sum.roi >= 0 ? "text-grass" : "text-brick"}`}>
-              {sum.roi >= 0 ? "+" : "−"}
-              {Math.abs(sum.roi)}%
-            </div>
-          </div>
-        </div>
-        <p className="mt-2 text-center font-mono text-[10.5px] text-onpitch-mute tabular-nums">
-          {sum.wins}–{sum.losses} · {sum.rate}% · avg ~{sum.avg.toFixed(2)}
-        </p>
-      </div>
-
-      {/* join card rides in the sidebar, directly under the summary (non-members only) */}
-      {joinSlot && <div className="mt-4">{joinSlot}</div>}
-      </aside>
-
-      {/* main column: stake + record deck (today's pick rides in as the first card) */}
-      <div className="min-w-0 flex-1">
-      <div className="flex items-center gap-2">
-        <div className="flex h-11 flex-1 items-center rounded-xl border border-white/10 bg-pitch-2 px-3">
-          <span className="mr-1 font-disp font-bold text-onpitch-mute">₦</span>
-          <input
-            inputMode="numeric"
-            value={stake.toLocaleString("en-US")}
-            onChange={(e) => setStake(Math.max(0, Number(e.target.value.replace(/[^\d]/g, "")) || 0))}
-            className="w-full bg-transparent font-disp text-lg font-extrabold tabular-nums text-chalk outline-none"
-            aria-label="Daily stake"
-          />
-        </div>
-        {CHIPS.map((c) => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => setStake(c)}
-            aria-pressed={stake === c}
-            className={`h-11 rounded-xl border px-3 font-mono text-[12px] font-bold tabular-nums transition ${
-              stake === c ? "border-flood bg-flood/15 text-flood" : "border-white/10 bg-pitch-2 text-onpitch-mute"
-            }`}
-          >
-            {short(c)}
-          </button>
-        ))}
-      </div>
-
-      <Deck records={records} upcoming={upcoming} stake={stake} locked={locked} admin={admin} />
-
-      <MonthlyBreakdown records={records} stake={stake} />
-      </div>
-     </div>
-
-      <p className="mt-5 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-        Real record · flat stakes · odds are the price we took · ~ = model estimate until confirmed · 18+
-      </p>
-    </div>
-  );
-}
-
-function Deck({
-  records,
-  upcoming,
-  stake,
-  locked,
-  admin,
-}: {
-  records: SchoolRecord[];
-  upcoming: SchoolRecord | null;
-  stake: number;
-  locked: boolean;
-  admin: boolean;
-}) {
-  // today's pick (if any) leads, then the settled record newest → oldest
-  const deck = useMemo(() => {
-    const settled = [...records].reverse();
-    return upcoming ? [upcoming, ...settled] : settled;
-  }, [records, upcoming]);
-  const [top, setTop] = useState(0);
-  const [dx, setDx] = useState(0);
-  const drag = useRef({ x: 0, active: false });
-
-  if (deck.length === 0) {
-    return (
-      <p className="mt-6 rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
-        No settled doubles yet.
-      </p>
-    );
+  async function save(nextMkt: string, nextOddsRaw: string) {
+    const num = parseFloat(nextOddsRaw);
+    const nextOdds = Number.isFinite(num) && num > 1 ? Math.round(num * 100) / 100 : null;
+    if (nextMkt === market && (nextOdds ?? null) === (odds ?? null)) return;
+    setBusy(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("school_set_leg_pick", { p_fixture_id: fixtureId, p_market: nextMkt, p_odds: nextOdds });
+    setBusy(false);
+    if (!error) router.refresh();
   }
 
-  const go = (n: number) => {
-    setTop((t) => Math.min(deck.length - 1, Math.max(0, t + n)));
-    setDx(0);
-  };
-  const down = (e: React.PointerEvent) => {
-    drag.current = { x: e.clientX, active: true };
-  };
-  const move = (e: React.PointerEvent) => {
-    if (drag.current.active) setDx(e.clientX - drag.current.x);
-  };
-  const up = () => {
-    if (!drag.current.active) return;
-    drag.current.active = false;
-    if (Math.abs(dx) > 90) go(dx < 0 ? 1 : -1);
-    else setDx(0);
-  };
-
   return (
-    <div className="mt-6">
-      <div className="mb-2 flex items-center justify-between px-1">
-        <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-          {top + 1}/{deck.length}
-        </span>
-        <span className="font-mono text-[10.5px] text-onpitch-mute">swipe →</span>
-      </div>
-
-      <div className="relative h-[300px] select-none" style={{ touchAction: "pan-y" }}>
-        {deck.map((r, i) => {
-          const depth = i - top;
-          if (depth < 0 || depth > 2) return null;
-          const isTop = depth === 0;
-          const t = isTop
-            ? `translateX(${dx}px) rotate(${dx * 0.04}deg)`
-            : `translateY(${depth * 10}px) scale(${1 - depth * 0.04})`;
-          return (
-            <div
-              key={r.date + "-" + i}
-              className="absolute inset-0"
-              style={{
-                transform: t,
-                zIndex: 10 - depth,
-                opacity: isTop ? 1 - Math.min(Math.abs(dx) / 320, 0.5) : 1,
-                transition: drag.current.active && isTop ? "none" : "transform .3s cubic-bezier(.2,.7,.25,1), opacity .3s",
-                pointerEvents: isTop ? "auto" : "none",
-              }}
-              onPointerDown={isTop ? down : undefined}
-              onPointerMove={isTop ? move : undefined}
-              onPointerUp={isTop ? up : undefined}
-              onPointerCancel={isTop ? up : undefined}
-            >
-              <Card r={r} stake={stake} locked={locked && r.result === "pending"} admin={admin} />
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-4 flex gap-2">
-        <button onClick={() => go(-1)} disabled={top === 0} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
-          ‹
-        </button>
-        <button onClick={() => go(1)} disabled={top >= deck.length - 1} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
-          ›
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// SportyBet booking code printed at the foot of the betslip (light/ink theme to match the slip). One
-// tap copies it to load the exact slip in the app. stopPropagation so a tap/copy doesn't start a swipe.
-function BookingStrip({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard blocked — the code is on screen anyway */
-    }
-  };
-  return (
-    <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-ink/20 bg-ink/[0.04] px-3 py-1.5">
-      <span className="min-w-0">
-        <span className="block font-mono text-[9px] uppercase tracking-wide text-ink-mute">SportyBet code</span>
-        <span className="block truncate font-disp text-[15px] font-extrabold leading-none tracking-[0.1em] text-flood-deep">{code}</span>
-      </span>
-      <button
-        type="button"
-        onClick={copy}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="flex-none rounded-lg border border-ink/15 px-2.5 py-1 font-mono text-[11px] font-bold text-flood-deep transition hover:border-flood-deep/40"
+    <span className="flex items-center gap-1.5" onPointerDown={(e) => e.stopPropagation()}>
+      <select
+        value={mkt}
+        disabled={busy}
+        onChange={(e) => {
+          setMkt(e.target.value);
+          save(e.target.value, v);
+        }}
+        aria-label="Line"
+        className="rounded border border-ink/20 bg-ink/[0.04] py-0.5 pl-1.5 pr-0.5 font-mono text-[11px] font-bold text-flood-deep outline-none focus:border-flood disabled:opacity-50"
       >
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
+        {MARKETS.map(([k, lbl]) => (
+          <option key={k} value={k}>
+            {lbl}
+          </option>
+        ))}
+      </select>
+      <input
+        inputMode="decimal"
+        value={v}
+        onChange={(e) => setV(e.target.value.replace(/[^\d.]/g, ""))}
+        onBlur={() => save(mkt, v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        placeholder="odds"
+        disabled={busy}
+        aria-label="Real odds"
+        className={`w-14 rounded border px-1.5 py-0.5 text-right font-mono text-[13px] font-bold tabular-nums outline-none focus:border-flood disabled:opacity-50 ${
+          odds != null ? "border-flood/40 bg-flood/5 text-flood-deep" : "border-ink/20 bg-ink/[0.03] text-ink-mute"
+        }`}
+      />
+    </span>
   );
 }
 
-function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; locked?: boolean; admin?: boolean }) {
+// One day's slip (settled or today's pick), on cream betting-slip paper. `admin` swaps each leg's line
+// display for the editor; members only ever see the final line + odds.
+function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; admin: boolean; locked?: boolean }) {
   const pending = r.result === "pending";
   const won = r.result === "won";
   const dayPL = won ? stake * (r.combined - 1) : -stake;
   const toWin = stake * (r.combined - 1);
-  const isLocked = pending && locked;
-  // combined odds is an estimate until every leg has a real bookie price entered
-  const estimated = r.legs.some((l) => !l.oddsReal);
   const anyLive = r.legs.some((l) => l.elapsed != null && !l.finished);
+  const estimated = r.legs.some((l) => !l.oddsReal);
   const badge = pending
     ? anyLive
       ? "bg-brick/15 text-brick"
@@ -316,19 +134,17 @@ function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; loc
   const badgeText = pending ? (anyLive ? "Live" : "Not started") : won ? "Won" : "Lost";
 
   return (
-    <div className="betslip betslip-chalk relative flex h-full w-full flex-col overflow-hidden rounded-2xl bg-chalk p-4 text-ink shadow-xl">
-      <div className={`flex h-full flex-col ${isLocked ? "blur-[6px]" : ""}`}>
+    <div className="betslip betslip-chalk relative flex w-full flex-col overflow-hidden rounded-2xl bg-chalk p-4 text-ink shadow-xl">
+      <div className={locked ? "blur-[6px]" : ""}>
         <div className="flex items-center justify-between">
-          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">
-            {pending ? "Today" : day(r.date)}
-          </span>
+          <span className="font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">{pending ? "Today" : day(r.date)}</span>
           <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wide ${badge}`}>
-            {anyLive && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />}
+            {anyLive && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick" />}
             {badgeText}
           </span>
         </div>
 
-        <div className="my-3 flex flex-1 flex-col justify-center gap-2.5 border-y border-dashed border-ink/15 py-3">
+        <div className="my-3 flex flex-col gap-2.5 border-y border-dashed border-ink/15 py-3">
           {r.legs.map((l, k) => (
             <div key={k} className="flex items-start justify-between gap-3">
               <span className="flex min-w-0 items-start gap-2">
@@ -338,21 +154,19 @@ function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; loc
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] font-bold leading-tight text-ink">{l.game}</span>
                   <span className="mt-0.5 block truncate text-[11px] leading-tight">
-                    <span className="font-bold text-flood-deep">Over 2.5</span>
-                    {l.league && <span className="text-ink-mute"> · {l.league}</span>}
+                    {!admin && <span className="font-bold text-flood-deep">{MARKET_LABEL[l.market] ?? "Over 2.5"}</span>}
+                    {l.league && <span className="text-ink-mute">{admin ? "" : " · "}{l.league}</span>}
                   </span>
                 </span>
               </span>
-              <span className="flex flex-none flex-col items-end gap-0.5">
+              <span className="flex flex-none flex-col items-end gap-1">
                 {l.score != null ? (
                   <span
                     className={`flex items-center gap-1 font-mono text-[13px] font-bold tabular-nums ${
                       l.hit === true ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
                     }`}
                   >
-                    {l.hit == null && l.elapsed != null && (
-                      <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-pulse" />
-                    )}
+                    {l.hit == null && l.elapsed != null && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick" />}
                     {l.score}
                     {l.hit === true ? " ✓" : l.hit == null && l.elapsed != null ? ` · ${l.elapsed}'` : ""}
                   </span>
@@ -360,11 +174,7 @@ function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; loc
                   <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
                 ) : null}
                 {admin ? (
-                  <OddsInput
-                    fixtureId={l.fixtureId}
-                    real={l.oddsReal ? l.odds : null}
-                    estimate={l.oddsReal ? null : l.odds}
-                  />
+                  <LegEditor fixtureId={l.fixtureId} market={l.market} odds={l.oddsReal ? l.odds : null} />
                 ) : (
                   <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
                     {l.odds ? (l.oddsReal ? "" : "~") + l.odds.toFixed(2) : "—"}
@@ -391,114 +201,471 @@ function Card({ r, stake, locked, admin }: { r: SchoolRecord; stake: number; loc
           </div>
         </div>
 
-        {/* SportyBet booking code printed on the slip (members/admin only — RLS gates the value) */}
-        {r.code && <BookingStrip code={r.code} />}
+        {r.code && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-ink/20 bg-ink/[0.04] px-3 py-1.5">
+            <span className="min-w-0">
+              <span className="block font-mono text-[9px] uppercase tracking-wide text-ink-mute">SportyBet code</span>
+              <span className="block truncate font-disp text-[15px] font-extrabold leading-none tracking-[0.1em] text-flood-deep">{r.code}</span>
+            </span>
+          </div>
+        )}
       </div>
 
-      {isLocked && (
+      {locked && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-chalk/40 p-4 text-center backdrop-blur-[3px]">
           <span className="text-2xl">🔒</span>
           <p className="max-w-[14rem] text-sm font-bold text-ink">Members see the founder&apos;s insight before kickoff.</p>
-          <a href="#join" className="rounded-xl bg-flood px-4 py-2 font-disp text-sm font-bold text-pitch transition hover:bg-flood/90">
-            Join Onside School
-          </a>
         </div>
       )}
     </div>
   );
 }
 
-// Admin-only inline editor for a leg's REAL bookie odds. Saving upserts via the is_admin-gated RPC and
-// refreshes the page so the card, profit and monthly totals recompute on real money. Empty/≤1 clears
-// back to the model estimate. Pointer events are stopped so typing/tapping never starts a deck swipe.
-function OddsInput({ fixtureId, real, estimate }: { fixtureId: number; real: number | null; estimate: number | null }) {
-  const router = useRouter();
-  const [v, setV] = useState(real != null ? String(real) : "");
-  const [busy, setBusy] = useState(false);
+// A swipeable deck of settled slips — one at a time, so a 30-ticket month never lengthens the page.
+function Deck({ records, stake, admin }: { records: SchoolRecord[]; stake: number; admin: boolean }) {
+  const [i, setI] = useState(0);
+  const drag = useRef({ x: 0, active: false });
   useEffect(() => {
-    setV(real != null ? String(real) : "");
-  }, [real]);
-
-  async function save() {
-    const num = parseFloat(v);
-    const next = Number.isFinite(num) && num > 1 ? Math.round(num * 100) / 100 : null;
-    if ((next ?? null) === (real ?? null)) return; // unchanged — skip the write
-    setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("school_set_leg_odds", { p_fixture_id: fixtureId, p_odds: next });
-    setBusy(false);
-    if (!error) router.refresh();
-  }
-
+    setI(0);
+  }, [records]);
+  if (records.length === 0)
+    return (
+      <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
+        No settled doubles this month yet.
+      </p>
+    );
+  const idx = Math.min(i, records.length - 1);
+  const r = records[idx];
+  const go = (n: number) => setI((v) => Math.min(records.length - 1, Math.max(0, v + n)));
   return (
-    <input
-      inputMode="decimal"
-      value={v}
-      onChange={(e) => setV(e.target.value.replace(/[^\d.]/g, ""))}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-      placeholder={estimate != null ? "~" + estimate.toFixed(2) : "odds"}
-      disabled={busy}
-      aria-label="Real bookie odds for this leg"
-      className={`w-16 rounded border px-1.5 py-0.5 text-right font-mono text-[13px] font-bold tabular-nums outline-none transition disabled:opacity-50 ${
-        real != null ? "border-flood/40 bg-flood/5 text-flood-deep" : "border-ink/20 bg-ink/[0.03] text-ink-mute focus:border-flood"
-      }`}
-    />
+    <div>
+      <div className="mb-2 flex items-center justify-between px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
+        <span>
+          {idx + 1} / {records.length}
+        </span>
+        <span>swipe →</span>
+      </div>
+      <div
+        className="select-none"
+        style={{ touchAction: "pan-y" }}
+        onPointerDown={(e) => (drag.current = { x: e.clientX, active: true })}
+        onPointerUp={(e) => {
+          if (!drag.current.active) return;
+          drag.current.active = false;
+          const dx = e.clientX - drag.current.x;
+          if (Math.abs(dx) > 60) go(dx < 0 ? 1 : -1);
+        }}
+      >
+        <Slip r={r} stake={stake} admin={admin} />
+      </div>
+      <div className="mt-4 flex gap-2">
+        <button onClick={() => go(-1)} disabled={idx === 0} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
+          ‹
+        </button>
+        <button onClick={() => go(1)} disabled={idx >= records.length - 1} className="h-10 flex-1 rounded-xl border border-white/10 bg-pitch-2 text-sm font-bold text-chalk disabled:opacity-40">
+          ›
+        </button>
+      </div>
+    </div>
   );
 }
 
-// "How much made each month" — groups the settled record by calendar month (newest first) with each
-// month's profit, W–L and ROI at the current stake. Sits under the deck so members can see the run
-// month by month, not just the all-time total in the sidebar.
-function MonthlyBreakdown({ records, stake }: { records: SchoolRecord[]; stake: number }) {
+const CHIPS = [5000, 10000, 20000, 50000];
+function StakeRow({ stake, setStake }: { stake: number; setStake: (n: number) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex h-11 flex-1 items-center rounded-xl border border-white/10 bg-pitch-2 px-3">
+        <span className="mr-1 font-disp font-bold text-onpitch-mute">₦</span>
+        <input
+          inputMode="numeric"
+          value={stake.toLocaleString("en-US")}
+          onChange={(e) => setStake(Math.max(0, Number(e.target.value.replace(/[^\d]/g, "")) || 0))}
+          className="w-full bg-transparent font-disp text-lg font-extrabold tabular-nums text-chalk outline-none"
+          aria-label="Daily stake"
+        />
+      </div>
+      {CHIPS.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => setStake(c)}
+          aria-pressed={stake === c}
+          className={`h-11 rounded-xl border px-3 font-mono text-[12px] font-bold tabular-nums transition ${
+            stake === c ? "border-flood bg-flood/15 text-flood" : "border-white/10 bg-pitch-2 text-onpitch-mute"
+          }`}
+        >
+          {short(c)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ member dashboard */
+
+export function SchoolMember({ records, upcoming, admin }: { records: SchoolRecord[]; upcoming: SchoolRecord | null; admin: boolean }) {
+  const [stake, setStake] = useState(20000);
+
   const months = useMemo(() => {
-    const m = new Map<string, { key: string; wins: number; losses: number; profit: number; staked: number }>();
+    const m = new Map<string, SchoolRecord[]>();
     for (const r of records) {
-      const key = r.date.slice(0, 7); // YYYY-MM
-      const cur = m.get(key) ?? { key, wins: 0, losses: 0, profit: 0, staked: 0 };
-      const won = r.result === "won";
-      cur.wins += won ? 1 : 0;
-      cur.losses += won ? 0 : 1;
-      cur.profit += won ? stake * (r.combined - 1) : -stake;
-      cur.staked += stake;
-      m.set(key, cur);
+      const key = r.date.slice(0, 7);
+      const arr = m.get(key);
+      if (arr) arr.push(r);
+      else m.set(key, [r]);
     }
-    return [...m.values()].sort((a, b) => (a.key < b.key ? 1 : -1)); // newest month first
+    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)); // newest first
+  }, [records]);
+  const [sel, setSel] = useState(0);
+  const selKey = months[Math.min(sel, Math.max(0, months.length - 1))]?.[0] ?? "";
+  const selRecords = useMemo(() => {
+    const list = (months.find(([k]) => k === selKey)?.[1] ?? []).slice().reverse(); // newest day first
+    return list;
+  }, [months, selKey]);
+
+  const all = useMemo(() => {
+    const wins = records.filter((r) => r.result === "won").length;
+    const total = records.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
+    const staked = stake * records.length;
+    return {
+      wins,
+      losses: records.length - wins,
+      total,
+      staked,
+      roi: staked ? Math.round((total / staked) * 100) : 0,
+      strike: records.length ? Math.round((wins / records.length) * 100) : 0,
+    };
   }, [records, stake]);
 
-  if (months.length === 0) return null;
-
-  const label = (key: string) =>
-    new Date(key + "-01T00:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  const monthStat = (recs: SchoolRecord[]) => {
+    const wins = recs.filter((r) => r.result === "won").length;
+    const profit = recs.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
+    const staked = stake * recs.length;
+    return { wins, losses: recs.length - wins, profit, roi: staked ? Math.round((profit / staked) * 100) : 0 };
+  };
+  const selStat = monthStat(months.find(([k]) => k === selKey)?.[1] ?? []);
 
   return (
-    <div className="mt-8">
-      <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-onpitch-mute">By month</p>
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-pitch-2">
-        {months.map((mo, i) => {
-          const roi = mo.staked ? Math.round((mo.profit / mo.staked) * 100) : 0;
-          return (
-            <div
-              key={mo.key}
-              className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "border-t border-white/10" : ""}`}
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-bold text-chalk">{label(mo.key)}</div>
-                <div className="mt-0.5 font-mono text-[11px] tabular-nums text-onpitch-mute">
-                  {mo.wins}–{mo.losses} · {roi >= 0 ? "+" : "−"}
-                  {Math.abs(roi)}%
-                </div>
-              </div>
-              <div className={`font-disp text-lg font-extrabold tabular-nums ${mo.profit >= 0 ? "text-grass" : "text-brick"}`}>
-                {naira(mo.profit)}
-              </div>
-            </div>
-          );
-        })}
+    <div className="mx-auto max-w-[960px] px-5 pt-6 md:px-8">
+      <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-flood">Onside School · Member</p>
+      <h1 className="mt-1 font-disp text-2xl font-bold tracking-tight text-chalk">Welcome back.</h1>
+
+      {/* stake control */}
+      <div className="mt-4">
+        <StakeRow stake={stake} setStake={setStake} />
       </div>
+
+      {/* the amount won — the motivation, big up top */}
+      <div className="mt-4 rounded-2xl border border-flood/30 bg-gradient-to-br from-flood/[0.14] to-flood/[0.03] p-5">
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-flood">Won at {short(stake)}/day · {records.length} days</div>
+        <div className={`mt-2 font-disp text-[clamp(2.6rem,11vw,3.75rem)] font-extrabold leading-none tracking-tight tabular-nums ${all.total >= 0 ? "text-flood" : "text-brick"}`}>
+          {naira(all.total)}
+        </div>
+        <p className="mt-2 max-w-[34ch] text-[13.5px] text-onpitch">Roll it into a bigger unit and the same record pays more. That&apos;s the business.</p>
+      </div>
+
+      {/* two columns: today's game | the record. Stacks on mobile. */}
+      <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 md:items-start md:gap-6">
+        {/* today's game */}
+        <div>
+          <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">Today&apos;s double</p>
+          {upcoming ? (
+            <Slip r={upcoming} stake={stake} admin={admin} />
+          ) : (
+            <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
+              Today&apos;s double isn&apos;t set yet — check back before kickoff.
+            </p>
+          )}
+        </div>
+
+        {/* the record */}
+        <div>
+          {/* 2-col stat grid */}
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              ["Record", `${all.wins}–${all.losses}`, ""],
+              ["Strike rate", `${all.strike}%`, ""],
+              ["ROI", `${all.roi >= 0 ? "+" : "−"}${Math.abs(all.roi)}%`, all.roi >= 0 ? "text-grass" : "text-brick"],
+              ["Staked", naira(all.staked), ""],
+            ].map(([k, v, cls]) => (
+              <div key={k} className="rounded-xl border border-white/10 bg-pitch-2 px-3.5 py-3">
+                <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">{k}</div>
+                <div className={`mt-1 font-disp text-lg font-extrabold tabular-nums ${cls || "text-chalk"}`}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {months.length > 0 && (
+            <>
+              <p className="mb-2 mt-5 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">By month — tap to open</p>
+              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {months.map(([key, recs], k) => {
+                  const st = monthStat(recs);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSel(k)}
+                      className={`flex-none rounded-xl border px-3.5 py-2.5 text-left leading-tight transition ${
+                        k === Math.min(sel, months.length - 1) ? "border-flood bg-flood/[0.12] text-chalk" : "border-white/10 bg-pitch-2 text-onpitch-mute"
+                      }`}
+                    >
+                      <span className="block font-mono text-[11px] font-bold">{monthLabel(key)}</span>
+                      <span className={`mt-1 block font-mono text-[13px] font-bold tabular-nums ${st.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(st.profit)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="my-3 px-1 font-mono text-[12px] text-onpitch-mute">
+                {monthLabel(selKey)} ·{" "}
+                <b className={`font-disp text-[15px] ${selStat.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(selStat.profit)}</b> · {selStat.wins}–{selStat.losses} ·{" "}
+                {selStat.roi >= 0 ? "+" : "−"}
+                {Math.abs(selStat.roi)}% ROI
+              </p>
+              <Deck records={selRecords} stake={stake} admin={admin} />
+            </>
+          )}
+        </div>
+      </div>
+
+      <p className="mt-8 text-center font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
+        Real record · flat stakes · odds are the price we took · 18+
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ visitor induction funnel */
+
+export function SchoolFunnel({
+  wins,
+  losses,
+  roi,
+  days,
+  proof,
+  price,
+  bank,
+  enroll,
+}: {
+  wins: number;
+  losses: number;
+  roi: number;
+  days: number;
+  proof: SchoolRecord | null;
+  price: number;
+  bank: { bank: string; account: string; name: string };
+  enroll: ReactNode;
+}) {
+  const [i, setI] = useState(0);
+  const [stake, setStake] = useState(20000);
+  const drag = useRef({ x: 0, active: false });
+  const strike = days ? Math.round((wins / days) * 100) : 0;
+
+  const pages: ReactNode[] = [
+    // 0 · cover
+    <div key="c">
+      <div className="mb-4 font-mono text-[11px] uppercase tracking-[0.18em] text-onpitch-mute">
+        <span className="font-bold text-flood">VVIP</span> · The induction
+      </div>
+      <h1 className="font-disp text-[clamp(2.1rem,9vw,2.9rem)] font-extrabold leading-[1.02] tracking-tight text-chalk">
+        Treat it like a business. Not a bet.
+      </h1>
+      <p className="mt-4 max-w-[42ch] text-[17px] text-onpitch">
+        One banker double a day. A public record that logs every result — wins <span className="text-grass">and</span> losses. And the discipline to
+        turn a small daily stake into a serious month.
+      </p>
+      <div className="mt-6 grid grid-cols-3 gap-2.5">
+        {[
+          ["Record", `${wins}–${losses}`, ""],
+          ["Strike", `${strike}%`, ""],
+          ["ROI", `${roi >= 0 ? "+" : "−"}${Math.abs(roi)}%`, roi >= 0 ? "text-grass" : "text-brick"],
+        ].map(([k, v, cls]) => (
+          <div key={k} className="rounded-2xl border border-white/10 bg-pitch-2 p-3.5">
+            <div className="font-mono text-[10px] uppercase tracking-wide text-onpitch-mute">{k}</div>
+            <div className={`mt-1 font-disp text-2xl font-extrabold tabular-nums ${cls || "text-chalk"}`}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>,
+    // 1 · what
+    <div key="w">
+      <Eyebrow n="01" t="What this is" />
+      <H2>One considered bet. Every single day.</H2>
+      <p className="mb-4 max-w-[46ch] text-onpitch">
+        Each morning the engine builds the <b className="text-flood">Onside Double</b> — the two safest goals picks from the strongest agents. We stake
+        it flat, and you get the exact same slip before kickoff.
+      </p>
+      <RuleCard t="No 20-leg accumulators" d="Two legs. The kind that actually land, not the lottery ticket that never does." />
+      <RuleCard t="No chasing, no tipster noise" d="The same pick for everyone, logged in public. If it loses, you see it lose." />
+    </div>,
+    // 2 · rules
+    <div key="r">
+      <Eyebrow n="02" t="The rules of the business" />
+      <H2>Four rules. Break one and it stops working.</H2>
+      {[
+        ["Flat stakes", "The same amount every day. Winning days don't earn a bigger bet; losing days don't earn a smaller one."],
+        ["One bet a day", "The double. Nothing else on the slip — no 'just one more' to spice it up."],
+        ["Never chase", "A losing day is data, not a reason to double up. The edge shows over the month, not the match."],
+        ["Bankroll before profit", "You protect the pool first. Profit is what's left after you've survived the bad runs."],
+      ].map(([t, d], k) => (
+        <RuleCard key={t} n={String(k + 1)} t={t} d={d} />
+      ))}
+    </div>,
+    // 3 · bankroll
+    <div key="b">
+      <Eyebrow n="03" t="Your bankroll is the business" />
+      <H2>Never stake your wallet. Stake a unit.</H2>
+      <p className="mb-4 max-w-[46ch] text-onpitch">
+        Set one daily unit, then keep a pool of <b className="text-flood">at least 3× that</b> behind it. The pool absorbs the losing runs that <i>will</i>{" "}
+        come — so one bad week never ends you.
+      </p>
+      <Bankroll stake={stake} setStake={setStake} />
+    </div>,
+    // 4 · proof
+    <div key="p">
+      <Eyebrow n="04" t="The proof" />
+      <H2>Every pick. On the record. Win or lose.</H2>
+      {proof ? <Slip r={proof} stake={stake} admin={false} /> : <p className="text-onpitch-mute">The record starts filling this week.</p>}
+      <p className="mt-4 flex items-center gap-2 font-mono text-[11px] text-onpitch-mute">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-flood" /> Real odds, real results — members flip back through months of doubles, the
+        losing days included.
+      </p>
+    </div>,
+    // 5 · join
+    <div key="j">
+      <Eyebrow n="05" t="Take your seat" />
+      <H2>Join the room. See tomorrow first.</H2>
+      <p className="mb-4 max-w-[46ch] text-onpitch">
+        Members get the next day&apos;s double <b>before kickoff</b>, every day, plus the SportyBet code to load it in one tap — and the full record,
+        month by month.
+      </p>
+      {enroll}
+    </div>,
+  ];
+  const N = pages.length;
+  const labels = ["Start the induction →", "Next: the rules →", "Next: your bankroll →", "Next: the proof →", "Next: join →", "Read again"];
+  const go = (n: number) => setI((v) => Math.max(0, Math.min(N - 1, v + n)));
+
+  return (
+    <div className="mx-auto max-w-[520px] px-5 pt-6">
+      {/* progress rail */}
+      <div className="mb-6 flex items-center gap-2">
+        <span className="whitespace-nowrap font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-flood">⚡ Onside School</span>
+        <div className="flex flex-1 justify-end gap-1.5">
+          {pages.map((_, k) => (
+            <span key={k} className={`h-[3px] rounded-full transition-all ${k === i ? "w-[30px] bg-flood" : k < i ? "w-[22px] bg-onpitch-mute" : "w-[22px] bg-white/10"}`} />
+          ))}
+        </div>
+      </div>
+
+      <div
+        className="min-h-[62vh] select-none"
+        style={{ touchAction: "pan-y" }}
+        onPointerDown={(e) => (drag.current = { x: e.clientX, active: true })}
+        onPointerUp={(e) => {
+          if (!drag.current.active) return;
+          drag.current.active = false;
+          const dx = e.clientX - drag.current.x;
+          if (Math.abs(dx) > 70) go(dx < 0 ? 1 : -1);
+        }}
+      >
+        {pages[i]}
+      </div>
+
+      <div className="mt-7 flex items-center gap-2.5">
+        <button
+          onClick={() => go(-1)}
+          disabled={i === 0}
+          aria-label="Previous page"
+          className="h-[54px] w-[54px] flex-none rounded-2xl border border-white/10 bg-pitch-2 text-xl font-bold text-chalk disabled:opacity-30"
+        >
+          ‹
+        </button>
+        <button
+          onClick={() => (i < N - 1 ? go(1) : setI(0))}
+          className="h-[54px] flex-1 rounded-2xl bg-flood font-disp text-base font-extrabold text-ink transition hover:brightness-105"
+        >
+          {labels[i]}
+        </button>
+      </div>
+      <div className="mt-3.5 text-center font-mono text-[11px] tracking-[0.05em] text-onpitch-mute">
+        Page {i + 1} of {N}
+      </div>
+      <p className="mt-5 text-center font-mono text-[10.5px] uppercase tracking-[0.08em] text-onpitch-mute">
+        18+ · stake only what your pool allows
+      </p>
+    </div>
+  );
+}
+
+function Eyebrow({ n, t }: { n: string; t: string }) {
+  return (
+    <div className="mb-4 flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-onpitch-mute">
+      <span className="rounded border border-flood px-1.5 py-0.5 tracking-[0.1em] text-flood">{n}</span>
+      {t}
+    </div>
+  );
+}
+function H2({ children }: { children: ReactNode }) {
+  return <h2 className="mb-3.5 font-disp text-[clamp(1.7rem,7vw,2.1rem)] font-extrabold leading-[1.05] tracking-tight text-chalk">{children}</h2>;
+}
+function RuleCard({ n, t, d }: { n?: string; t: string; d: string }) {
+  return (
+    <div className="mt-3 flex gap-3.5 rounded-2xl border border-white/10 bg-pitch-2 p-4">
+      <span className="min-w-[22px] font-mono text-[15px] font-bold tabular-nums text-flood">{n ?? "→"}</span>
+      <div>
+        <div className="font-disp text-base font-bold text-chalk">{t}</div>
+        <div className="mt-0.5 text-[13.5px] text-onpitch-mute">{d}</div>
+      </div>
+    </div>
+  );
+}
+function Bankroll({ stake, setStake }: { stake: number; setStake: (n: number) => void }) {
+  const pool = stake * 3;
+  return (
+    <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
+      <label htmlFor="bk" className="mb-2 block font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
+        Your daily stake
+      </label>
+      <div className="flex h-14 items-center gap-2 rounded-xl border border-white/10 bg-pitch px-3.5">
+        <span className="font-disp text-xl font-extrabold text-onpitch-mute">₦</span>
+        <input
+          id="bk"
+          inputMode="numeric"
+          value={stake.toLocaleString("en-US")}
+          onChange={(e) => setStake(Math.max(0, Number(e.target.value.replace(/[^\d]/g, "")) || 0))}
+          className="w-full bg-transparent font-disp text-2xl font-extrabold tabular-nums text-chalk outline-none"
+          aria-label="Daily stake"
+        />
+      </div>
+      <div className="mt-2.5 flex gap-1.5">
+        {CHIPS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setStake(c)}
+            className={`h-9 flex-1 rounded-lg border font-mono text-[12px] font-bold transition ${
+              stake === c ? "border-flood bg-flood/10 text-flood" : "border-white/10 bg-pitch text-onpitch-mute"
+            }`}
+          >
+            {short(c)}
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 flex gap-3">
+        <div className="flex-1 rounded-xl border border-flood/40 bg-flood/[0.08] p-3.5 text-center">
+          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">Pool you need</div>
+          <div className="mt-1 font-disp text-[22px] font-extrabold tabular-nums text-flood">{naira(pool)}</div>
+        </div>
+        <div className="flex-1 rounded-xl border border-white/10 bg-pitch p-3.5 text-center">
+          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">A 3-loss run costs</div>
+          <div className="mt-1 font-disp text-[22px] font-extrabold tabular-nums text-chalk">{naira(pool)}</div>
+        </div>
+      </div>
+      <p className="mt-3.5 text-[13px] leading-relaxed text-onpitch-mute">
+        <b className="text-chalk">Stake {naira(stake)}, hold {naira(pool)}.</b> Three losses in a row would clear your whole pool — that&apos;s exactly why
+        it&apos;s the floor you keep, never the amount you bet. Bet the unit; guard the pool.
+      </p>
     </div>
   );
 }

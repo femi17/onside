@@ -1,24 +1,20 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import StickyHeader from "@/components/StickyHeader";
-import MobileLogo from "@/components/MobileLogo";
-import SchoolBoard, { type SchoolRecord } from "@/components/SchoolBoard";
-import SchoolStory from "@/components/SchoolStory";
+import { SchoolFunnel, SchoolMember, type SchoolRecord } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
-// Onside School — the VVIP daily banker: the Onside Double, played as its two Over 2.5 legs.
-// The record here is REAL: each row is an actual Onside Double, regraded as an Over 2.5 double
-// (wins only if BOTH games go 3+ goals). Per-leg odds are the model's Over 2.5 price (1/prob).
-//
-// Tiers: the settled record + story are visible to everyone (the motivation to join); today's
-// upcoming pick is unlocked only for admitted (paying) members. Non-members get a blurred teaser
-// + the bank-transfer join flow, and admins review receipts in the panel at the top.
+// Onside School — the VVIP daily banker: the Onside Double, played as its two Over 2.5 legs (a line an
+// admin can swap per game). The record is REAL: each row is an actual Onside Double, regraded against
+// each leg's line. Non-members get the induction funnel + join flow; admitted members (and admins) get
+// today's pick + the full record browsable by month. The settled stats seed the funnel's proof.
 export const dynamic = "force-dynamic"; // the record grows daily
 
 const FINISHED = ["FT", "AET", "PEN"];
 const LIVE = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];
+// over-lines only: goals needed to clear each line (Over 2.5 -> 3, Over 3.5 -> 4, …)
+const NEED: Record<string, number> = { over_0_5: 1, over_1_5: 2, over_2_5: 3, over_3_5: 4, over_4_5: 5 };
 
 export default async function SchoolPage({ searchParams }: { searchParams: Promise<{ preview?: string }> }) {
   const supabase = await createClient();
@@ -34,13 +30,13 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   // the app layout). Flip SCHOOL_OPEN in src/lib/school.ts to open it to every signed-in user.
   if (!SCHOOL_OPEN && !realAdmin) redirect("/tracker");
 
-  // Owner-only preview: ?preview=guest renders the exact non-member experience (story + locked pick +
-  // join screen) so we can eyeball it without opening the pilot or changing admin status.
+  // Owner-only preview: ?preview=guest renders the exact non-member experience (the induction funnel)
+  // so we can eyeball it without opening the pilot or changing admin status.
   const previewGuest = realAdmin && (await searchParams)?.preview === "guest";
   const isAdmin = realAdmin && !previewGuest;
 
-  // Membership: an active admitted enrollment (or admin) unlocks the upcoming pick. Wrapped defensively
-  // so the page still renders for the owner if the enrollment migration hasn't been applied yet.
+  // Membership: an active admitted enrollment (or admin) unlocks the member dashboard. Wrapped
+  // defensively so the page still renders for the owner if the enrollment migration isn't applied yet.
   const { data: enr } = await supabase
     .from("school_enrollments")
     .select("status, admitted_until")
@@ -61,7 +57,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     .from("onside_double")
     .select("set_date, legs")
     .order("set_date", { ascending: false })
-    .limit(40);
+    .limit(80);
 
   // keep only doubles whose EVERY leg is Over 0.5; dedupe regenerations by the fixture pair
   const seen = new Set<string>();
@@ -85,7 +81,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     ),
   ];
 
-  const [{ data: fixtures }, { data: deliveries }, { data: realOdds }] = await Promise.all([
+  const [{ data: fixtures }, { data: deliveries }, { data: legPicks }] = await Promise.all([
     fixtureIds.length
       ? supabase
           .from("fixtures")
@@ -95,13 +91,16 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     deliveryIds.length
       ? supabase.from("deliveries").select("id, criteria").in("id", deliveryIds)
       : Promise.resolve({ data: [] as never[] }),
-    // real bookie odds an admin has typed per leg — overrides the model estimate where present
+    // per-leg line + real odds an admin has set (over_2_5 default when absent)
     fixtureIds.length
-      ? supabase.from("school_leg_odds").select("fixture_id, odds").in("fixture_id", fixtureIds)
+      ? supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", fixtureIds)
       : Promise.resolve({ data: [] as never[] }),
   ]);
-  const realOddsOf = new Map(
-    ((realOdds ?? []) as Array<{ fixture_id: number; odds: number }>).map((r) => [Number(r.fixture_id), Number(r.odds)])
+  const pickOf = new Map(
+    ((legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>).map((r) => [
+      Number(r.fixture_id),
+      { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? "over_2_5" },
+    ])
   );
 
   const fx = new Map((fixtures ?? []).map((f) => [Number((f as { id: number }).id), f as Record<string, unknown>]));
@@ -112,9 +111,8 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   };
   const dv = new Map((deliveries ?? []).map((d) => [(d as { id: string }).id, d as { criteria: Record<string, unknown> }]));
 
-  // SportyBet booking codes per day. RLS returns codes only to admins + active admitted members (the
-  // code reveals the paywalled pick), so non-members get none. Keyed by the card's set_date; the owner
-  // uploads them from /analytics.
+  // SportyBet booking codes per day. RLS returns codes only to admins + active admitted members, so
+  // non-members get none. Keyed by the card's set_date; the owner uploads them from /analytics.
   const codeDates = [...new Set(picked.map((d) => String(d.set_date)))];
   const { data: codeRows } = codeDates.length
     ? await supabase.from("school_codes").select("set_date, code").in("set_date", codeDates)
@@ -123,14 +121,18 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
 
   const mapped: SchoolRecord[] = picked.map((d) => {
     const legs = (d.legs as Array<Record<string, unknown>>).map((l) => {
-      const f = fx.get(Number(l.fixture_id));
+      const fid = Number(l.fixture_id);
+      const f = fx.get(fid);
       const del = dv.get(String(l.delivery_id));
       const model = (del?.criteria as { reasons?: { model?: { over25?: number } } } | undefined)?.reasons?.model;
       const over25 = model?.over25 ?? null;
-      const estOdds = over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
-      // prefer the real bookie odds an admin typed for this leg; fall back to the model estimate
-      const fid = Number(l.fixture_id);
-      const real = realOddsOf.get(fid) ?? null;
+      // the leg's line: admin override, else the default Over 2.5
+      const pick = pickOf.get(fid);
+      const market = pick?.market ?? "over_2_5";
+      const need = NEED[market] ?? 3;
+      // odds: real (admin-entered) wins; else the model estimate — which only prices Over 2.5
+      const estOdds = market === "over_2_5" && over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
+      const real = pick?.odds ?? null;
       const odds = real ?? estOdds;
       const oddsReal = real != null;
       const statusStr = f ? String(f.status ?? "") : "";
@@ -139,13 +141,13 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const h = f ? ((f.ft_home ?? f.home_goals) as number | null) : null;
       const a = f ? ((f.ft_away ?? f.away_goals) as number | null) : null;
       const curTot = h != null && a != null ? h + a : null;
-      // Over 2.5 is monotonic — WON the instant 3 goals are on the board (live OR full time); LOST only
-      // at full time under 3. So a leg settles early when it meets target instead of waiting for FT.
-      const hit = curTot != null && curTot >= 3 ? true : finished ? false : null;
+      // over lines are monotonic — WON the instant the line is cleared (live OR FT); LOST only at FT under.
+      const hit = curTot != null && curTot >= need ? true : finished ? false : null;
       const lg = leagueOf(f);
       return {
         game: String(l.game ?? ""),
         fixtureId: fid,
+        market,
         odds,
         oddsReal,
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
@@ -169,24 +171,32 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   // upcoming = the newest not-yet-graded double (today's pick, before it plays)
   const upcoming = mapped.find((r) => r.result === "pending") ?? null;
 
-  // sell stats — stake-independent (per-unit ROI), so they read the same at any stake
+  // sell stats — stake-independent, so they read the same at any stake (for the funnel proof)
   const wins = records.filter((r) => r.result === "won").length;
   const losses = records.length - wins;
   const profitUnits = records.reduce((a, r) => a + (r.result === "won" ? r.combined - 1 : -1), 0);
   const roi = records.length ? Math.round((profitUnits / records.length) * 100) : 0;
+  // one real recent winning slip to prove the funnel (falls back to the latest settled day)
+  const proof = [...records].reverse().find((r) => r.result === "won") ?? [...records].reverse()[0] ?? null;
+
+  // Members (and admins) get the dashboard; everyone else gets the induction funnel.
+  if (admitted) {
+    return (
+      <div className="pb-24">
+        {isAdmin && (
+          <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
+            <SchoolAdmin />
+          </div>
+        )}
+        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} />
+      </div>
+    );
+  }
 
   return (
     <div className="pb-24">
-      <StickyHeader>
-        <div className="mx-auto max-w-5xl px-5 pb-3 pt-6 md:px-8">
-          <MobileLogo />
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-flood">VVIP</p>
-          <h1 className="mt-2 font-disp text-3xl font-bold tracking-tight text-chalk sm:text-4xl">Onside School.</h1>
-        </div>
-      </StickyHeader>
-
       {previewGuest && (
-        <div className="mx-auto mb-6 flex max-w-4xl items-center justify-between gap-3 px-5 md:px-8">
+        <div className="mx-auto mt-6 flex max-w-[520px] items-center justify-between gap-3 px-5">
           <span className="rounded-full border border-flood/40 bg-flood/10 px-3 py-1 font-mono text-[10.5px] uppercase tracking-wide text-flood">
             Previewing as a non-member
           </span>
@@ -195,27 +205,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
           </a>
         </div>
       )}
-
-      {(isAdmin || !admitted) && (
-        <div className="mx-auto mb-8 flex max-w-4xl flex-col gap-6 px-5 md:px-8">
-          {isAdmin && <SchoolAdmin />}
-          {/* hook + the sell stats (Won / Lost / ROI) live on the same card */}
-          {!admitted && <SchoolStory wins={wins} losses={losses} roi={roi} days={records.length} />}
-        </div>
-      )}
-
-      {/* the record — everyone; today's pick leads the deck (locked for non-members). Non-members get
-          the join card in the sidebar, right under the profit summary. */}
-      <SchoolBoard
-        records={records}
-        upcoming={upcoming}
-        admin={isAdmin}
-        locked={!admitted}
-        joinSlot={
-          !admitted ? (
-            <SchoolEnroll userId={user.id} price={SCHOOL_PRICE} bank={SCHOOL_BANK} initialStatus={enrollStatus} />
-          ) : null
-        }
+      <SchoolFunnel
+        wins={wins}
+        losses={losses}
+        roi={roi}
+        days={records.length}
+        proof={proof}
+        price={SCHOOL_PRICE}
+        bank={SCHOOL_BANK}
+        enroll={<SchoolEnroll userId={user.id} price={SCHOOL_PRICE} bank={SCHOOL_BANK} initialStatus={enrollStatus} />}
       />
     </div>
   );
