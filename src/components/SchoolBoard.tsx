@@ -394,17 +394,22 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
 
       {/* the amount won — the motivation, big up top */}
       <div className="mt-4 rounded-2xl border border-flood/30 bg-gradient-to-br from-flood/[0.14] to-flood/[0.03] p-5">
-        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-flood">Won at {short(stake)}/day · {records.length} days</div>
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-flood">
+          Profit · {short(stake)}/day · {records.length} days · {all.roi >= 0 ? "+" : "−"}
+          {Math.abs(all.roi)}% ROI
+        </div>
         <div className={`mt-2 font-disp text-[clamp(2.6rem,11vw,3.75rem)] font-extrabold leading-none tracking-tight tabular-nums ${all.total >= 0 ? "text-flood" : "text-brick"}`}>
           {naira(all.total)}
         </div>
-        <p className="mt-2 max-w-[34ch] text-[13.5px] text-onpitch">Roll it into a bigger unit and the same record pays more. That&apos;s the business.</p>
+        <p className="mt-2 max-w-[34ch] text-[13.5px] text-onpitch">
+          {naira(all.staked)} staked → {naira(all.staked + all.total)} back. Roll it into a bigger unit and the same record pays more.
+        </p>
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {([
             ["Record", `${all.wins}–${all.losses}`, ""],
             ["Strike rate", `${all.strike}%`, ""],
-            ["ROI", `${all.roi >= 0 ? "+" : "−"}${Math.abs(all.roi)}%`, all.roi >= 0 ? "text-grass" : "text-brick"],
             ["Staked", naira(all.staked), ""],
+            ["Returned", naira(all.staked + all.total), all.total >= 0 ? "text-grass" : "text-brick"],
           ] as const).map(([k, v, cls]) => (
             <div key={k} className="rounded-xl border border-flood/15 bg-pitch/40 px-3.5 py-2.5">
               <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">{k}</div>
@@ -528,8 +533,8 @@ export function SchoolFunnel({
       <Eyebrow n="03" t="Your bankroll is the business" />
       <H2>Never stake your wallet. Stake a unit.</H2>
       <p className="mb-4 max-w-[46ch] text-onpitch">
-        Set one daily unit, then keep a pool of <b className="text-flood">at least 3× that</b> behind it. The pool absorbs the losing runs that <i>will</i>{" "}
-        come — so one bad week never ends you.
+        Set one daily unit, then hold a bankroll of <b className="text-flood">three units</b> — you bet one, and keep <b className="text-flood">two in
+        reserve</b>. That reserve is what carries you through the losing runs that <i>will</i> come, so one bad week never ends you.
       </p>
       <Bankroll stake={stake} setStake={setStake} />
     </div>,
@@ -549,7 +554,9 @@ export function SchoolFunnel({
         <div className={`mt-2 font-disp text-[clamp(2.4rem,10vw,3.4rem)] font-extrabold leading-none tracking-tight tabular-nums ${wouldMake >= 0 ? "text-flood" : "text-brick"}`}>
           {naira(wouldMake)}
         </div>
-        <p className="mt-2 text-[13px] text-onpitch-mute">Flat stakes, one double a day. The losing days are in here too.</p>
+        <p className="mt-2 text-[13px] text-onpitch-mute">
+          {naira(stake * days)} staked → {naira(stake * days + wouldMake)} back. Flat stakes, one bet a day — the losing days are in here too.
+        </p>
       </div>
       {records.length ? (
         <RecordBrowser records={records} stake={stake} admin={false} />
@@ -648,6 +655,7 @@ function RuleCard({ n, t, d }: { n?: string; t: string; d: string }) {
 }
 function Bankroll({ stake, setStake }: { stake: number; setStake: (n: number) => void }) {
   const pool = stake * 3;
+  const reserve = stake * 2;
   return (
     <div className="rounded-2xl border border-white/10 bg-pitch-2 p-5">
       <label htmlFor="bk" className="mb-2 block font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
@@ -680,17 +688,17 @@ function Bankroll({ stake, setStake }: { stake: number; setStake: (n: number) =>
       </div>
       <div className="mt-4 flex gap-3">
         <div className="flex-1 rounded-xl border border-flood/40 bg-flood/[0.08] p-3.5 text-center">
-          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">Pool you need</div>
+          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">Your bankroll · 3 units</div>
           <div className="mt-1 font-disp text-[22px] font-extrabold tabular-nums text-flood">{naira(pool)}</div>
         </div>
         <div className="flex-1 rounded-xl border border-white/10 bg-pitch p-3.5 text-center">
-          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">A 3-loss run costs</div>
-          <div className="mt-1 font-disp text-[22px] font-extrabold tabular-nums text-chalk">{naira(pool)}</div>
+          <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">Kept in reserve · 2 units</div>
+          <div className="mt-1 font-disp text-[22px] font-extrabold tabular-nums text-chalk">{naira(reserve)}</div>
         </div>
       </div>
       <p className="mt-3.5 text-[13px] leading-relaxed text-onpitch-mute">
-        <b className="text-chalk">Stake {naira(stake)}, hold {naira(pool)}.</b> Three losses in a row would clear your whole pool — that&apos;s exactly why
-        it&apos;s the floor you keep, never the amount you bet. Bet the unit; guard the pool.
+        <b className="text-chalk">Stake {naira(stake)} a day from a {naira(pool)} bankroll</b> — one unit in play, two behind it. Lose today and you&apos;ve
+        still got two more shots; the reserve is what you never touch until it&apos;s the unit.
       </p>
     </div>
   );
