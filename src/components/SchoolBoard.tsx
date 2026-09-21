@@ -57,7 +57,7 @@ function Flag({ url, tier }: { url: string | null; tier: string | null }) {
 // Admin-only per-leg control: swap the LINE (over 1.5/2.5/3.5/4.5) + type the real odds taken. Saves via
 // the is_admin-gated RPC and refreshes so the card + record re-grade. Invisible to members. Pointer
 // events are stopped so tapping never starts a deck swipe.
-function LegEditor({ fixtureId, market, odds }: { fixtureId: number; market: string; odds: number | null }) {
+function LegEditor({ fixtureId, market, odds, estimate }: { fixtureId: number; market: string; odds: number | null; estimate: number | null }) {
   const router = useRouter();
   const [mkt, setMkt] = useState(market);
   const [v, setV] = useState(odds != null ? String(odds) : "");
@@ -104,7 +104,7 @@ function LegEditor({ fixtureId, market, odds }: { fixtureId: number; market: str
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
         }}
-        placeholder="odds"
+        placeholder={estimate != null ? "~" + estimate.toFixed(2) : "odds"}
         disabled={busy}
         aria-label="Real odds"
         className={`w-14 rounded border px-1.5 py-0.5 text-right font-mono text-[13px] font-bold tabular-nums outline-none focus:border-flood disabled:opacity-50 ${
@@ -174,7 +174,7 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
                   <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
                 ) : null}
                 {admin ? (
-                  <LegEditor fixtureId={l.fixtureId} market={l.market} odds={l.oddsReal ? l.odds : null} />
+                  <LegEditor fixtureId={l.fixtureId} market={l.market} odds={l.oddsReal ? l.odds : null} estimate={l.oddsReal ? null : l.odds} />
                 ) : (
                   <span className="font-mono text-[13px] font-bold tabular-nums text-flood-deep">
                     {l.odds ? (l.oddsReal ? "" : "~") + l.odds.toFixed(2) : "—"}
