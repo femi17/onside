@@ -13,6 +13,10 @@ export default async function AgentPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // the Over 2.5 School-selection chip is owner-only intelligence (the Over 0.5 signal is private)
+  const { data: viewerProfile } = await supabase.from("profiles").select("is_admin").eq("id", user.id).single();
+  const isAdmin = !!viewerProfile?.is_admin;
+
   // Load by TIME WINDOW (last 7 dates, Lagos), not a blind row limit: at the Pro Max cap
   // (50 picks × up to 14 agents) a single midday batch used to push the overnight batches past a
   // fixed limit(200) — picks looked "wiped" from the feed although nothing was deleted. The high
@@ -114,24 +118,36 @@ export default async function AgentPage() {
   };
   const kept: Record<string, unknown>[] = (data ?? []).filter((r: Record<string, unknown>) => !guideFails(r));
 
-  // School selection signal: among the Over 0.5 picks, mark the day's TWO highest Over-2.5 games (by the
-  // model's over25). Farmed as the best 2-of-~50 to pick for an Over 2.5 double (~89% legs vs ~59% random).
+  // School selection (owner only): among the Over 0.5 picks, mark the day's TWO highest Over-2.5 games
+  // by model over25 — deduped per FIXTURE so re-runs never cost a slot, and always two distinct games
+  // per day. Farmed as the best 2-of-~50 for an Over 2.5 double (~89% legs / ~79% double).
   const o25Top = (() => {
-    const byDay = new Map<string, { id: string; o25: number }[]>();
+    const top = new Set<string>();
+    if (!isAdmin) return top;
+    const byDay = new Map<string, Map<number, { o25: number; ids: string[] }>>();
     for (const r of kept) {
       if ((r.market_key as string) !== "over_0_5") continue;
       const o25 = (r.criteria as { reasons?: { model?: { over25?: number } } } | null)?.reasons?.model?.over25;
       const da = r.delivered_at as string | null;
-      if (o25 == null || !da) continue;
+      const fid = (r.fixtures as { id?: number } | null)?.id;
+      if (o25 == null || !da || fid == null) continue;
       const dayKey = new Date(da).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
-      const arr = byDay.get(dayKey);
-      if (arr) arr.push({ id: r.id as string, o25: Number(o25) });
-      else byDay.set(dayKey, [{ id: r.id as string, o25: Number(o25) }]);
+      let fixMap = byDay.get(dayKey);
+      if (!fixMap) {
+        fixMap = new Map();
+        byDay.set(dayKey, fixMap);
+      }
+      const cur = fixMap.get(fid);
+      if (cur) {
+        cur.ids.push(r.id as string);
+        cur.o25 = Math.max(cur.o25, Number(o25));
+      } else fixMap.set(fid, { o25: Number(o25), ids: [r.id as string] });
     }
-    const top = new Set<string>();
-    for (const arr of byDay.values()) {
-      arr.sort((a, b) => b.o25 - a.o25);
-      arr.slice(0, 2).forEach((x) => top.add(x.id));
+    for (const fixMap of byDay.values()) {
+      [...fixMap.values()]
+        .sort((a, b) => b.o25 - a.o25)
+        .slice(0, 2)
+        .forEach((f) => f.ids.forEach((id) => top.add(id)));
     }
     return top;
   })();

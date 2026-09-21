@@ -74,6 +74,7 @@ export default async function EditStrategyPage({ params }: { params: Promise<{ i
       maxLeagues={limits?.max_leagues ?? 5}
       maxPicks={limits?.max_games_per_prediction ?? 3}
       maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3}
+      isAdmin={!!profile?.is_admin}
       canLearn={limits?.learning ?? false}
       existingCount={existingCount ?? 0}
       leagues={leagues}

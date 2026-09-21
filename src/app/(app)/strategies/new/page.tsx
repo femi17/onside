@@ -39,6 +39,7 @@ export default async function NewStrategyPage({ searchParams }: { searchParams: 
       maxPicks={limits?.max_games_per_prediction ?? 3}
       // admins run the platform's own agents — no slot cap (plan caps stay untouched for everyone else)
       maxAgents={profile?.is_admin ? 999 : limits?.max_agents ?? 3}
+      isAdmin={!!profile?.is_admin}
       canLearn={limits?.learning ?? false}
       existingCount={existingCount ?? 0}
       leagues={leagues}

@@ -236,6 +236,7 @@ export default function StrategyBuilder({
   leagues,
   existing,
   prefill,
+  isAdmin,
 }: {
   userId: string;
   plan: string;
@@ -248,10 +249,15 @@ export default function StrategyBuilder({
   existing?: ExistingStrategy;
   // seeded from a /performance discovery card — name, market and rule arrive pre-filled
   prefill?: { name?: string; marketKey?: string; ruleText?: string };
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const supabase = createClient();
   const editing = !!existing;
+  // Over 0.5 is the owner's private signal — hide it from the outcome shelf for everyone else
+  const catalogGroups = isAdmin
+    ? CATALOG_GROUPS
+    : CATALOG_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => i.toLowerCase() !== "over 0.5 goals") }));
 
   // when editing, reverse-map the saved market back to the right builder mode; a discovery
   // prefill maps its market key the same way (falls back to the default preset if unknown)
@@ -1105,7 +1111,7 @@ export default function StrategyBuilder({
                 outcome; the tap types the outcome's name into the flow below for you */}
             <div className="mt-4 mb-2 font-mono text-[10.5px] uppercase tracking-wide text-ink-mute">Or browse every outcome</div>
             <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-              {CATALOG_GROUPS.map((g) => (
+              {catalogGroups.map((g) => (
                 <button
                   key={g.name}
                   type="button"
@@ -1123,7 +1129,7 @@ export default function StrategyBuilder({
             </p>
             {catGroup && (
               <div className="no-scrollbar mt-2 flex max-h-[240px] flex-wrap content-start gap-1.5 overflow-y-auto rounded-xl border border-ink/10 bg-white p-2.5">
-                {CATALOG_GROUPS.find((g) => g.name === catGroup)?.items.map((l) => (
+                {catalogGroups.find((g) => g.name === catGroup)?.items.map((l) => (
                   <button
                     key={l}
                     type="button"
