@@ -248,8 +248,12 @@ function Deck({ records, stake, admin }: { records: SchoolRecord[]; stake: numbe
       <div
         className="select-none"
         style={{ touchAction: "pan-y" }}
-        onPointerDown={(e) => (drag.current = { x: e.clientX, active: true })}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          drag.current = { x: e.clientX, active: true };
+        }}
         onPointerUp={(e) => {
+          e.stopPropagation();
           if (!drag.current.active) return;
           drag.current.active = false;
           const dx = e.clientX - drag.current.x;
@@ -303,9 +307,10 @@ function StakeRow({ stake, setStake }: { stake: number; setStake: (n: number) =>
 
 /* ------------------------------------------------------------------ member dashboard */
 
-export function SchoolMember({ records, upcoming, admin }: { records: SchoolRecord[]; upcoming: SchoolRecord | null; admin: boolean }) {
-  const [stake, setStake] = useState(20000);
-
+// The record, browsable by month — shown to members AND visitors (the record is what convinces).
+// Month chips → a one-at-a-time swipe deck for the chosen month. Pointer events are stopped inside
+// the deck so it can live inside the funnel's own swipe without flipping the wizard page.
+function RecordBrowser({ records, stake, admin }: { records: SchoolRecord[]; stake: number; admin: boolean }) {
   const months = useMemo(() => {
     const m = new Map<string, SchoolRecord[]>();
     for (const r of records) {
@@ -318,11 +323,49 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
   }, [records]);
   const [sel, setSel] = useState(0);
   const selKey = months[Math.min(sel, Math.max(0, months.length - 1))]?.[0] ?? "";
-  const selRecords = useMemo(() => {
-    const list = (months.find(([k]) => k === selKey)?.[1] ?? []).slice().reverse(); // newest day first
-    return list;
-  }, [months, selKey]);
+  const selRecords = useMemo(() => (months.find(([k]) => k === selKey)?.[1] ?? []).slice().reverse(), [months, selKey]);
+  const monthStat = (recs: SchoolRecord[]) => {
+    const wins = recs.filter((r) => r.result === "won").length;
+    const profit = recs.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
+    const staked = stake * recs.length;
+    return { wins, losses: recs.length - wins, profit, roi: staked ? Math.round((profit / staked) * 100) : 0 };
+  };
+  const selStat = monthStat(months.find(([k]) => k === selKey)?.[1] ?? []);
+  if (months.length === 0)
+    return <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">No settled doubles yet.</p>;
+  return (
+    <div>
+      <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {months.map(([key, recs], k) => {
+          const st = monthStat(recs);
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSel(k)}
+              className={`flex-none rounded-xl border px-3.5 py-2.5 text-left leading-tight transition ${
+                k === Math.min(sel, months.length - 1) ? "border-flood bg-flood/[0.12] text-chalk" : "border-white/10 bg-pitch-2 text-onpitch-mute"
+              }`}
+            >
+              <span className="block font-mono text-[11px] font-bold">{monthLabel(key)}</span>
+              <span className={`mt-1 block font-mono text-[13px] font-bold tabular-nums ${st.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(st.profit)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="my-3 px-1 font-mono text-[12px] text-onpitch-mute">
+        {monthLabel(selKey)} ·{" "}
+        <b className={`font-disp text-[15px] ${selStat.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(selStat.profit)}</b> · {selStat.wins}–{selStat.losses} ·{" "}
+        {selStat.roi >= 0 ? "+" : "−"}
+        {Math.abs(selStat.roi)}% ROI
+      </p>
+      <Deck records={selRecords} stake={stake} admin={admin} />
+    </div>
+  );
+}
 
+export function SchoolMember({ records, upcoming, admin }: { records: SchoolRecord[]; upcoming: SchoolRecord | null; admin: boolean }) {
+  const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
     const wins = records.filter((r) => r.result === "won").length;
     const total = records.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
@@ -336,14 +379,8 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
       strike: records.length ? Math.round((wins / records.length) * 100) : 0,
     };
   }, [records, stake]);
-
-  const monthStat = (recs: SchoolRecord[]) => {
-    const wins = recs.filter((r) => r.result === "won").length;
-    const profit = recs.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
-    const staked = stake * recs.length;
-    return { wins, losses: recs.length - wins, profit, roi: staked ? Math.round((profit / staked) * 100) : 0 };
-  };
-  const selStat = monthStat(months.find(([k]) => k === selKey)?.[1] ?? []);
+  // today's double is the headline above; keep it out of the month browser so it isn't listed twice
+  const history = upcoming ? records.filter((r) => r.date !== upcoming.date) : records;
 
   return (
     <div className="mx-auto max-w-[960px] px-5 pt-6 md:px-8">
@@ -362,6 +399,19 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
           {naira(all.total)}
         </div>
         <p className="mt-2 max-w-[34ch] text-[13.5px] text-onpitch">Roll it into a bigger unit and the same record pays more. That&apos;s the business.</p>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([
+            ["Record", `${all.wins}–${all.losses}`, ""],
+            ["Strike rate", `${all.strike}%`, ""],
+            ["ROI", `${all.roi >= 0 ? "+" : "−"}${Math.abs(all.roi)}%`, all.roi >= 0 ? "text-grass" : "text-brick"],
+            ["Staked", naira(all.staked), ""],
+          ] as const).map(([k, v, cls]) => (
+            <div key={k} className="rounded-xl border border-flood/15 bg-pitch/40 px-3.5 py-2.5">
+              <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">{k}</div>
+              <div className={`mt-1 font-disp text-lg font-extrabold tabular-nums ${cls || "text-chalk"}`}>{v}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* two columns: today's game | the record. Stacks on mobile. */}
@@ -380,51 +430,8 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
 
         {/* the record */}
         <div>
-          {/* 2-col stat grid */}
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              ["Record", `${all.wins}–${all.losses}`, ""],
-              ["Strike rate", `${all.strike}%`, ""],
-              ["ROI", `${all.roi >= 0 ? "+" : "−"}${Math.abs(all.roi)}%`, all.roi >= 0 ? "text-grass" : "text-brick"],
-              ["Staked", naira(all.staked), ""],
-            ].map(([k, v, cls]) => (
-              <div key={k} className="rounded-xl border border-white/10 bg-pitch-2 px-3.5 py-3">
-                <div className="font-mono text-[9.5px] uppercase tracking-wide text-onpitch-mute">{k}</div>
-                <div className={`mt-1 font-disp text-lg font-extrabold tabular-nums ${cls || "text-chalk"}`}>{v}</div>
-              </div>
-            ))}
-          </div>
-
-          {months.length > 0 && (
-            <>
-              <p className="mb-2 mt-5 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">By month — tap to open</p>
-              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                {months.map(([key, recs], k) => {
-                  const st = monthStat(recs);
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setSel(k)}
-                      className={`flex-none rounded-xl border px-3.5 py-2.5 text-left leading-tight transition ${
-                        k === Math.min(sel, months.length - 1) ? "border-flood bg-flood/[0.12] text-chalk" : "border-white/10 bg-pitch-2 text-onpitch-mute"
-                      }`}
-                    >
-                      <span className="block font-mono text-[11px] font-bold">{monthLabel(key)}</span>
-                      <span className={`mt-1 block font-mono text-[13px] font-bold tabular-nums ${st.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(st.profit)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="my-3 px-1 font-mono text-[12px] text-onpitch-mute">
-                {monthLabel(selKey)} ·{" "}
-                <b className={`font-disp text-[15px] ${selStat.profit >= 0 ? "text-grass" : "text-brick"}`}>{naira(selStat.profit)}</b> · {selStat.wins}–{selStat.losses} ·{" "}
-                {selStat.roi >= 0 ? "+" : "−"}
-                {Math.abs(selStat.roi)}% ROI
-              </p>
-              <Deck records={selRecords} stake={stake} admin={admin} />
-            </>
-          )}
+          <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">The record — tap a month</p>
+          <RecordBrowser records={history} stake={stake} admin={admin} />
         </div>
       </div>
 
@@ -442,7 +449,7 @@ export function SchoolFunnel({
   losses,
   roi,
   days,
-  proof,
+  records,
   price,
   bank,
   enroll,
@@ -451,7 +458,7 @@ export function SchoolFunnel({
   losses: number;
   roi: number;
   days: number;
-  proof: SchoolRecord | null;
+  records: SchoolRecord[];
   price: number;
   bank: { bank: string; account: string; name: string };
   enroll: ReactNode;
@@ -460,6 +467,8 @@ export function SchoolFunnel({
   const [stake, setStake] = useState(20000);
   const drag = useRef({ x: 0, active: false });
   const strike = days ? Math.round((wins / days) * 100) : 0;
+  // what the whole real record would have paid at their stake — nothing hidden
+  const wouldMake = records.reduce((a, r) => a + (r.result === "won" ? stake * (r.combined - 1) : -stake), 0);
 
   const pages: ReactNode[] = [
     // 0 · cover
@@ -521,15 +530,29 @@ export function SchoolFunnel({
       </p>
       <Bankroll stake={stake} setStake={setStake} />
     </div>,
-    // 4 · proof
+    // 4 · proof — the visitor sets their stake and sees what the whole record would have paid
     <div key="p">
       <Eyebrow n="04" t="The proof" />
-      <H2>Every pick. On the record. Win or lose.</H2>
-      {proof ? <Slip r={proof} stake={stake} admin={false} /> : <p className="text-onpitch-mute">The record starts filling this week.</p>}
-      <p className="mt-4 flex items-center gap-2 font-mono text-[11px] text-onpitch-mute">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-flood" /> Real odds, real results — members flip back through months of doubles, the
-        losing days included.
+      <H2>Put in your stake. Nothing hidden.</H2>
+      <p className="mb-4 max-w-[46ch] text-onpitch">
+        This is the real record — every double, win and loss. Set your daily stake and see exactly what it would have paid you across every month
+        we&apos;ve covered.
       </p>
+      <StakeRow stake={stake} setStake={setStake} />
+      <div className="my-4 rounded-2xl border border-flood/30 bg-gradient-to-br from-flood/[0.14] to-flood/[0.03] p-5">
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-flood">
+          At {short(stake)}/day · {days} days, you&apos;d have made
+        </div>
+        <div className={`mt-2 font-disp text-[clamp(2.4rem,10vw,3.4rem)] font-extrabold leading-none tracking-tight tabular-nums ${wouldMake >= 0 ? "text-flood" : "text-brick"}`}>
+          {naira(wouldMake)}
+        </div>
+        <p className="mt-2 text-[13px] text-onpitch-mute">Flat stakes, one double a day. The losing days are in here too.</p>
+      </div>
+      {records.length ? (
+        <RecordBrowser records={records} stake={stake} admin={false} />
+      ) : (
+        <p className="text-onpitch-mute">The record starts filling this week.</p>
+      )}
     </div>,
     // 5 · join
     <div key="j">

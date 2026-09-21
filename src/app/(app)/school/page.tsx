@@ -168,16 +168,16 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
 
   // record = graded days only, oldest → newest so cumulative P/L reads left to right
   const records = mapped.filter((r) => r.result !== "pending").reverse();
-  // upcoming = the newest not-yet-graded double (today's pick, before it plays)
-  const upcoming = mapped.find((r) => r.result === "pending") ?? null;
+  // today's double stays pinned as "today" whether it's not-started, live, or already settled — it only
+  // falls back to the newest pending day (or nothing) when there's no double for today's date.
+  const todayLagos = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+  const upcoming = mapped.find((r) => r.date === todayLagos) ?? mapped.find((r) => r.result === "pending") ?? null;
 
   // sell stats — stake-independent, so they read the same at any stake (for the funnel proof)
   const wins = records.filter((r) => r.result === "won").length;
   const losses = records.length - wins;
   const profitUnits = records.reduce((a, r) => a + (r.result === "won" ? r.combined - 1 : -1), 0);
   const roi = records.length ? Math.round((profitUnits / records.length) * 100) : 0;
-  // one real recent winning slip to prove the funnel (falls back to the latest settled day)
-  const proof = [...records].reverse().find((r) => r.result === "won") ?? [...records].reverse()[0] ?? null;
 
   // Members (and admins) get the dashboard; everyone else gets the induction funnel.
   if (admitted) {
@@ -210,7 +210,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
         losses={losses}
         roi={roi}
         days={records.length}
-        proof={proof}
+        records={records}
         price={SCHOOL_PRICE}
         bank={SCHOOL_BANK}
         enroll={<SchoolEnroll userId={user.id} price={SCHOOL_PRICE} bank={SCHOOL_BANK} initialStatus={enrollStatus} />}
