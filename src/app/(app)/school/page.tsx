@@ -202,7 +202,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <SchoolAdmin />
           </div>
         )}
-        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} />
+        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} />
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
     );

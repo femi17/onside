@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { adjustElapsed } from "@/lib/ticket";
+import { canonicalMarket } from "@/lib/betCatalog";
 
 export type SchoolLeg = {
   game: string;
@@ -37,6 +38,68 @@ const MARKETS: Array<[string, string]> = [
   ["over_4_5", "Over 4.5"],
 ];
 const MARKET_LABEL: Record<string, string> = Object.fromEntries(MARKETS);
+const MARKET_LINE: Record<string, number> = { over_1_5: 1.5, over_2_5: 2.5, over_3_5: 3.5, over_4_5: 4.5 };
+
+// Add today's double to the user's normal tracker so they can follow the games there (deduped against
+// any bet they already track for the same fixture/line). Each leg goes in as its line (Over 2.5/3.5…).
+function TrackDouble({ legs, userId }: { legs: SchoolLeg[]; userId: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  async function track() {
+    setState("busy");
+    const supabase = createClient();
+    const fixtureIds = legs.map((l) => l.fixtureId);
+    const { data: existing } = await supabase
+      .from("tickets")
+      .select("fixture_id, market_key, line, side")
+      .eq("user_id", userId)
+      .in("fixture_id", fixtureIds)
+      .in("status", ["pending", "live"])
+      .not("tracker_hidden", "is", true);
+    const already = (fx: number, want: { marketKey: string | null | undefined; line: number | null; side: string | null }) =>
+      (existing ?? []).some((t) => {
+        const c = canonicalMarket(t.market_key as string, t.line as number | null, t.side as string);
+        return t.fixture_id === fx && c.marketKey === want.marketKey && c.line === want.line && c.side === want.side;
+      });
+    const rows = legs
+      .map((l) => ({ l, c: canonicalMarket(l.market, MARKET_LINE[l.market] ?? 2.5, "over") }))
+      .filter(({ l, c }) => !already(l.fixtureId, c))
+      .map(({ l, c }) => ({
+        user_id: userId,
+        accumulator_id: null,
+        fixture_id: l.fixtureId,
+        market_key: c.marketKey,
+        market_label: MARKET_LABEL[l.market] ?? "Over 2.5",
+        custom_market: null,
+        line: c.line,
+        side: c.side,
+        period: "ft",
+        bet_value: null,
+        source: "manual",
+        status: "pending",
+        strategy_id: null,
+      }));
+    if (rows.length) await supabase.from("tickets").insert(rows);
+    setState("done");
+  }
+  if (state === "done")
+    return (
+      <a
+        href="/tracker"
+        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-grass/40 bg-grass/10 font-disp text-sm font-bold text-grass-deep transition hover:border-grass"
+      >
+        ✓ Added to your tracker — follow it there →
+      </a>
+    );
+  return (
+    <button
+      onClick={track}
+      disabled={state === "busy"}
+      className="mt-3 h-11 w-full rounded-xl border border-flood/40 bg-flood/10 font-disp text-sm font-bold text-flood transition hover:border-flood disabled:opacity-50"
+    >
+      {state === "busy" ? "Adding…" : "📍 Track this double"}
+    </button>
+  );
+}
 
 const naira = (n: number) => (n < 0 ? "−₦" : "₦") + Math.round(Math.abs(n)).toLocaleString("en-US");
 const short = (n: number) => (n >= 1000 ? "₦" + Math.round(n / 1000) + "k" : "₦" + n);
@@ -425,11 +488,13 @@ export function SchoolMember({
   upcoming,
   admin,
   todayPosted = false,
+  userId,
 }: {
   records: SchoolRecord[];
   upcoming: SchoolRecord | null;
   admin: boolean;
   todayPosted?: boolean;
+  userId: string;
 }) {
   const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
@@ -508,6 +573,7 @@ export function SchoolMember({
               Today&apos;s double drops before kickoff — check back soon.
             </p>
           )}
+          {upcoming && (admin || todayPosted) && <TrackDouble legs={upcoming.legs} userId={userId} />}
         </div>
 
         {/* the record */}
