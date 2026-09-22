@@ -364,7 +364,54 @@ function RecordBrowser({ records, stake, admin }: { records: SchoolRecord[]; sta
   );
 }
 
-export function SchoolMember({ records, upcoming, admin }: { records: SchoolRecord[]; upcoming: SchoolRecord | null; admin: boolean }) {
+// Admin-only "Post now" — flips today's card from draft (owner only) to live for members.
+function PostControl({ date, posted }: { date: string; posted: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  async function toggle(on: boolean) {
+    setBusy(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("school_post_day", { p_date: date, p_on: on });
+    setBusy(false);
+    if (!error) router.refresh();
+  }
+  if (posted)
+    return (
+      <div className="mt-3 flex items-center gap-2">
+        <span className="flex-1 rounded-xl border border-grass/30 bg-grass/10 px-3 py-2 text-center font-mono text-[11px] font-bold uppercase tracking-wide text-grass-deep">
+          ✓ Live to members
+        </span>
+        <button
+          onClick={() => toggle(false)}
+          disabled={busy}
+          className="rounded-xl border border-white/15 bg-pitch-2 px-3 py-2 font-mono text-[11px] font-bold text-onpitch-mute transition hover:border-brick/40 disabled:opacity-40"
+        >
+          {busy ? "…" : "Unpost"}
+        </button>
+      </div>
+    );
+  return (
+    <button
+      onClick={() => toggle(true)}
+      disabled={busy}
+      className="mt-3 h-11 w-full rounded-xl bg-flood font-disp text-sm font-extrabold text-ink transition hover:brightness-105 disabled:opacity-40"
+    >
+      {busy ? "Posting…" : "Post now — make today's pick live"}
+    </button>
+  );
+}
+
+export function SchoolMember({
+  records,
+  upcoming,
+  admin,
+  todayPosted = false,
+}: {
+  records: SchoolRecord[];
+  upcoming: SchoolRecord | null;
+  admin: boolean;
+  todayPosted?: boolean;
+}) {
   const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
     const wins = records.filter((r) => r.result === "won").length;
@@ -423,12 +470,23 @@ export function SchoolMember({ records, upcoming, admin }: { records: SchoolReco
       <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2 md:items-start md:gap-6">
         {/* today's game */}
         <div>
-          <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">Today&apos;s double</p>
-          {upcoming ? (
-            <Slip r={upcoming} stake={stake} admin={admin} />
-          ) : (
+          <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
+            Today&apos;s double{admin && upcoming && !todayPosted ? " · draft — only you" : ""}
+          </p>
+          {!upcoming ? (
             <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
               Today&apos;s double isn&apos;t set yet — check back before kickoff.
+            </p>
+          ) : admin ? (
+            <>
+              <Slip r={upcoming} stake={stake} admin />
+              <PostControl date={upcoming.date} posted={todayPosted} />
+            </>
+          ) : todayPosted ? (
+            <Slip r={upcoming} stake={stake} admin={false} />
+          ) : (
+            <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
+              Today&apos;s double drops before kickoff — check back soon.
             </p>
           )}
         </div>

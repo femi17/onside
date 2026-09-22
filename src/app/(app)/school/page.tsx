@@ -173,6 +173,13 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   const todayLagos = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   const upcoming = mapped.find((r) => r.date === todayLagos) ?? mapped.find((r) => r.result === "pending") ?? null;
 
+  // today's card is a draft only the owner sees until "Post now" flips it live for members
+  let todayPosted = false;
+  if (upcoming) {
+    const { data: postRow } = await supabase.from("school_posts").select("set_date").eq("set_date", upcoming.date).maybeSingle();
+    todayPosted = !!postRow;
+  }
+
   // sell stats — stake-independent, so they read the same at any stake (for the funnel proof)
   const wins = records.filter((r) => r.result === "won").length;
   const losses = records.length - wins;
@@ -188,7 +195,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <SchoolAdmin />
           </div>
         )}
-        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} />
+        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} />
       </div>
     );
   }
