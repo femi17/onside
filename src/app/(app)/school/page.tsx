@@ -189,7 +189,8 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       .select("fixture_id, market_key")
       .eq("user_id", user.id)
       .in("fixture_id", fxIds)
-      .in("status", ["pending", "live"])
+      // no status filter: a leg whose game has already settled is still "tracked" — else the button
+      // wrongly reappears once one of the two games finishes (its ticket flips pending → won/lost)
       .not("tracker_hidden", "is", true);
     todayTracked = upcoming.legs.every((l) => (myTix ?? []).some((t) => t.fixture_id === l.fixtureId && t.market_key === l.market));
   }
