@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export default function SidebarNav({ items }: { items: { label: string; href: string }[] }) {
+export default function SidebarNav({ items }: { items: { label: string; href: string; badge?: string }[] }) {
   const pathname = usePathname();
   return (
     <nav className="flex flex-col gap-1">
@@ -21,6 +21,11 @@ export default function SidebarNav({ items }: { items: { label: string; href: st
           >
             <span className={`h-2 w-2 rounded-sm ${active ? "bg-flood" : "bg-current opacity-50"}`} />
             {n.label}
+            {n.badge && (
+              <span className="ml-auto rounded bg-flood px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-ink">
+                {n.badge}
+              </span>
+            )}
           </Link>
         );
       })}

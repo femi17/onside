@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
 
-type NavItem = { label: string; href: string };
+type NavItem = { label: string; href: string; badge?: string };
 
 const ICON = "h-5 w-5";
 
@@ -148,6 +148,11 @@ export default function MobileNav({
                 >
                   <span className={`h-2 w-2 rounded-sm ${active ? "bg-flood" : "bg-current opacity-50"}`} />
                   {n.label}
+                  {n.badge && (
+                    <span className="ml-auto rounded bg-flood px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-ink">
+                      {n.badge}
+                    </span>
+                  )}
                 </Link>
               );
             })}

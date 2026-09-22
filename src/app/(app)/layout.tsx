@@ -52,7 +52,7 @@ export default async function AppLayout({
   const adminLinks = [{ label: "Analytics", href: "/analytics" }];
   // Onside School: owner-only while the pilot is closed. Flip SCHOOL_OPEN (src/lib/school.ts) to surface
   // the link for every signed-in user; the /school route gates itself on the same flag.
-  const schoolLinks = profile?.is_admin || SCHOOL_OPEN ? [{ label: "Onside School", href: "/school" }] : [];
+  const schoolLinks = profile?.is_admin || SCHOOL_OPEN ? [{ label: "Onside School", href: "/school", badge: "HOT" }] : [];
   const nav = [...NAV, ...schoolLinks, ...(profile?.is_admin ? adminLinks : [])];
   const mobileNav = [...MOBILE_NAV, ...schoolLinks, ...(profile?.is_admin ? adminLinks : [])];
 
