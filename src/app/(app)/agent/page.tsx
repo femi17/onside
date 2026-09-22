@@ -116,7 +116,9 @@ export default async function AgentPage() {
     }
     return false;
   };
-  const kept: Record<string, unknown>[] = (data ?? []).filter((r: Record<string, unknown>) => !guideFails(r));
+  // Over 0.5 is the owner's private signal — never surface it to anyone but admins, anywhere on the feed
+  const rows = isAdmin ? (data ?? []) : (data ?? []).filter((r: Record<string, unknown>) => (r.market_key as string) !== "over_0_5");
+  const kept: Record<string, unknown>[] = rows.filter((r: Record<string, unknown>) => !guideFails(r));
 
   // School selection (owner only): among the Over 0.5 picks, mark the day's TWO highest Over-2.5 games
   // by model over25 — deduped per FIXTURE so re-runs never cost a slot, and always two distinct games
