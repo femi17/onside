@@ -180,6 +180,20 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   // live game(s) in today's card → poll for fresh scores/minute (RealtimeRefresh runs a 60s render)
   const liveIds = upcoming ? upcoming.legs.filter((l) => l.elapsed != null && !l.finished).map((l) => l.fixtureId) : [];
 
+  // already added today's double to their tracker? keeps the Track button in its "added" state after a refresh
+  let todayTracked = false;
+  if (upcoming && upcoming.legs.length) {
+    const fxIds = upcoming.legs.map((l) => l.fixtureId);
+    const { data: myTix } = await supabase
+      .from("tickets")
+      .select("fixture_id, market_key")
+      .eq("user_id", user.id)
+      .in("fixture_id", fxIds)
+      .in("status", ["pending", "live"])
+      .not("tracker_hidden", "is", true);
+    todayTracked = upcoming.legs.every((l) => (myTix ?? []).some((t) => t.fixture_id === l.fixtureId && t.market_key === l.market));
+  }
+
   // today's card is a draft only the owner sees until "Post now" flips it live for members
   let todayPosted = false;
   if (upcoming) {
@@ -202,7 +216,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <SchoolAdmin />
           </div>
         )}
-        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} />
+        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
     );

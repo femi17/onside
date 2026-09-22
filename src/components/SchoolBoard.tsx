@@ -42,8 +42,8 @@ const MARKET_LINE: Record<string, number> = { over_1_5: 1.5, over_2_5: 2.5, over
 
 // Add today's double to the user's normal tracker so they can follow the games there (deduped against
 // any bet they already track for the same fixture/line). Each leg goes in as its line (Over 2.5/3.5…).
-function TrackDouble({ legs, userId }: { legs: SchoolLeg[]; userId: string }) {
-  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+function TrackDouble({ legs, userId, initialDone = false }: { legs: SchoolLeg[]; userId: string; initialDone?: boolean }) {
+  const [state, setState] = useState<"idle" | "busy" | "done">(initialDone ? "done" : "idle");
   async function track() {
     setState("busy");
     const supabase = createClient();
@@ -489,12 +489,14 @@ export function SchoolMember({
   admin,
   todayPosted = false,
   userId,
+  todayTracked = false,
 }: {
   records: SchoolRecord[];
   upcoming: SchoolRecord | null;
   admin: boolean;
   todayPosted?: boolean;
   userId: string;
+  todayTracked?: boolean;
 }) {
   const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
@@ -573,7 +575,7 @@ export function SchoolMember({
               Today&apos;s double drops before kickoff — check back soon.
             </p>
           )}
-          {upcoming && (admin || todayPosted) && <TrackDouble legs={upcoming.legs} userId={userId} />}
+          {upcoming && (admin || todayPosted) && <TrackDouble legs={upcoming.legs} userId={userId} initialDone={todayTracked} />}
         </div>
 
         {/* the record */}
