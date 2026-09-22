@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { adjustElapsed } from "@/lib/ticket";
 
 export type SchoolLeg = {
   game: string;
@@ -13,6 +14,8 @@ export type SchoolLeg = {
   score: string | null; // current score (live or final), e.g. "2-1"
   hit: boolean | null; // line cleared? true once the goals land, false only at FT under, null pending
   elapsed: number | null;
+  status: string | null; // raw fixture status — drives the live clock (adjustElapsed)
+  updatedAt: string | null; // last DB write — the anchor the client clock ticks up from
   finished: boolean;
   kickoff: string | null;
   league: string | null;
@@ -117,7 +120,20 @@ function LegEditor({ fixtureId, market, odds, estimate }: { fixtureId: number; m
 
 // One day's slip (settled or today's pick), on cream betting-slip paper. `admin` swaps each leg's line
 // display for the editor; members only ever see the final line + odds.
+// ticks a timestamp each ~30s AFTER mount (SSR/first paint keep the static server minute → no
+// hydration mismatch); adjustElapsed then counts the live clock up between the 60s server refreshes.
+function useNow(intervalMs = 30000) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; admin: boolean; locked?: boolean }) {
+  const now = useNow();
   const pending = r.result === "pending";
   const won = r.result === "won";
   const dayPL = won ? stake * (r.combined - 1) : -stake;
@@ -145,7 +161,9 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
         </div>
 
         <div className="my-3 flex flex-col gap-2.5 border-y border-dashed border-ink/15 py-3">
-          {r.legs.map((l, k) => (
+          {r.legs.map((l, k) => {
+            const liveMin = adjustElapsed(l.status, l.elapsed, l.updatedAt, now ?? undefined);
+            return (
             <div key={k} className="flex items-start justify-between gap-3">
               <span className="flex min-w-0 items-start gap-2">
                 <span className="mt-0.5 flex-none">
@@ -166,9 +184,9 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
                       l.hit === true ? "text-grass-deep" : l.hit === false ? "text-brick" : "text-ink"
                     }`}
                   >
-                    {l.hit == null && l.elapsed != null && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick" />}
+                    {l.hit == null && liveMin != null && <span className="inline-block h-1.5 w-1.5 rounded-full bg-brick animate-blink" />}
                     {l.score}
-                    {l.hit === true ? " ✓" : l.hit == null && l.elapsed != null ? ` · ${l.elapsed}'` : ""}
+                    {l.hit === true ? " ✓" : l.hit == null && liveMin != null ? ` · ${liveMin}'` : ""}
                   </span>
                 ) : l.kickoff ? (
                   <span className="font-mono text-[11px] tabular-nums text-ink-mute">{clock(l.kickoff)}</span>
@@ -182,7 +200,8 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
                 )}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex items-stretch gap-2">

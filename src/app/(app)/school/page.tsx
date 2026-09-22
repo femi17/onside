@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SchoolFunnel, SchoolMember, type SchoolRecord } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
+import RealtimeRefresh from "@/components/RealtimeRefresh";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
 // Onside School — the VVIP daily banker: the Onside Double, played as its two Over 2.5 legs (a line an
@@ -85,7 +86,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     fixtureIds.length
       ? supabase
           .from("fixtures")
-          .select("id, ft_home, ft_away, home_goals, away_goals, status, elapsed, kickoff_utc, leagues(name, flag_url, tier)")
+          .select("id, ft_home, ft_away, home_goals, away_goals, status, elapsed, updated_at, kickoff_utc, leagues(name, flag_url, tier)")
           .in("id", fixtureIds)
       : Promise.resolve({ data: [] as never[] }),
     deliveryIds.length
@@ -153,6 +154,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
         hit,
         elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
+        // raw status + updated_at let the client tick the live minute up between 60s refreshes
+        status: statusStr || null,
+        updatedAt: (f?.updated_at as string | null) ?? null,
         finished,
         kickoff: (f?.kickoff_utc as string | null) ?? null,
         league: lg?.name ?? null,
@@ -172,6 +176,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   // falls back to the newest pending day (or nothing) when there's no double for today's date.
   const todayLagos = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   const upcoming = mapped.find((r) => r.date === todayLagos) ?? mapped.find((r) => r.result === "pending") ?? null;
+
+  // live game(s) in today's card → poll for fresh scores/minute (RealtimeRefresh runs a 60s render)
+  const liveIds = upcoming ? upcoming.legs.filter((l) => l.elapsed != null && !l.finished).map((l) => l.fixtureId) : [];
 
   // today's card is a draft only the owner sees until "Post now" flips it live for members
   let todayPosted = false;
@@ -196,6 +203,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
           </div>
         )}
         <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} />
+        {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
     );
   }
