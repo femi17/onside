@@ -46,6 +46,8 @@ export type AgentPick = TrackedTicket & {
   o15_upgrade?: boolean | null;
   // one of the day's two highest Over-2.5 games among the Over 0.5 picks (School selection signal)
   o25_top?: boolean | null;
+  // owner-only: an Over 0.5 pick the model reads as low-scoring (Over 2.5 <= 46%) — a strong Under 3.5
+  u35_top?: boolean | null;
 };
 
 // "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
@@ -445,6 +447,16 @@ function Item({
                   title="The model also rates this a decent Over 2.5 (>= 70%, ~65% historically). Bigger odds if you want to take it."
                 >
                   🔼 Over 2.5
+                </span>
+              )}
+              {/* Under-3.5 chip (owner-only): an Over 0.5 pick the model reads as low-scoring
+                  (both-teams-scoring < 50%) — a strong Under 3.5 (~75% historically). Read-time. */}
+              {p.u35_top && (
+                <span
+                  className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-flood-deep"
+                  title="The model reads this a low-scoring game (both teams scoring < 50%) — a strong Under 3.5 (~75% historically)."
+                >
+                  🔽 Under 3.5
                 </span>
               )}
               {/* the card % is the MODEL'S CHANCE for this exact bet (the explainer's "put

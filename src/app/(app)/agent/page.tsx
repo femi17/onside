@@ -135,6 +135,20 @@ export default async function AgentPage() {
     return top;
   })();
 
+  // 🔽 Under 3.5 indicator (owner-only): the mirror of the Over 2.5 chip — among the admin's Over 0.5
+  // picks, flag games whose model both-teams-scoring chance is < 0.50. These profile as strong
+  // Under 3.5 (~75.5% historically at this bar, n=633). Read-time, admin-private, per-game.
+  const u35Top = (() => {
+    const top = new Set<string>();
+    if (!isAdmin) return top;
+    for (const r of kept) {
+      if ((r.market_key as string) !== "over_0_5") continue;
+      const btts = (r.criteria as { reasons?: { model?: { btts?: number } } } | null)?.reasons?.model?.btts;
+      if (btts != null && Number(btts) < 0.50) top.add(r.id as string);
+    }
+    return top;
+  })();
+
   const picks: AgentPick[] = kept.map((r: Record<string, unknown>) => ({
     id: r.id as string,
     market_key: (r.market_key as string) ?? null,
@@ -161,6 +175,7 @@ export default async function AgentPage() {
     odds_src: ((r.criteria as { odds_src?: string } | null)?.odds_src as AgentPick["odds_src"]) ?? null,
     o15_upgrade: ((r.criteria as { o15_upgrade?: boolean } | null)?.o15_upgrade) ?? null,
     o25_top: o25Top.has(r.id as string),
+    u35_top: u35Top.has(r.id as string),
     delivered_at: (r.delivered_at as string) ?? null,
     onside_score: onsideScore(r),
   }));
