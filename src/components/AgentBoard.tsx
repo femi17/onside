@@ -450,11 +450,11 @@ function Item({
                 </span>
               )}
               {/* Under-3.5 chip (owner-only): an Over 0.5 pick the model reads as low-scoring
-                  (both-teams-scoring < 50%) — a strong Under 3.5 (~75% historically). Read-time. */}
+                  (both-teams-scoring < 45%) — a strong Under 3.5 (~79% historically). Read-time. */}
               {p.u35_top && (
                 <span
                   className="flex-none rounded bg-flood/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-flood-deep"
-                  title="The model reads this a low-scoring game (both teams scoring < 50%) — a strong Under 3.5 (~75% historically)."
+                  title="The model reads this a low-scoring game (both teams scoring < 45%) — a strong Under 3.5 (~79% historically)."
                 >
                   🔽 Under 3.5
                 </span>

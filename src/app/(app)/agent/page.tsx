@@ -136,15 +136,15 @@ export default async function AgentPage() {
   })();
 
   // 🔽 Under 3.5 indicator (owner-only): the mirror of the Over 2.5 chip — among the admin's Over 0.5
-  // picks, flag games whose model both-teams-scoring chance is < 0.50. These profile as strong
-  // Under 3.5 (~75.5% historically at this bar, n=633). Read-time, admin-private, per-game.
+  // picks, flag games whose model both-teams-scoring chance is < 0.45. These profile as strong
+  // Under 3.5 (~78.7% historically at this bar, n=207). Read-time, admin-private, per-game.
   const u35Top = (() => {
     const top = new Set<string>();
     if (!isAdmin) return top;
     for (const r of kept) {
       if ((r.market_key as string) !== "over_0_5") continue;
       const btts = (r.criteria as { reasons?: { model?: { btts?: number } } } | null)?.reasons?.model?.btts;
-      if (btts != null && Number(btts) < 0.50) top.add(r.id as string);
+      if (btts != null && Number(btts) < 0.45) top.add(r.id as string);
     }
     return top;
   })();
