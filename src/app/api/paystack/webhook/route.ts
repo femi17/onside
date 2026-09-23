@@ -61,9 +61,14 @@ export async function POST(req: Request) {
     // match on our own metadata when present (most reliable), else the Paystack customer.
     case "charge.success": {
       if (!planCode) break; // non-subscription charges carry no plan
+      // A renewal charge can land AFTER the hourly downgrade cron has already dropped a lapsed
+      // account to `free`, so restore `plan` here too — not just the date. Without this the customer
+      // keeps paying but stays on free (this bug left 2 renewed users stuck on free).
+      const tier = await tierForPlanCode(planCode);
       const until = new Date();
       until.setMonth(until.getMonth() + 1);
-      const patch = { plan_until: until.toISOString() };
+      const patch: Record<string, unknown> = { plan_until: until.toISOString() };
+      if (tier) patch.plan = tier;
       if (metaUserId) await db.from("profiles").update(patch).eq("id", metaUserId);
       else if (customerCode) await db.from("profiles").update(patch).eq("paystack_customer_code", customerCode);
 
@@ -78,7 +83,7 @@ export async function POST(req: Request) {
         await db.from("payments").upsert(
           {
             user_id: uid,
-            plan: (await tierForPlanCode(planCode)) ?? null,
+            plan: tier ?? null,
             amount_kobo: data.amount,
             currency: data.currency ?? "NGN",
             reference: data.reference,
