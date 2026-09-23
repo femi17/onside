@@ -165,8 +165,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       };
     });
     const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
-    const graded = legs.every((l) => l.hit != null && l.odds != null);
-    const result: "won" | "lost" | "pending" = !graded ? "pending" : legs.every((l) => l.hit) ? "won" : "lost";
+    // An Over 2.5 double is LOST the instant ANY leg finishes under 3 goals — a later leg can't
+    // resurrect it — so show it lost immediately even if the other game hasn't kicked off (the
+    // tracker already grades this way). Won only when every leg has hit; pending only while nothing
+    // has failed yet. Odds may be null on an un-priced leg, but that must never hold up a settled
+    // result (the old `graded` check left a lost double showing "Not started" until BOTH legs ended).
+    const result: "won" | "lost" | "pending" =
+      legs.some((l) => l.hit === false) ? "lost"
+      : legs.length > 0 && legs.every((l) => l.hit === true) ? "won"
+      : "pending";
     return { date: String(d.set_date), legs, combined, result, code: codeByDate.get(String(d.set_date)) ?? null };
   });
 
