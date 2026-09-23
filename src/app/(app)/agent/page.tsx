@@ -120,36 +120,17 @@ export default async function AgentPage() {
   const rows = isAdmin ? (data ?? []) : (data ?? []).filter((r: Record<string, unknown>) => (r.market_key as string) !== "over_0_5");
   const kept: Record<string, unknown>[] = rows.filter((r: Record<string, unknown>) => !guideFails(r));
 
-  // School selection (owner only): among the Over 0.5 picks, mark the day's TWO highest Over-2.5 games
-  // by model over25 — deduped per FIXTURE so re-runs never cost a slot, and always two distinct games
-  // per day. Farmed as the best 2-of-~50 for an Over 2.5 double (~89% legs / ~79% double).
+  // 🔼 Over 2.5 indicator (owner-only): among the admin's Over 0.5 picks, flag EVERY game whose model
+  // Over 2.5 chance is >= 0.70. Owner-chosen bar with eyes open — historically ~65% land Over 2.5 at
+  // this band (a bigger-odds nudge, NOT a banker). Read-time only; the Over 0.5 signal is admin-private
+  // (non-admin rows already filtered above). Empty for non-admins so no user ever sees the chip.
   const o25Top = (() => {
     const top = new Set<string>();
     if (!isAdmin) return top;
-    const byDay = new Map<string, Map<number, { o25: number; ids: string[] }>>();
     for (const r of kept) {
       if ((r.market_key as string) !== "over_0_5") continue;
       const o25 = (r.criteria as { reasons?: { model?: { over25?: number } } } | null)?.reasons?.model?.over25;
-      const da = r.delivered_at as string | null;
-      const fid = (r.fixtures as { id?: number } | null)?.id;
-      if (o25 == null || !da || fid == null) continue;
-      const dayKey = new Date(da).toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
-      let fixMap = byDay.get(dayKey);
-      if (!fixMap) {
-        fixMap = new Map();
-        byDay.set(dayKey, fixMap);
-      }
-      const cur = fixMap.get(fid);
-      if (cur) {
-        cur.ids.push(r.id as string);
-        cur.o25 = Math.max(cur.o25, Number(o25));
-      } else fixMap.set(fid, { o25: Number(o25), ids: [r.id as string] });
-    }
-    for (const fixMap of byDay.values()) {
-      [...fixMap.values()]
-        .sort((a, b) => b.o25 - a.o25)
-        .slice(0, 2)
-        .forEach((f) => f.ids.forEach((id) => top.add(id)));
+      if (o25 != null && Number(o25) >= 0.70) top.add(r.id as string);
     }
     return top;
   })();

@@ -437,12 +437,12 @@ function Item({
           </div>
           <div className="mt-0.5 min-w-0">
             <div className="flex items-center gap-1.5">
-              {/* Over-2.5 chip: one of the day's two highest Over-2.5 games among the Over 0.5 picks —
-                  the strongest goals leans in the feed, ranked at read time (see agent/page.tsx). */}
+              {/* Over-2.5 chip (owner-only): an Over 0.5 pick the model also rates a decent Over 2.5
+                  (>= 70%, ~65% historically) — a bigger-odds option, ranked at read time (see agent/page.tsx). */}
               {p.o25_top && (
                 <span
                   className="flex-none rounded bg-grass-deep/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-grass-deep"
-                  title="One of today's two strongest Over 2.5 games in this feed — the model rates goals highest here."
+                  title="The model also rates this a decent Over 2.5 (>= 70%, ~65% historically). Bigger odds if you want to take it."
                 >
                   🔼 Over 2.5
                 </span>
