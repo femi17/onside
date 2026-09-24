@@ -29,7 +29,9 @@ type StratRow = {
 // Assemble the flat ranked rows into SchoolRecord[] + today's card — the SAME shape the onside_double
 // deck uses — so the forward-test lab renders through the real SchoolMember view. Over-line legs clear
 // monotonically (WON the instant the goals land); DC 1X settles only at FT (a lead can be lost).
-function buildStrategy(rows: StratRow[], expectN: number, todayLagos: string): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
+// minN/maxN let a line be either a fixed-leg acca (over25: 2/2, dc1x: 3/3) or a variable "min 2, up to 3"
+// lock acca — take up to maxN of the day's ranked legs, but only count the day if at least minN qualified.
+function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
   const byDay = new Map<string, StratRow[]>();
   for (const r of rows) {
     const arr = byDay.get(r.dt);
@@ -38,8 +40,8 @@ function buildStrategy(rows: StratRow[], expectN: number, todayLagos: string): {
   }
   const mapped: SchoolRecord[] = [];
   for (const [dt, dayRows] of byDay) {
-    const legsRows = dayRows.slice().sort((a, b) => a.rnk - b.rnk).slice(0, expectN);
-    if (legsRows.length < expectN) continue; // only a full N-leg acca counts as a day
+    const legsRows = dayRows.slice().sort((a, b) => a.rnk - b.rnk).slice(0, maxN);
+    if (legsRows.length < minN) continue; // need at least minN legs to form the day's acca
     const legs: SchoolLeg[] = legsRows.map((r) => {
       const statusStr = r.status ?? "";
       const finished = FINISHED.includes(statusStr);
@@ -51,7 +53,9 @@ function buildStrategy(rows: StratRow[], expectN: number, todayLagos: string): {
       const hit =
         r.market === "dc_1x"
           ? finished && h != null && a != null ? h >= a : null // DC 1X: home win or draw, judged at FT
-          : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
+          : r.market === "home"
+            ? finished && h != null && a != null ? h > a : null // Home Win: judged at FT
+            : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
       const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
       const odds = prob ? Math.round((1 / prob) * 100) / 100 : null;
       return {
@@ -293,12 +297,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       supabase.from("school_config").select("default_strategy").maybeSingle(),
     ]);
     const rows = (stratRows ?? []) as StratRow[];
-    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, todayLagos);
-    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, todayLagos);
+    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos);
+    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos);
+    // Lock acca: bettable DC 1X locks (≤1.35), 2–3 legs, crushing favourites swapped to Home Win.
+    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos);
     strategyViews = [
       { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
       { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
       { key: "dc1x_treble", name: "DC 1X · treble", noun: "treble", records: dc1x.records, upcoming: dc1x.upcoming },
+      { key: "lock_acca", name: "Lock Acca · 1X + Home", noun: "acca", records: lock.records, upcoming: lock.upcoming },
     ];
     defaultKey = (cfg?.default_strategy as string) ?? "school_double";
   }

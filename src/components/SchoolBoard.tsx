@@ -42,7 +42,7 @@ const MARKET_LINE: Record<string, number> = { over_1_5: 1.5, over_2_5: 2.5, over
 // Display labels for every leg market a slip can carry — the over-lines (admin-settable) PLUS the
 // candidate School lines shown in the forward-test lab (Over 0.5 pool, Double Chance 1X). The admin
 // LegEditor dropdown still only offers the over-lines (MARKETS); this map is display-only.
-const LEG_LABEL: Record<string, string> = { ...MARKET_LABEL, over_0_5: "Over 0.5", dc_1x: "Double Chance 1X" };
+const LEG_LABEL: Record<string, string> = { ...MARKET_LABEL, over_0_5: "Over 0.5", dc_1x: "Double Chance 1X", home: "Home Win" };
 
 // Add today's double to the user's normal tracker so they can follow the games there (deduped against
 // any bet they already track for the same fixture/line). Each leg goes in as its line (Over 2.5/3.5…).
