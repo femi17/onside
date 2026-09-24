@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SchoolFunnel, SchoolMember, type SchoolRecord } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
+import SchoolStrategyCards from "@/components/SchoolStrategyCards";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
@@ -215,6 +216,12 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   const profitUnits = records.reduce((a, r) => a + (r.result === "won" ? r.combined - 1 : -1), 0);
   const roi = records.length ? Math.round((profitUnits / records.length) * 100) : 0;
 
+  // Owner-only forward-test lab: the two candidate School lines (Over 2.5 double + DC 1X treble)
+  // tracked separately since Sep 7. RPC is admin-gated (returns {strategies:[]} otherwise).
+  const { data: stratRecords } = isAdmin
+    ? await supabase.rpc("school_strategy_records")
+    : { data: null };
+
   // Members (and admins) get the dashboard; everyone else gets the induction funnel.
   if (admitted) {
     return (
@@ -224,6 +231,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <SchoolAdmin />
           </div>
         )}
+        {isAdmin && <SchoolStrategyCards data={stratRecords as Parameters<typeof SchoolStrategyCards>[0]["data"]} />}
         <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
