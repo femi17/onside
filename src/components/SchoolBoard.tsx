@@ -39,6 +39,10 @@ const MARKETS: Array<[string, string]> = [
 ];
 const MARKET_LABEL: Record<string, string> = Object.fromEntries(MARKETS);
 const MARKET_LINE: Record<string, number> = { over_1_5: 1.5, over_2_5: 2.5, over_3_5: 3.5, over_4_5: 4.5 };
+// Display labels for every leg market a slip can carry — the over-lines (admin-settable) PLUS the
+// candidate School lines shown in the forward-test lab (Over 0.5 pool, Double Chance 1X). The admin
+// LegEditor dropdown still only offers the over-lines (MARKETS); this map is display-only.
+const LEG_LABEL: Record<string, string> = { ...MARKET_LABEL, over_0_5: "Over 0.5", dc_1x: "Double Chance 1X" };
 
 // Add today's double to the user's normal tracker so they can follow the games there (deduped against
 // any bet they already track for the same fixture/line). Each leg goes in as its line (Over 2.5/3.5…).
@@ -235,7 +239,7 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] font-bold leading-tight text-ink">{l.game}</span>
                   <span className="mt-0.5 block truncate text-[11px] leading-tight">
-                    {!admin && <span className="font-bold text-flood-deep">{MARKET_LABEL[l.market] ?? "Over 2.5"}</span>}
+                    {!admin && <span className="font-bold text-flood-deep">{LEG_LABEL[l.market] ?? "Over 2.5"}</span>}
                     {l.league && <span className="text-ink-mute">{admin ? "" : " · "}{l.league}</span>}
                   </span>
                 </span>
@@ -490,6 +494,10 @@ export function SchoolMember({
   todayPosted = false,
   userId,
   todayTracked = false,
+  eyebrow = "Onside School · Member",
+  heading = "Welcome back.",
+  noun = "double",
+  hideTrack = false,
 }: {
   records: SchoolRecord[];
   upcoming: SchoolRecord | null;
@@ -497,6 +505,12 @@ export function SchoolMember({
   todayPosted?: boolean;
   userId: string;
   todayTracked?: boolean;
+  // lab reuse: the forward-test wrapper feeds a candidate line's records through this same view but
+  // relabels the header, swaps "double"→"treble", and hides the personal "add to my tracker" button.
+  eyebrow?: string;
+  heading?: string;
+  noun?: string;
+  hideTrack?: boolean;
 }) {
   const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
@@ -517,8 +531,8 @@ export function SchoolMember({
 
   return (
     <div className="mx-auto max-w-[960px] px-5 pt-6 md:px-8">
-      <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-flood">Onside School · Member</p>
-      <h1 className="mt-1 font-disp text-2xl font-bold tracking-tight text-chalk">Welcome back.</h1>
+      <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-flood">{eyebrow}</p>
+      <h1 className="mt-1 font-disp text-2xl font-bold tracking-tight text-chalk">{heading}</h1>
 
       {/* stake control */}
       <div className="mt-4">
@@ -557,7 +571,7 @@ export function SchoolMember({
         {/* today's game */}
         <div>
           <p className="mb-2 px-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-onpitch-mute">
-            Today&apos;s double{admin && upcoming && !todayPosted ? " · draft — only you" : ""}
+            Today&apos;s {noun}{admin && upcoming && !todayPosted ? " · draft — only you" : ""}
           </p>
           {!upcoming ? (
             <p className="rounded-2xl border border-dashed border-white/15 bg-pitch-2 p-6 text-center text-sm text-onpitch-mute">
@@ -575,7 +589,7 @@ export function SchoolMember({
               Today&apos;s double drops before kickoff — check back soon.
             </p>
           )}
-          {upcoming && (admin || todayPosted) && <TrackDouble legs={upcoming.legs} userId={userId} initialDone={todayTracked} />}
+          {!hideTrack && upcoming && (admin || todayPosted) && <TrackDouble legs={upcoming.legs} userId={userId} initialDone={todayTracked} />}
         </div>
 
         {/* the record */}

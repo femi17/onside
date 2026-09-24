@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { SchoolFunnel, SchoolMember, type SchoolRecord } from "@/components/SchoolBoard";
+import { SchoolFunnel, SchoolMember, type SchoolRecord, type SchoolLeg } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
-import SchoolStrategyLab from "@/components/SchoolStrategyLab";
+import SchoolStrategyDeck, { type StrategyView } from "@/components/SchoolStrategyDeck";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
@@ -17,6 +17,71 @@ const FINISHED = ["FT", "AET", "PEN"];
 const LIVE = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];
 // over-lines only: goals needed to clear each line (Over 2.5 -> 3, Over 3.5 -> 4, …)
 const NEED: Record<string, number> = { over_0_5: 1, over_1_5: 2, over_2_5: 3, over_3_5: 4, over_4_5: 5 };
+
+// One flat leg row from school_strategy_legs() (the two candidate School lines, ranked top-N per day).
+type StratRow = {
+  strategy: string; dt: string; fixture_id: number; rnk: number; market: string; prob: number | null;
+  home_team: string; away_team: string; ft_home: number | null; ft_away: number | null;
+  home_goals: number | null; away_goals: number | null; status: string | null; elapsed: number | null;
+  updated_at: string | null; kickoff_utc: string | null; league: string | null; flag: string | null; tier: string | null;
+};
+
+// Assemble the flat ranked rows into SchoolRecord[] + today's card — the SAME shape the onside_double
+// deck uses — so the forward-test lab renders through the real SchoolMember view. Over-line legs clear
+// monotonically (WON the instant the goals land); DC 1X settles only at FT (a lead can be lost).
+function buildStrategy(rows: StratRow[], expectN: number, todayLagos: string): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
+  const byDay = new Map<string, StratRow[]>();
+  for (const r of rows) {
+    const arr = byDay.get(r.dt);
+    if (arr) arr.push(r);
+    else byDay.set(r.dt, [r]);
+  }
+  const mapped: SchoolRecord[] = [];
+  for (const [dt, dayRows] of byDay) {
+    const legsRows = dayRows.slice().sort((a, b) => a.rnk - b.rnk).slice(0, expectN);
+    if (legsRows.length < expectN) continue; // only a full N-leg acca counts as a day
+    const legs: SchoolLeg[] = legsRows.map((r) => {
+      const statusStr = r.status ?? "";
+      const finished = FINISHED.includes(statusStr);
+      const inPlay = LIVE.includes(statusStr);
+      const h = r.ft_home ?? r.home_goals;
+      const a = r.ft_away ?? r.away_goals;
+      const curTot = h != null && a != null ? h + a : null;
+      const need = NEED[r.market] ?? 3;
+      const hit =
+        r.market === "dc_1x"
+          ? finished && h != null && a != null ? h >= a : null // DC 1X: home win or draw, judged at FT
+          : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
+      const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
+      const odds = prob ? Math.round((1 / prob) * 100) / 100 : null;
+      return {
+        game: `${r.home_team} v ${r.away_team}`,
+        fixtureId: r.fixture_id,
+        market: r.market,
+        odds,
+        oddsReal: false, // model estimate until real prices bank in
+        score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
+        hit,
+        elapsed: inPlay ? r.elapsed : null,
+        status: statusStr || null,
+        updatedAt: r.updated_at,
+        finished,
+        kickoff: r.kickoff_utc,
+        league: r.league,
+        flag: r.flag,
+        tier: r.tier,
+      };
+    });
+    const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
+    const result: "won" | "lost" | "pending" =
+      legs.some((l) => l.hit === false) ? "lost" : legs.every((l) => l.hit === true) ? "won" : "pending";
+    mapped.push({ date: dt, legs, combined, result });
+  }
+  mapped.sort((x, y) => (x.date < y.date ? 1 : -1)); // newest first
+  const records = mapped.filter((r) => r.result !== "pending").reverse(); // oldest → newest for cumulative P/L
+  const upcoming = mapped.find((r) => r.date === todayLagos) ?? mapped.find((r) => r.result === "pending") ?? null;
+  return { records, upcoming };
+}
 
 export default async function SchoolPage({ searchParams }: { searchParams: Promise<{ preview?: string }> }) {
   const supabase = await createClient();
@@ -216,11 +281,27 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   const profitUnits = records.reduce((a, r) => a + (r.result === "won" ? r.combined - 1 : -1), 0);
   const roi = records.length ? Math.round((profitUnits / records.length) * 100) : 0;
 
-  // Owner-only forward-test lab: the two candidate School lines (Over 2.5 double + DC 1X treble)
-  // tracked separately since Sep 7. RPC is admin-gated (returns {strategies:[]} otherwise).
-  const { data: stratRecords } = isAdmin
-    ? await supabase.rpc("school_strategy_records")
-    : { data: null };
+  // Owner-only forward-test lab: the 3 candidate School lines, each rendered through the real member
+  // deck. Line 1 = the live Onside Double (records/upcoming above). Lines 2-3 come from the admin-gated
+  // school_strategy_legs() RPC (empty for non-admins). A stored default (school_config) picks the active
+  // tab on load and is what the daily DM / a future member view follows.
+  let strategyViews: StrategyView[] = [];
+  let defaultKey = "school_double";
+  if (isAdmin) {
+    const [{ data: stratRows }, { data: cfg }] = await Promise.all([
+      supabase.rpc("school_strategy_legs"),
+      supabase.from("school_config").select("default_strategy").maybeSingle(),
+    ]);
+    const rows = (stratRows ?? []) as StratRow[];
+    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, todayLagos);
+    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, todayLagos);
+    strategyViews = [
+      { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
+      { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
+      { key: "dc1x_treble", name: "DC 1X · treble", noun: "treble", records: dc1x.records, upcoming: dc1x.upcoming },
+    ];
+    defaultKey = (cfg?.default_strategy as string) ?? "school_double";
+  }
 
   // Members (and admins) get the dashboard; everyone else gets the induction funnel.
   if (admitted) {
@@ -231,9 +312,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
               <SchoolAdmin />
             </div>
-            {/* Admin's School view = the strategy lab: tabs pick the line, everything below is that
-                line's profit header + full day-by-day record. Members keep the classic deck below. */}
-            <SchoolStrategyLab data={stratRecords as Parameters<typeof SchoolStrategyLab>[0]["data"]} />
+            {/* Admin's School view = the strategy lab: tabs pick the line; the WHOLE board below is that
+                line rendered through the real member deck (stake input + swipe betslips). ★ sets the default. */}
+            <SchoolStrategyDeck strategies={strategyViews} defaultKey={defaultKey} userId={user.id} />
           </>
         ) : (
           <SchoolMember records={records} upcoming={upcoming} admin={false} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
