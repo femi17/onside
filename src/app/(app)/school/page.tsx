@@ -226,13 +226,18 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   if (admitted) {
     return (
       <div className="pb-24">
-        {isAdmin && (
-          <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
-            <SchoolAdmin />
-          </div>
+        {isAdmin ? (
+          <>
+            <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
+              <SchoolAdmin />
+            </div>
+            {/* Admin's School view = the strategy lab: tabs pick the line, everything below is that
+                line's profit header + full day-by-day record. Members keep the classic deck below. */}
+            <SchoolStrategyLab data={stratRecords as Parameters<typeof SchoolStrategyLab>[0]["data"]} />
+          </>
+        ) : (
+          <SchoolMember records={records} upcoming={upcoming} admin={false} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
         )}
-        {isAdmin && <SchoolStrategyLab data={stratRecords as Parameters<typeof SchoolStrategyLab>[0]["data"]} />}
-        <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
     );
