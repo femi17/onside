@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SchoolFunnel, SchoolMember, type SchoolRecord } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
-import SchoolStrategyCards from "@/components/SchoolStrategyCards";
+import SchoolStrategyLab from "@/components/SchoolStrategyLab";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
@@ -231,7 +231,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             <SchoolAdmin />
           </div>
         )}
-        {isAdmin && <SchoolStrategyCards data={stratRecords as Parameters<typeof SchoolStrategyCards>[0]["data"]} />}
+        {isAdmin && <SchoolStrategyLab data={stratRecords as Parameters<typeof SchoolStrategyLab>[0]["data"]} />}
         <SchoolMember records={records} upcoming={upcoming} admin={isAdmin} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
