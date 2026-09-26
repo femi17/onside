@@ -15,6 +15,8 @@ export const dynamic = "force-dynamic"; // the record grows daily
 
 const FINISHED = ["FT", "AET", "PEN"];
 const LIVE = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];
+// never-played statuses — a leg in one of these is VOIDED from a slip (opt-in per strategy)
+const VOID = ["PST", "CANC", "ABD"];
 // over-lines only: goals needed to clear each line (Over 2.5 -> 3, Over 3.5 -> 4, …)
 const NEED: Record<string, number> = { over_0_5: 1, over_1_5: 2, over_2_5: 3, over_3_5: 4, over_4_5: 5 };
 
@@ -31,7 +33,7 @@ type StratRow = {
 // monotonically (WON the instant the goals land); DC 1X settles only at FT (a lead can be lost).
 // minN/maxN let a line be either a fixed-leg acca (over25: 2/2, dc1x: 3/3) or a variable "min 2, up to 3"
 // lock acca — take up to maxN of the day's ranked legs, but only count the day if at least minN qualified.
-function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
+function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string, voidPostponed = false): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
   const byDay = new Map<string, StratRow[]>();
   for (const r of rows) {
     const arr = byDay.get(r.dt);
@@ -39,7 +41,10 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
     else byDay.set(r.dt, [r]);
   }
   const mapped: SchoolRecord[] = [];
-  for (const [dt, dayRows] of byDay) {
+  for (const [dt, allRows] of byDay) {
+    // void postponed/cancelled/abandoned legs (they never settle) so the day grades on the rest — a
+    // rained-off leg shouldn't freeze the slip forever. Only the combined tab opts into this.
+    const dayRows = voidPostponed ? allRows.filter((r) => !VOID.includes(r.status ?? "")) : allRows;
     const legsRows = dayRows.slice().sort((a, b) => a.rnk - b.rnk).slice(0, maxN);
     if (legsRows.length < minN) continue; // need at least minN legs to form the day's acca
     const legs: SchoolLeg[] = legsRows.map((r) => {
@@ -303,12 +308,16 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos);
     // Cascade: same locks across ALL leagues, per-leg market 1X → Home (if 1X<1.20) → Over 2.5 (if home<1.10).
     const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos);
+    // Combined: DC 1X treble ∪ Lock Acca merged into one slip/day (variable legs — take all). Postponed
+    // legs void so the day grades on the rest (e.g. Sep 13's rained-off FAS v Alianza settles on its others).
+    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true);
     strategyViews = [
       { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
       { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
       { key: "dc1x_treble", name: "DC 1X · treble", noun: "treble", records: dc1x.records, upcoming: dc1x.upcoming },
       { key: "lock_acca", name: "Lock Acca · 1X + Home", noun: "acca", records: lock.records, upcoming: lock.upcoming },
       { key: "lock_cascade", name: "Cascade · 1X→Home→O2.5", noun: "acca", records: cascade.records, upcoming: cascade.upcoming },
+      { key: "dc_lock_combo", name: "DC 1X + Lock Acca · combined", noun: "acca", records: combo.records, upcoming: combo.upcoming },
     ];
     defaultKey = (cfg?.default_strategy as string) ?? "school_double";
   }
