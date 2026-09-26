@@ -20,6 +20,15 @@ const VOID = ["PST", "CANC", "ABD"];
 // over-lines only: goals needed to clear each line (Over 2.5 -> 3, Over 3.5 -> 4, …)
 const NEED: Record<string, number> = { over_0_5: 1, over_1_5: 2, over_2_5: 3, over_3_5: 4, over_4_5: 5 };
 
+// The model outputs FAIR (no-vig) probabilities; a naive 1/prob therefore reads too long vs a real
+// book, which prices with an overround (our DC 1X on a mid favourite showed ~1.28 where the book had
+// ~1.21). Nudge the implied prob up by a typical ~6% margin (capped so a heavy favourite can't imply
+// an unquotable sub-1.03 price) so model estimates sit closer to the truth. Real admin-entered odds
+// (school_leg_odds) are never routed through this — only model estimates.
+const ODDS_MARGIN = 1.06;
+const modelOdds = (prob: number | null | undefined): number | null =>
+  prob != null && prob > 0 ? Math.round((1 / Math.min(0.97, prob * ODDS_MARGIN)) * 100) / 100 : null;
+
 // One flat leg row from school_strategy_legs() (the two candidate School lines, ranked top-N per day).
 type StratRow = {
   strategy: string; dt: string; fixture_id: number; rnk: number; market: string; prob: number | null;
@@ -62,7 +71,7 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
             ? finished && h != null && a != null ? h > a : null // Home Win: judged at FT
             : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
       const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
-      const odds = prob ? Math.round((1 / prob) * 100) / 100 : null;
+      const odds = modelOdds(prob);
       return {
         game: `${r.home_team} v ${r.away_team}`,
         fixtureId: r.fixture_id,
@@ -207,7 +216,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const market = pick?.market ?? "over_2_5";
       const need = NEED[market] ?? 3;
       // odds: real (admin-entered) wins; else the model estimate — which only prices Over 2.5
-      const estOdds = market === "over_2_5" && over25 && over25 > 0 ? Math.round((1 / over25) * 100) / 100 : null;
+      const estOdds = market === "over_2_5" ? modelOdds(over25) : null;
       const real = pick?.odds ?? null;
       const odds = real ?? estOdds;
       const oddsReal = real != null;
