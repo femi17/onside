@@ -313,6 +313,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     const rows = (stratRows ?? []) as StratRow[];
     const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos);
     const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos);
+    // Home Banker: the 2 strongest home favourites to win outright (all leagues). Backtest 14-4 / +52%
+    // fair (~+36% at real odds) over Sep 7+, longest losing streak 2 — forward-testing it live.
+    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos);
     // Lock acca: bettable DC 1X locks (≤1.35), 2–3 legs, crushing favourites swapped to Home Win.
     const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos);
     // Cascade: same locks across ALL leagues, per-leg market 1X → Home (if 1X<1.20) → Over 2.5 (if home<1.10).
@@ -324,6 +327,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
       { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
       { key: "dc1x_treble", name: "DC 1X · treble", noun: "treble", records: dc1x.records, upcoming: dc1x.upcoming },
+      { key: "home_banker", name: "Home Banker · double", noun: "double", records: homeBanker.records, upcoming: homeBanker.upcoming },
       { key: "lock_acca", name: "Lock Acca · 1X + Home", noun: "acca", records: lock.records, upcoming: lock.upcoming },
       { key: "lock_cascade", name: "Cascade · 1X→Home→O2.5", noun: "acca", records: cascade.records, upcoming: cascade.upcoming },
       { key: "dc_lock_combo", name: "DC 1X + Lock Acca · combined", noun: "acca", records: combo.records, upcoming: combo.upcoming },
