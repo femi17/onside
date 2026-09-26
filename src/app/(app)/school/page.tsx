@@ -342,7 +342,14 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
             </div>
             {/* Admin's School view = the strategy lab: tabs pick the line; the WHOLE board below is that
                 line rendered through the real member deck (stake input + swipe betslips). ★ sets the default. */}
-            <SchoolStrategyDeck strategies={strategyViews} defaultKey={defaultKey} userId={user.id} />
+            <SchoolStrategyDeck
+              strategies={strategyViews}
+              defaultKey={defaultKey}
+              userId={user.id}
+              admin={isAdmin}
+              todayPosted={todayPosted}
+              todayTracked={todayTracked}
+            />
           </>
         ) : (
           <SchoolMember records={records} upcoming={upcoming} admin={false} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />

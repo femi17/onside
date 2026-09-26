@@ -22,10 +22,16 @@ export default function SchoolStrategyDeck({
   strategies,
   defaultKey,
   userId,
+  admin = false,
+  todayPosted = false,
+  todayTracked = false,
 }: {
   strategies: StrategyView[];
   defaultKey: string;
   userId: string;
+  admin?: boolean;
+  todayPosted?: boolean;
+  todayTracked?: boolean;
 }) {
   const router = useRouter();
   const [active, setActive] = useState(Math.max(0, strategies.findIndex((s) => s.key === defaultKey)));
@@ -33,6 +39,10 @@ export default function SchoolStrategyDeck({
   const [saving, setSaving] = useState(false);
   if (!strategies.length) return null;
   const sel = strategies[Math.min(active, strategies.length - 1)];
+  // The live Onside Double is the real, editable bet — restore full admin editing (per-leg odds +
+  // outcome/line via the LegEditor) on it. The model forward-test lines are derived, so they stay
+  // read-only (nothing to persist).
+  const editable = admin && sel.key === "school_double";
 
   const makeDefault = async () => {
     setSaving(true);
@@ -88,13 +98,14 @@ export default function SchoolStrategyDeck({
         key={sel.key}
         records={sel.records}
         upcoming={sel.upcoming}
-        admin={false}
-        todayPosted
+        admin={editable}
+        todayPosted={editable ? todayPosted : true}
+        todayTracked={todayTracked}
         userId={userId}
-        eyebrow="Onside School · Forward-test"
+        eyebrow={editable ? "Onside School" : "Onside School · Forward-test"}
         heading={sel.name}
         noun={sel.noun}
-        hideTrack
+        hideTrack={!editable}
       />
     </div>
   );
