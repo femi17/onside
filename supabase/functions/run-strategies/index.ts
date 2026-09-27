@@ -606,17 +606,28 @@ async function buildModel(leagueIds: number[]): Promise<Model> {
     // silently returned only 1000 finished fixtures -> across many leagues every team was starved of
     // history, NOTHING was ever "confident", and every pick came out unpriced. Page in 1000-row
     // chunks (recency-bounded) to actually load the model.
-    const PAGE = 1000, MAX_ROWS = 40000;
+    const PAGE = 1000, MAX_PAGES = 40; // ≤40 pages × 1000 = ≤40000 rows, same cap as the old OFFSET loop
     const sinceIso = new Date(Date.now() - 365 * 86400000).toISOString();
     const acc: any[] = [];
-    for (let off = 0; off < MAX_ROWS; off += PAGE) {
-      const { data, error } = await sb.from("fixtures")
+    // KEYSET (seek) pagination, not OFFSET. OFFSET made every page sort offset+limit rows, spilling to
+    // disk past work_mem (~2.3MB/page × 40 pages × every sharded run = the top Disk-IO consumer). Seeking
+    // by the last row's (kickoff_utc, id) keeps each page a bounded top-N (no temp spill) and rides
+    // fixtures_kickoff_desc_id_idx. The ORDER BY is a TOTAL order (id is unique), so the row set is
+    // byte-identical to the old OFFSET paging — verified against the DB before shipping.
+    let curK: string | null = null, curId: number | null = null;
+    for (let i = 0; i < MAX_PAGES; i++) {
+      let q = sb.from("fixtures")
         .select("id,league_id,home_team_id,away_team_id,ft_home,ft_away,home_goals,away_goals,kickoff_utc")
         .in("league_id", leagueIds).in("status", FINISHED).gte("kickoff_utc", sinceIso)
         .order("kickoff_utc", { ascending: false }).order("id", { ascending: false })
-        .range(off, off + PAGE - 1);
+        .limit(PAGE);
+      // rows strictly after the last one in (kickoff_utc DESC, id DESC) order
+      if (curK != null && curId != null) q = q.or(`kickoff_utc.lt.${curK},and(kickoff_utc.eq.${curK},id.lt.${curId})`);
+      const { data, error } = await q;
       if (error || !data || !data.length) break;
       acc.push(...data);
+      const last = data[data.length - 1] as { kickoff_utc: string; id: number };
+      curK = last.kickoff_utc; curId = last.id;
       if (data.length < PAGE) break;
     }
     // xG per fixture (xg_v1, backtested 2026-08-29: walk-forward on 184K matches, α=1.0 fitted on
@@ -781,16 +792,22 @@ const STAT_SHRINK = 6, STAT_MIN_N = 3, STAT_HALF_LIFE = 120;
 type StatRates = { forr: number; ag: number; n: number };
 type StatModel = { lgH: Map<number, number>; lgA: Map<number, number>; gH: number; gA: number; team: Map<number, StatRates> } | null;
 async function buildStatModels(): Promise<{ corners: StatModel; cards: StatModel }> {
-  const PAGE = 1000, MAX_ROWS = 15000;
+  const PAGE = 1000, MAX_PAGES = 15; // ≤15 pages × 1000 = ≤15000 rows, same cap as the old OFFSET loop
   const acc: any[] = [];
-  for (let off = 0; off < MAX_ROWS; off += PAGE) {
-    const { data, error } = await sb.from("fixture_stats")
-      .select("corners_home,corners_away,stats,fixtures!inner(league_id,home_team_id,away_team_id,kickoff_utc,status)")
+  // KEYSET pagination (see the model-build note) — OFFSET on this fixture_stats⋈fixtures join sorted the
+  // whole prefix to disk each page. fixture_id is unique, so seeking by it yields the identical row set.
+  let curFid: number | null = null;
+  for (let i = 0; i < MAX_PAGES; i++) {
+    let q = sb.from("fixture_stats")
+      .select("fixture_id,corners_home,corners_away,stats,fixtures!inner(league_id,home_team_id,away_team_id,kickoff_utc,status)")
       .in("fixtures.status", FINISHED)
       .order("fixture_id", { ascending: false })
-      .range(off, off + PAGE - 1);
+      .limit(PAGE);
+    if (curFid != null) q = q.lt("fixture_id", curFid);
+    const { data, error } = await q;
     if (error || !data || !data.length) break;
     acc.push(...data);
+    curFid = (data[data.length - 1] as { fixture_id: number }).fixture_id;
     if (data.length < PAGE) break;
   }
   const decay = Math.LN2 / (STAT_HALF_LIFE * 86400000);
@@ -1534,6 +1551,29 @@ async function bookmakersFor(fixtureId: number, key: string): Promise<any[]> {
     return bms;
   } catch { oddsCache.set(fixtureId, []); return []; }
 }
+// ---------- matchup-fit re-rank (reduce-the-cut) ----------
+// Maps an agent's market_key to the matchup_fit() jsonb key. matchup_fit() combines BOTH teams'
+// attack/defence (team_profile) into a transparent per-market probability. Used ONLY to re-order the
+// already-gated candidates so the games whose BOTH teams best fit the chosen outcome fill the visible
+// N — it never adds a pick that failed the mandatory gates.
+const MATCHUP_FIT_KEY: Record<string, string> = {
+  over_1_5: "over_1_5", over_2_5: "over_2_5", over_3_5: "over_3_5",
+  under_2_5: "under_2_5", under_3_5: "under_3_5", btts: "btts",
+  home_win: "home_win", away_win: "away_win",
+  double_chance_1x: "dc_1x", double_chance_x2: "dc_x2", double_chance_12: "dc_12",
+};
+async function matchupFitFor(fixtureIds: number[], key: string): Promise<Map<number, number>> {
+  const m = new Map<number, number>();
+  if (!fixtureIds.length) return m;
+  try {
+    const { data } = await sb.rpc("matchup_fit_batch", { p_fixtures: fixtureIds });
+    for (const r of (data ?? []) as any[]) {
+      const v = r.fit?.[key];
+      if (v != null) m.set(Number(r.fixture_id), Number(v));
+    }
+  } catch { /* non-fatal: fall back to the engine's own ranking order */ }
+  return m;
+}
 // ---------- self-calibration: does reality agree with the model's confident calls? ----------
 // Loads the stored temperature every run; once a day, measures realized calibration of the last 30
 // days' PRICED settled picks in the confident band (model_prob >= 0.6) and nudges TEMP in small
@@ -1690,7 +1730,7 @@ function hashShard(id: string, shards: number): number {
 }
 
 type Cell = { lamH: number; lamA: number; agg: Agg; agg1h?: Agg; agg2h?: Agg; confident: boolean; corn: StatLam | null; card: StatLam | null };
-type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null; model_raw?: number | null };
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null; model_raw?: number | null; bh15?: { odd: number; h1: number; h2: number } | null };
 // one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
 type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
 // the score matrix for the requested period, thinned lazily and cached on the cell
@@ -1812,8 +1852,25 @@ async function loadAutoRules(): Promise<Map<string, AutoRule[]>> {
 const MIN_SHOWN: Record<string, number> = {
   double_chance_1x: 0.80, double_chance_x2: 0.80, double_chance_12: 0.80,
   home_win_1up: 0.85, away_win_1up: 0.85,
-  under_3_5: 0.73, away_to_score: 0.75,
+  under_3_5: 0.73, home_to_score: 0.81, away_to_score: 0.81,
+  // Over 2.5 shown floor (owner-directed 2026-09-19): over25Ok gates on 3 proxy signals (Over 0.5>=98,
+  // BTTS 64-66, form-blend>=4.5) but NOT on the shown %, so the model-market midpoint could ship as low
+  // as the 0.50 confFloor. Regression-replay over 1,574 settled Over 2.5 picks: the sub-0.60 band
+  // (433 picks) landed only 50.3% — coin-flips dragging the record. Flooring shown at 0.60 lifts the
+  // Over 2.5 hit rate 63.3% -> 68.2% and keeps the calibrated 0.60-0.65 band (63.6% actual). Enforced
+  // authoritatively on all three paths (mix/priced/no-odds); a user rule can only ADD selectivity.
+  over_2_5: 0.60,
 };
+
+// 2nd-half low-line OVER odds floor (owner-directed 2026-09-15). Unlike 1st-half Over 0.5 — which is
+// model-gated (full-match Over 1.5 >=0.85) and backtests +7% EV even at ~1.37 odds — the 2nd-half
+// twin has NO validating screen, so it ships the bookmaker's tiny quotes (e.g. 2H Over 0.5 @1.16,
+// which needs ~86% to break even but lands ~80%: negative EV). Until halves are farmed, require a
+// price that covers the risk. Only 2h low-line overs are touched; FT/1H are untouched.
+const HALF_OVER_MIN_ODDS = 1.40;
+const isHalfLowLineOver = (mk: string, side: string | null, line: number | null, period: string): boolean =>
+  period === "2h" && side === "over" &&
+  ((mk === "total_goals_ou" && line != null && line <= 0.5) || mk === "over_0_5");
 
 // ---------- League standings (opt-in): live table position from API-Football ----------
 // We never store standings; the engine fetches the current table for a (league, season) once per
@@ -1844,7 +1901,7 @@ async function rankMapFor(leagueId: number, season: number | null): Promise<Map<
   return out;
 }
 
-async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false): Promise<Scored[]> {
+async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, statM: { corners: StatModel; cards: StatModel }, aggCache: Map<number, Cell>, key: string, rule: RuleParsed | null, formMap: Map<number, Form>, mem: Map<number, LeagueMem>, memM: Map<string, LeagueMem>, h2hMap: Map<string, H2H> = new Map(), cornMap: Map<number, CornForm> = new Map(), pilotTierDc = false, bhSignal = false): Promise<Scored[]> {
   // does THIS agent's rule use league standings? only then do we fetch tables (see rankMapFor)
   const needsRank = ruleTests(rule, (f) => f === "home_league_rank" || f === "away_league_rank");
   // ADMIN PILOT cells: same rates, tier-seeded Elo trajectory (see TIER_SPLIT note). Local cache —
@@ -1964,6 +2021,17 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     };
     const ho = teamOdds("home_goals_ou"), ao = teamOdds("away_goals_ou");
     return ho != null && ao != null && ho >= 2.0 && ao >= 2.0;
+  };
+  // OWNER-ONLY both-halves-Over1.5 signal (bhSignal agents): derive the "Both Halves Over 1.5 (Yes)"
+  // price = consensus 1H Over 1.5 odd × consensus 2H Over 1.5 odd. A high both-halves price means the
+  // market expects a low-scoring game → Under 3.5. Consensus read the SAME way as every other
+  // selection: median across books (medianOdd), by bet id + value. Either half missing => null (game
+  // does not qualify). Returns the derived price and the two half odds used, for the criteria stamp.
+  const bhOver15Odds = (bms: any): { odd: number; h1: number; h2: number } | null => {
+    const h1 = medianOdd(bms, 6, "Over 1.5");   // bet id 6  "Goals Over/Under First Half"
+    const h2 = medianOdd(bms, 26, "Over 1.5");  // bet id 26 "Goals Over/Under - Second Half"
+    if (h1 == null || h2 == null) return null;
+    return { odd: round2(h1 * h2), h1: round2(h1), h2: round2(h2) };
   };
   // MANDATORY Over 2.5 platform rule (owner-directed 2026-09-09): the Over 2.5 agent is governed by
   // THREE rules that each run INDEPENDENTLY — a game qualifies if it passes ANY one on its own (OR),
@@ -2227,6 +2295,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (MIN_SHOWN[chosen.mk] != null && (chosen.model_prob ?? 0) < MIN_SHOWN[chosen.mk]) continue;
       // mandatory Under 3.5 platform rule — applies even to mix/family agents that CHOSE under_3_5
       if (chosen.mk === "under_3_5" && !under35Ok(await bookmakersFor(f.id, key), chosen.model_prob)) continue;
+      // OWNER-ONLY both-halves-Over1.5 signal — on a bhSignal agent that CHOSE under_3_5, the derived
+      // both-halves Over 1.5 price must be in [5.0, 6.0] (stacks on under35Ok above). Null half => drop.
+      if (bhSignal && chosen.mk === "under_3_5") {
+        const bhc = bhOver15Odds(await bookmakersFor(f.id, key));
+        if (!bhc || bhc.odd < 5.0 || bhc.odd > 6.0) continue;
+        chosen.bh15 = bhc;
+      }
       // mandatory Over 2.5 platform rule (rules 1+3) — mix/family agents that CHOSE over_2_5; BTTS exempt
       if (chosen.mk === "over_2_5" && baseMk !== "btts" && !over25Ok(cell, hForm, aForm)) continue;
       // mandatory Over 1.5 platform rule (3 independent rules) — mix/family agents that CHOSE over_1_5
@@ -2240,8 +2315,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (chosen.mk === "double_chance_1x" && !((chosen.model_prob ?? 0) >= 0.80 || autoPass("double_chance_1x", cell) || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
       // mandatory 1UP rule (mix/family agents that CHOSE a 1UP market) — model (shown) >= 85%
       if ((chosen.mk === "home_win_1up" || chosen.mk === "away_win_1up") && (chosen.model_prob ?? 0) < 0.85) continue;
-      // away_to_score shown floor >= 75% (mix/family agents that CHOSE it)
-      if (chosen.mk === "away_to_score" && (chosen.model_prob ?? 0) < 0.75) continue;
+      // to-score shown floor >= 81% (mix/family agents that CHOSE it); MIN_SHOWN enforces it too
+      if (chosen.mk === "home_to_score" && (chosen.model_prob ?? 0) < 0.81) continue;
+      if (chosen.mk === "away_to_score" && (chosen.model_prob ?? 0) < 0.81) continue;
       // mandatory BTTS rule (mix/family agents that CHOSE btts) — New GG 64-65% band
       if (chosen.mk === "btts" && !bttsOk(cell)) continue;
       // 1st-half Under 1.5 (mix chose it): bet only when full-match Under 3.5 model prob >= 0.76
@@ -2252,6 +2328,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if ((chosen.period ?? "ft") === "1h" && chosen.side === "over"
           && ((chosen.mk === "total_goals_ou" && chosen.line === 0.5) || chosen.mk === "over_0_5")
           && !(cell.confident && overP(cell.agg, 1.5) >= 0.85)) continue;
+      // 2nd-half low-line Over odds floor (mix chose it) — see HALF_OVER_MIN_ODDS note. Cuts both
+      // low quotes and low model-implied prices (the same low-value trap). priceOf null => can't
+      // assess a price at all => left alone.
+      if (isHalfLowLineOver(chosen.mk, chosen.side ?? null, chosen.line ?? null, chosen.period ?? "ft")) {
+        const prH = priceOf(chosen.mk, chosen.side ?? null, chosen.line ?? null, await bookmakersFor(f.id, key), "2h", chosen.model_prob, chosen.market_prob);
+        if (prH && prH.odd < HALF_OVER_MIN_ODDS) continue;
+      }
       if (!passesDeferred(chosen.model_prob, chosen.market_prob, chosen.edge)) continue;
       // implicit H2H + recent-form sense checks on the market the set actually chose
       if (h2hVeto(chosen.mk, chosen.side, chosen.line ?? null, chosen.period, f, h2hPair)) continue;
@@ -2312,6 +2395,13 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", mp)) continue;
     const bms2 = await bookmakersFor(f.id, key);
     const kp = marketFor(baseCand, bms2);
+    // 2nd-half low-line Over odds floor (single-market path) — see HALF_OVER_MIN_ODDS note. Cuts
+    // both low quotes and low model-implied prices (the same low-value trap). priceOf null => can't
+    // assess a price at all => left alone (falls through to the no-odds branch below).
+    if (isHalfLowLineOver(eff.mk, eff.side, eff.line, strategy.period ?? "ft")) {
+      const prH = priceOf(eff.mk, eff.side, eff.line, bms2, "2h", mp, kp);
+      if (prH && prH.odd < HALF_OVER_MIN_ODDS) continue;
+    }
     if (kp == null) {
       // mandatory Under 3.5 rule needs bookmaker odds to verify the both-O1.5 screen — no odds => skip
       if (eff.mk === "under_3_5") continue;
@@ -2322,8 +2412,9 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
       if (eff.mk === "double_chance_1x" && !(mp >= 0.80 || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
       // mandatory 1UP floor with no odds (shown == model)
       if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && mp < 0.85) continue;
-      // away_to_score shown floor (>=75%) also applies with no odds
-      if (eff.mk === "away_to_score" && mp < 0.75) continue;
+      // to-score shown floor (>=81%) also applies with no odds (MIN_SHOWN enforces it too)
+      if (eff.mk === "home_to_score" && mp < 0.81) continue;
+      if (eff.mk === "away_to_score" && mp < 0.81) continue;
       // no odds anywhere for this game — deliver the model's own confident call as a model-only
       // pick, exactly like pickBest does for sets, instead of silently skipping it. The agent's
       // confidence_floor MUST still apply here (shown == model with no odds): the priced/mix paths
@@ -2347,20 +2438,30 @@ async function scoreAndRank(strategy: any, fixtures: Fixture[], model: Model, st
     if (MIN_SHOWN[eff.mk] != null && shownP < MIN_SHOWN[eff.mk]) continue;
     // mandatory Under 3.5 platform rule — enforced on every under_3_5 agent regardless of its own rule
     if (eff.mk === "under_3_5" && !under35Ok(bms2, shownP)) continue;
+    // OWNER-ONLY both-halves-Over1.5 signal: on a bhSignal under_3_5 agent, ADD a required band —
+    // the derived both-halves Over 1.5 price must sit in [5.0, 6.0]. Either half odd missing => skip.
+    // This stacks ON TOP of the mandatory under35Ok gate above (both must pass); a null signal drops.
+    let bhDirect: { odd: number; h1: number; h2: number } | null = null;
+    if (bhSignal && eff.mk === "under_3_5") {
+      bhDirect = bhOver15Odds(bms2);
+      if (!bhDirect || bhDirect.odd < 5.0 || bhDirect.odd > 6.0) continue;
+    }
     // mandatory Double Chance platform rule — X2: model (shown) >= 80%. 1X: model >= 80% OR (farmed
     // cross-signals 2026-09-10) away-score <= 70% (78%) OR home-score >= 90% (83.6%) — independent paths.
     if (eff.mk === "double_chance_x2" && shownP < 0.80 && !autoPass("double_chance_x2", cell)) continue;
     if (eff.mk === "double_chance_1x" && !(shownP >= 0.80 || autoPass("double_chance_1x", cell) || (cell.confident && (cell.agg.awayScore <= 0.70 || cell.agg.homeScore >= 0.90)))) continue;
     // mandatory 1UP platform rule — model (shown) >= 85% (home_win_1up 95.5% / away_win_1up 90.9% at >=80%)
     if ((eff.mk === "home_win_1up" || eff.mk === "away_win_1up") && shownP < 0.85) continue;
-    // Away-to-score shown floor (owner-directed 2026-09-10): the 70-75% band only lands ~70%; it jumps
-    // to 83%+ at >=75%. Floors away_to_score at 0.75 on top of awayScoreOk so weak structural picks drop.
-    if (eff.mk === "away_to_score" && shownP < 0.75) continue;
+    // To-score shown floor (owner-directed 2026-09-16): home & away to-score gated to >=81% shown on top
+    // of home/awayScoreOk — 74%-shown home picks (e.g. Deportivo-to-score, lost 0-1) were sinking accas.
+    // MIN_SHOWN enforces the same 0.81 authoritatively; these are the explicit per-path guards.
+    if (eff.mk === "home_to_score" && shownP < 0.81) continue;
+    if (eff.mk === "away_to_score" && shownP < 0.81) continue;
     if (bandVeto(eff.mk, eff.side, eff.line, strategy.period ?? "ft", shownP)) continue;
     if (!passesDeferred(shownP, kp, edge)) continue;
     // odds-band gate: prices off the same waterfall shown on the feed (no-op when no band set)
     if (!bandOk(eff.mk, eff.side, eff.line, (strategy.period ?? "ft") as Period, bms2, shownP, kp)) continue;
-    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: shownP, market_prob: kp, model_ver: usePilot ? "tier_v1" : "xg_v1", model_raw: shownP !== mp ? mp : null });
+    priced.push({ f, mk: eff.mk, side: eff.side, line: eff.line, edge, tier: tierOf(edge), model_prob: shownP, market_prob: kp, model_ver: usePilot ? "tier_v1" : "xg_v1", model_raw: shownP !== mp ? mp : null, ...(bhDirect ? { bh15: bhDirect } : {}) });
   }
   // memory nudges ORDER only — the min_edge bar itself stays a pure market-vs-model test.
   // league + market-family reputations stack (each clamped), so a pick of a kind EVERY agent
@@ -2456,15 +2557,17 @@ async function windowLeagueIds(fromIso: string, toIso: string): Promise<number[]
     .not("status", "in", `(${NOT_PICKABLE.join(",")})`).limit(3000);
   return Array.from(new Set((data ?? []).map((r: any) => r.league_id).filter((x: any) => x != null)));
 }
-// The tier-tagged (established) leagues — leagues.tier is set for ~118 competitions across every
-// major region and NULL for the ~1,091 obscure ones (poor bookmaker odds + availability + shaky
-// settlement feeds). Cached for the invocation. This is the quality floor "all" mode now respects.
+// The RECOGNISABLE leagues — the genuinely-followed, bettable tiers (top/mid + Asia/S.America top +
+// UEFA). Deliberately EXCLUDES 'ext' (extended/reserve/minnow) and untagged (NULL) leagues: together
+// those were ~60% of delivered picks and the boredom cause (poor odds/availability/shaky settlement).
+// Cached for the invocation. This is the quality floor "all"/"surprise" modes respect. 'fixed' agents
+// are unaffected — a user who explicitly picks an ext league keeps it (we never override their choice).
 let _tierLeagueIds: number[] | null = null;
 async function tierLeagueIds(): Promise<number[]> {
   if (_tierLeagueIds) return _tierLeagueIds;
   const ids: number[] = [];
   for (let off = 0; ; off += 1000) {
-    const { data } = await sb.from("leagues").select("id").not("tier", "is", null).range(off, off + 999);
+    const { data } = await sb.from("leagues").select("id").in("tier", ["top", "mid", "as_top", "sa_top", "uefa"]).range(off, off + 999);
     if (!data?.length) break;
     ids.push(...data.map((r: any) => r.id));
     if (data.length < 1000) break;
@@ -2558,9 +2661,16 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // tier-seeded model pilot: ADMIN accounts only, and only when the agent's base market is
   // double-chance 1X or X2 (see TIER_SPLIT note at the Model type)
   let pilotTierDc = false;
+  // OWNER-ONLY both-halves-Over1.5 → Under 3.5 signal (owner-directed): an under_3_5 agent whose
+  // rule_text is exactly the sentinel "[[BH15_U35]]" adds a required band filter (derived
+  // both-halves Over 1.5 price in 5.0–6.0). Admin-gated (belt-and-suspenders on top of it only
+  // existing on the owner's account); never fires for non-admins. The mandatory under35Ok gate
+  // still applies on top — the band only ADDS selectivity, never bypasses the platform rule.
+  let bhSignal = false;
   try {
     const { data: prof } = await sb.from("profiles").select("plan, created_at, is_admin").eq("id", strategy.user_id).maybeSingle();
     pilotTierDc = prof?.is_admin === true && (strategy.market_key === "double_chance_1x" || strategy.market_key === "double_chance_x2");
+    bhSignal = prof?.is_admin === true && strategy.market_key === "under_3_5" && (strategy.rule_text ?? "").trim() === "[[BH15_U35]]";
     const { data: lim } = await sb.from("plan_limits").select("max_agents, max_games_per_prediction, monthly_agent_runs").eq("plan", prof?.plan ?? "free").maybeSingle();
     // plans with a monthly run allowance (free) get that many delivery DAYS per calendar month;
     // paid plans carry null = unlimited. New accounts get a 7-DAY TRIAL of DAILY delivery first, so
@@ -2656,7 +2766,19 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   const cornMap = ruleTests(rule, (fld) => fld.endsWith("corners_avg"))
     ? await buildCornerFormMap(Array.from(new Set(candidates.flatMap((f: Fixture) => [f.home_team_id, f.away_team_id]).filter((x): x is number => x != null))))
     : new Map<number, CornForm>();
-  let ranked = (await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap, pilotTierDc)).slice(0, room);
+  const scored = await scoreAndRank(strategy, candidates, model, statM, aggCache, key, rule, formMap, mem, memM, h2hMap, cornMap, pilotTierDc, bhSignal);
+  // Reduce-the-cut re-rank: when MORE candidates cleared the gates than the user's slot count (room),
+  // order them by transparent matchup fit for THIS agent's market (both teams' attack/defence via
+  // matchup_fit) so the best-fitting games fill the visible N. The mandatory gates were already applied
+  // inside scoreAndRank — this only REORDERS the survivors, never adds a sub-floor pick; it falls back
+  // to the engine's own order when a fixture lacks matchup_fit data or the market has no fit key.
+  const fitKey = MATCHUP_FIT_KEY[strategy.market_key as string] ?? null;
+  let ordered = scored;
+  if (fitKey && scored.length > room) {
+    const fm = await matchupFitFor(scored.map((r) => r.f.id), fitKey);
+    if (fm.size) ordered = scored.slice().sort((a, b) => (fm.get(b.f.id) ?? -1) - (fm.get(a.f.id) ?? -1));
+  }
+  let ranked = ordered.slice(0, room);
 
   // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
   // head-to-head pulled live from API-Football (all competitions, not just what we've synced),
@@ -2770,6 +2892,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       // are inherently high-scoring). The feed tags these "🔼 Over 1.5" so users can take the better
       // odds. Post-delivery scrutiny lives here (no separate agent); flag is on the SAME pick.
       ...(r.mk === "over_0_5" && ((r.model_raw ?? r.model_prob) ?? 0) >= 0.95 ? { o15_upgrade: true } : {}),
+      // OWNER-ONLY both-halves-Over1.5 signal: the derived both-halves Over 1.5 price (product of the
+      // two half Over 1.5 consensus odds) and the two half odds used, plus the target band. market_key
+      // stays under_3_5 so poll settles it normally — this is audit metadata only.
+      ...(r.bh15 ? { bh15_odds: r.bh15.odd, bh15_h1: r.bh15.h1, bh15_h2: r.bh15.h2, bh15_band: "5.0-6.0" } : {}),
     };
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,
@@ -2952,11 +3078,15 @@ Deno.serve(async (req) => {
     // Empty parses re-qualify for parsing (the "1st Half Over0.5" agent's ">= 86%" rule gated
     // nothing for 10 days when an empty parse was cached forever); retry cost is bounded because
     // only DUE strategies reach this block (≈one delivery run per agent per day).
-    const needParse = strategies.some((s) => s.rule_text && (!s.rule_parsed || emptyParse(s.rule_parsed)));
+    // Sentinel rule_text "[[BH15_U35]]" is NOT a natural-language rule — it's the owner-only
+    // both-halves-Over1.5 → Under 3.5 signal flag (handled inside scoreAndRank). Never send it to
+    // the LLM parser; treat it as no explicit rule (rule_parsed stays null).
+    const isBhSentinel = (s: any) => (s.rule_text ?? "").trim() === "[[BH15_U35]]";
+    const needParse = strategies.some((s) => s.rule_text && !isBhSentinel(s) && (!s.rule_parsed || emptyParse(s.rule_parsed)));
     if (needParse) {
       const akey = await anthropicKey();
       if (akey) for (const s of strategies) {
-        if (s.rule_text && (!s.rule_parsed || emptyParse(s.rule_parsed))) {
+        if (s.rule_text && !isBhSentinel(s) && (!s.rule_parsed || emptyParse(s.rule_parsed))) {
           const { parsed: rp } = await parseRuleFull(s.rule_text, akey, { mk: s.market_key, side: s.side, label: s.market_label ?? s.market_key });
           if (rp) { s.rule_parsed = rp; await sb.from("strategies").update({ rule_parsed: rp }).eq("id", s.id); }
         }

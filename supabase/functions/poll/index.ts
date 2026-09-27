@@ -602,7 +602,11 @@ function grade(t: any, f: Facts): "won" | "lost" | "void" | null {
       return null;
     }
     case "htft_cs": { const m = (val || "").match(/(\d+)\D+(\d+)\D+(\d+)\D+(\d+)/); return m ? W(f.h1h === Number(m[1]) && f.h1a === Number(m[2]) && f.hg === Number(m[3]) && f.ag === Number(m[4])) : null; }
-    case "both_halves_ou": { if (line == null) return null; const o1 = (f.h1h + f.h1a) > line, o2 = (f.h2h + f.h2a) > line; return W(side === "over" ? o1 && o2 : !o1 && !o2); }
+    case "both_halves_ou": { if (line == null) return null; const o1 = (f.h1h + f.h1a) > line, o2 = (f.h2h + f.h2a) > line;
+      // Yes: over = each half over; under = each half under. No: the negation of the matching Yes.
+      if (side === "over_no") return W(!(o1 && o2));
+      if (side === "under_no") return W(!(!o1 && !o2));
+      return W(side === "over" ? o1 && o2 : !o1 && !o2); }
     case "winning_margin": return gradeMargin(val, h, a);
     case "handicap": return gradeHandicap(side, line, h, a);
     case "handicap_eu": { const m = (val || "").match(/(\d+)\s*:\s*(\d+)/); if (!m || !side) return null; return W(outcome(h + Number(m[1]), a + Number(m[2])) === side); }
@@ -929,7 +933,19 @@ async function poll() {
   for (const [id, fx] of liveMap) {
     if (!ourIds.has(id) && !earlyIds.has(id)) continue;
     await ensureOrientation(fx); // provider swapped home/away since we stored it â†’ adopt + flip open bets
-    await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", id);
+    // Only write when a materially-tracked field (score or status) actually changed. The old
+    // unconditional write bumped elapsed/updated_at every poll for every live game, and since
+    // fixtures is in the realtime publication that WAL-broadcast a tracker refresh on every quiet
+    // minute (the bulk of fixtures' disk-IO churn). The live minute is derived client-side from
+    // kickoff, so freezing stored elapsed between events is cosmetic-only. Guard uses the exact
+    // values being written; if the provider omitted any (glitch), fall back to an unconditional
+    // write so a real change is never skipped.
+    const upd = fixtureUpdate(fx);
+    let q = sb.from("fixtures").update(upd).eq("id", id);
+    if (upd.home_goals != null && upd.away_goals != null && upd.status != null) {
+      q = q.or(`home_goals.neq.${upd.home_goals},away_goals.neq.${upd.away_goals},status.neq.${upd.status}`);
+    }
+    await q;
     updated++;
     const hg = fx.goals?.home ?? 0, ag = fx.goals?.away ?? 0, tot = hg + ag;
     const short = fx.fixture?.status?.short;
@@ -993,7 +1009,18 @@ async function poll() {
       if (FINISHED.includes(short) && settleBudget <= 0) continue; // drain remaining settlements next pass
       if (short === "FT" && now - new Date(fx.fixture?.date ?? 0).getTime() < MIN_FT_MS) continue; // impossible-early FT from the by-id fetch — the exact Vasas glitch; leave the row live and recheck
       await ensureOrientation(fx); // reconcile fetches carry teams too â€” same swap guard as live
-      await sb.from("fixtures").update(fixtureUpdate(fx)).eq("id", fx.fixture.id);
+      // Same no-op write-guard as the live loop: only rewrite when score or status actually changed,
+      // so a tracked-but-not-live fixture isn't re-stamped (updated_at/elapsed) every pass for nothing.
+      // Settlement/void below read from the DB and are idempotent, so skipping a no-op write is safe;
+      // and stale updated_at can't force a premature FT here because that path (line ~872) excludes
+      // fixtures with active tickets, which every reconciled fixture has. Fall back to an unconditional
+      // write if the provider omitted a field, so a real change is never skipped.
+      const rUpd = fixtureUpdate(fx);
+      let rq = sb.from("fixtures").update(rUpd).eq("id", fx.fixture.id);
+      if (rUpd.home_goals != null && rUpd.away_goals != null && rUpd.status != null) {
+        rq = rq.or(`home_goals.neq.${rUpd.home_goals},away_goals.neq.${rUpd.away_goals},status.neq.${rUpd.status}`);
+      }
+      await rq;
       if (FINISHED.includes(short)) { settleBudget--; await settle(fx.fixture.id); }
       else if (NOTPLAYED.includes(short)) {
         await sb.from("tickets").update({ status: "void", settled_at: nowIso }).eq("fixture_id", fx.fixture.id).in("status", ["pending", "live"]);
