@@ -29,6 +29,20 @@ const ODDS_MARGIN = 1.06;
 const modelOdds = (prob: number | null | undefined): number | null =>
   prob != null && prob > 0 ? Math.round((1 / Math.min(0.97, prob * ODDS_MARGIN)) * 100) / 100 : null;
 
+// Displayed price waterfall: (1) an admin-typed real odd, (2) the REAL median bookmaker odd from the
+// API (school_book_odds, sourced from odds_snapshot), (3) the model estimate as a last resort. The
+// first two are real prices (oddsReal = true, shown plainly); the estimate shows with a "~" prefix.
+// DISPLAY-ONLY — none of this feeds selection, grading or settlement.
+const priceLeg = (
+  prob: number | null,
+  adminOdd: number | null | undefined,
+  bookOdd: number | null | undefined
+): { odds: number | null; oddsReal: boolean } => {
+  if (adminOdd != null && adminOdd > 1) return { odds: adminOdd, oddsReal: true };
+  if (bookOdd != null && bookOdd > 1) return { odds: bookOdd, oddsReal: true };
+  return { odds: modelOdds(prob), oddsReal: false };
+};
+
 // One flat leg row from school_strategy_legs() (the two candidate School lines, ranked top-N per day).
 type StratRow = {
   strategy: string; dt: string; fixture_id: number; rnk: number; market: string; prob: number | null;
@@ -42,7 +56,7 @@ type StratRow = {
 // monotonically (WON the instant the goals land); DC 1X settles only at FT (a lead can be lost).
 // minN/maxN let a line be either a fixed-leg acca (over25: 2/2, dc1x: 3/3) or a variable "min 2, up to 3"
 // lock acca — take up to maxN of the day's ranked legs, but only count the day if at least minN qualified.
-function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string, voidPostponed = false): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
+function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string, voidPostponed = false, bookOf: Map<string, number> = new Map()): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
   const byDay = new Map<string, StratRow[]>();
   for (const r of rows) {
     const arr = byDay.get(r.dt);
@@ -71,13 +85,13 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
             ? finished && h != null && a != null ? h > a : null // Home Win: judged at FT
             : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
       const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
-      const odds = modelOdds(prob);
+      const { odds, oddsReal } = priceLeg(prob, null, bookOf.get(`${r.fixture_id}:${r.market}`));
       return {
         game: `${r.home_team} v ${r.away_team}`,
         fixtureId: r.fixture_id,
         market: r.market,
         odds,
-        oddsReal: false, // model estimate until real prices bank in
+        oddsReal, // real median book odd when banked, else the model estimate
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
         hit,
         elapsed: inPlay ? r.elapsed : null,
@@ -166,7 +180,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     ),
   ];
 
-  const [{ data: fixtures }, { data: deliveries }, { data: legPicks }] = await Promise.all([
+  const [{ data: fixtures }, { data: deliveries }, { data: legPicks }, { data: bookRows }] = await Promise.all([
     fixtureIds.length
       ? supabase
           .from("fixtures")
@@ -180,7 +194,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     fixtureIds.length
       ? supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", fixtureIds)
       : Promise.resolve({ data: [] as never[] }),
+    // real median bookmaker odds per (fixture, market) from the API snapshot
+    fixtureIds.length
+      ? supabase.rpc("school_book_odds", { p_fixture_ids: fixtureIds })
+      : Promise.resolve({ data: [] as never[] }),
   ]);
+  const bookOf = new Map<string, number>();
+  for (const r of (bookRows ?? []) as Array<{ fixture_id: number; market: string; book_odds: number | null }>) {
+    if (r.book_odds != null) bookOf.set(`${Number(r.fixture_id)}:${r.market}`, Number(r.book_odds));
+  }
   const pickOf = new Map(
     ((legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>).map((r) => [
       Number(r.fixture_id),
@@ -215,11 +237,9 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const pick = pickOf.get(fid);
       const market = pick?.market ?? "over_2_5";
       const need = NEED[market] ?? 3;
-      // odds: real (admin-entered) wins; else the model estimate — which only prices Over 2.5
-      const estOdds = market === "over_2_5" ? modelOdds(over25) : null;
-      const real = pick?.odds ?? null;
-      const odds = real ?? estOdds;
-      const oddsReal = real != null;
+      // odds waterfall: admin-typed real → real median book odd (API) → model estimate (Over 2.5 only)
+      const modelP = market === "over_2_5" ? over25 : null;
+      const { odds, oddsReal } = priceLeg(modelP, pick?.odds ?? null, bookOf.get(`${fid}:${market}`));
       const statusStr = f ? String(f.status ?? "") : "";
       const finished = FINISHED.includes(statusStr);
       const inPlay = LIVE.includes(statusStr);
@@ -311,18 +331,27 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       supabase.from("school_config").select("default_strategy").maybeSingle(),
     ]);
     const rows = (stratRows ?? []) as StratRow[];
-    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos);
-    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos);
+    // real median book odds for every fixture across the candidate lines, in one RPC call
+    const stratFixtureIds = [...new Set(rows.map((r) => Number(r.fixture_id)))];
+    const { data: stratBookRows } = stratFixtureIds.length
+      ? await supabase.rpc("school_book_odds", { p_fixture_ids: stratFixtureIds })
+      : { data: [] as never[] };
+    const stratBookOf = new Map<string, number>();
+    for (const r of (stratBookRows ?? []) as Array<{ fixture_id: number; market: string; book_odds: number | null }>) {
+      if (r.book_odds != null) stratBookOf.set(`${Number(r.fixture_id)}:${r.market}`, Number(r.book_odds));
+    }
+    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos, false, stratBookOf);
+    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos, false, stratBookOf);
     // Home Banker: the 2 strongest home favourites to win outright (all leagues). Backtest 14-4 / +52%
     // fair (~+36% at real odds) over Sep 7+, longest losing streak 2 — forward-testing it live.
-    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos);
+    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos, false, stratBookOf);
     // Lock acca: bettable DC 1X locks (≤1.35), 2–3 legs, crushing favourites swapped to Home Win.
-    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos);
+    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos, false, stratBookOf);
     // Cascade: same locks across ALL leagues, per-leg market 1X → Home (if 1X<1.20) → Over 2.5 (if home<1.10).
-    const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos);
+    const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos, false, stratBookOf);
     // Combined: DC 1X treble ∪ Lock Acca merged into one slip/day (variable legs — take all). Postponed
     // legs void so the day grades on the rest (e.g. Sep 13's rained-off FAS v Alianza settles on its others).
-    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true);
+    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true, stratBookOf);
     strategyViews = [
       { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
       { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
