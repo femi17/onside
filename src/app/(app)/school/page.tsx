@@ -77,14 +77,16 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
       const h = r.ft_home ?? r.home_goals;
       const a = r.ft_away ?? r.away_goals;
       const curTot = h != null && a != null ? h + a : null;
-      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when the REAL Over 2.5 book odds are
-      // 1.10 or below, the game is so high-scoring that Over 2.5 pays almost nothing — bet Over 3.5 at
-      // its real odds instead. Only upgrades when a real Over 3.5 price exists (else keep the line).
+      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when Over 2.5 is priced 1.11 or below
+      // the game is so high-scoring that Over 2.5 pays almost nothing — bet Over 3.5 at its real odds
+      // instead. Trigger on the price the leg WOULD show (real book Over 2.5, else the model estimate),
+      // so near-certain games flagged by either are caught. Only swaps when a REAL Over 3.5 book price
+      // exists, so the displayed odds always match a placeable bet (never a made-up number).
       let market = r.market;
       if (market === "over_2_5") {
-        const o25 = bookOf.get(`${r.fixture_id}:over_2_5`);
+        const dispO25 = bookOf.get(`${r.fixture_id}:over_2_5`) ?? modelOdds(r.prob != null && r.prob > 0 ? Number(r.prob) : null);
         const o35 = bookOf.get(`${r.fixture_id}:over_3_5`);
-        if (o25 != null && o25 <= 1.1 && o35 != null) market = "over_3_5";
+        if (dispO25 != null && dispO25 <= 1.11 && o35 != null) market = "over_3_5";
       }
       const need = NEED[market] ?? 3;
       const hit =
@@ -244,7 +246,15 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       const over25 = model?.over25 ?? null;
       // the leg's line: admin override, else the default Over 2.5
       const pick = pickOf.get(fid);
-      const market = pick?.market ?? "over_2_5";
+      let market = pick?.market ?? "over_2_5";
+      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when Over 2.5 is priced 1.11 or below,
+      // bet Over 3.5 at its real odds instead. Skipped when an admin has manually priced this leg (their
+      // override wins); only swaps when a real Over 3.5 book price exists so the odds always match.
+      if (market === "over_2_5" && pick?.odds == null) {
+        const dispO25 = bookOf.get(`${fid}:over_2_5`) ?? modelOdds(over25);
+        const o35 = bookOf.get(`${fid}:over_3_5`);
+        if (dispO25 != null && dispO25 <= 1.11 && o35 != null) market = "over_3_5";
+      }
       const need = NEED[market] ?? 3;
       // odds waterfall: admin-typed real → real median book odd (API) → model estimate (Over 2.5 only)
       const modelP = market === "over_2_5" ? over25 : null;
