@@ -55,7 +55,7 @@ export default async function GeneratorPage() {
     } | null;
     if (!f?.kickoff_utc || Date.parse(f.kickoff_utc) < cutoff) continue;
     // only priced picks are eligible — without an odd the combined product would be a lie
-    const crit = r.criteria as { odds?: number; odds_src?: string } | null;
+    const crit = r.criteria as { odds?: number; odds_src?: string; below_gate?: boolean } | null;
     const odds = typeof crit?.odds === "number" && crit.odds > 1 ? crit.odds : null;
     if (odds == null) continue;
     picks.push({
@@ -71,6 +71,7 @@ export default async function GeneratorPage() {
       model_prob: r.model_prob != null ? Number(r.model_prob) : null,
       odds,
       odds_src: crit?.odds_src === "quoted" || crit?.odds_src === "derived" ? crit.odds_src : "model",
+      below_gate: crit?.below_gate === true,
       fixture: {
         id: f.id,
         home_team: f.home_team,

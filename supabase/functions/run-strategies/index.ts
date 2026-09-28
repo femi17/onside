@@ -1730,7 +1730,7 @@ function hashShard(id: string, shards: number): number {
 }
 
 type Cell = { lamH: number; lamA: number; agg: Agg; agg1h?: Agg; agg2h?: Agg; confident: boolean; corn: StatLam | null; card: StatLam | null };
-type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null; model_raw?: number | null; bh15?: { odd: number; h1: number; h2: number } | null };
+type Scored = { f: Fixture; mk: string; side: string | null; line: number | null; edge: number | null; tier: string | null; model_prob: number | null; market_prob: number | null; label?: string | null; period?: string | null; bet_value?: string | null; model_ver?: string | null; model_raw?: number | null; bh15?: { odd: number; h1: number; h2: number } | null; below_gate?: boolean };
 // one candidate outcome in a set — a built-in family entry OR a user's mixed-outcome entry
 type Cand = { mk: string; side: string | null; line: number | null; period?: string | null; bet_value?: string | null; label?: string | null };
 // the score matrix for the requested period, thinned lazily and cached on the cell
@@ -2780,6 +2780,46 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   }
   let ranked = ordered.slice(0, room);
 
+  // Reduce-the-cut BACKFILL (owner-directed 2026-09-28): the OTHER half of the reduce-the-cut idea.
+  // The re-rank above only helps when MORE games cleared the gate than slots. When FEWER cleared it
+  // (the "I asked for 24, got 2" case), a quick-spec / generator run must still return the count the
+  // user asked for — filled with the CLOSEST games (model still leans yes) that missed a structural
+  // or floor gate, each flagged below_gate so the feed can label our honest read AND the record can
+  // exclude them. DRAFT-ONLY: quick-spec drafts are already record-exempt (public_record skips draft
+  // strategies), so this can NEVER pollute the immutable reliability record. Single-market only for
+  // now (a mix chooses its market per game — that backfill is a follow-up). Reuses the DB odds cache,
+  // so no extra API burst beyond scoring. Never manufactures a sub-50% (likely-loser) pick.
+  const isSet = isFamily(strategy.market_key as string) || (Array.isArray(strategy.markets) && strategy.markets.length > 0);
+  if (strategy.status === "draft" && !isSet && ranked.length < room) {
+    const bMk = strategy.market_key as string;
+    const bSide = strategy.side ?? null;
+    const bLine = strategy.line != null ? Number(strategy.line) : null;
+    const bPer = (strategy.period ?? "ft") as Period;
+    const bBv = strategy.bet_value ?? null;
+    const minO = strategy.min_odds != null ? Number(strategy.min_odds) : null;
+    const maxO = strategy.max_odds != null ? Number(strategy.max_odds) : null;
+    const have = new Set(ranked.map((r) => r.f.id));
+    const near: Scored[] = [];
+    for (const f of candidates as Fixture[]) {
+      if (have.has(f.id)) continue;
+      const cell = aggCache.get(f.id);
+      if (!cell || !cell.confident) continue;                 // no confident rating => can't judge closeness
+      const cand: Cand = { mk: bMk, side: bSide, line: bLine, period: bPer, bet_value: bBv };
+      const mp = modelFor(cell, cand);
+      if (mp == null || mp < 0.5) continue;                   // only games the model still LEANS yes on
+      const bms = await bookmakersFor(f.id, key);             // DB-cached during scoring; no new API burst
+      const kp = marketFor(cand, bms);
+      const shownP = kp != null ? blend50(mp, kp) : mp;
+      if (shownP == null) continue;
+      const pr = priceOf(bMk, bSide, bLine, bms, bPer, shownP, kp);
+      if (minO != null && (!pr || pr.odd < minO)) continue;   // honour the user's per-leg odds band
+      if (maxO != null && (!pr || pr.odd > maxO)) continue;
+      near.push({ f, mk: bMk, side: bSide, line: bLine, edge: kp != null ? round2(mp - kp) : null, tier: null, model_prob: shownP, market_prob: kp, model_ver: "xg_v1", period: bPer, bet_value: bBv, below_gate: true });
+    }
+    near.sort((a, b) => (b.model_prob ?? 0) - (a.model_prob ?? 0)); // closest to a confident pick first
+    if (near.length) ranked = [...ranked, ...near.slice(0, room - ranked.length)];
+  }
+
   // Per-pick reasoning ("why did the agent pick this"): each team's TRUE last-5 form and last-10
   // head-to-head pulled live from API-Football (all competitions, not just what we've synced),
   // falling back to our own fixtures table when the per-run cap bites. Stored on the delivery so
@@ -2896,6 +2936,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       // two half Over 1.5 consensus odds) and the two half odds used, plus the target band. market_key
       // stays under_3_5 so poll settles it normally — this is audit metadata only.
       ...(r.bh15 ? { bh15_odds: r.bh15.odd, bh15_h1: r.bh15.h1, bh15_h2: r.bh15.h2, bh15_band: "5.0-6.0" } : {}),
+      // reduce-the-cut backfill: this pick missed the market's structural/floor gate but was the
+      // closest available (model still leans yes). Flagged so the feed labels our honest read and the
+      // record can exclude it. Only ever set on record-exempt draft (quick-spec/generator) picks.
+      ...(r.below_gate ? { below_gate: true } : {}),
     };
     return {
       strategy_id: strategy.id, user_id: strategy.user_id, fixture_id: r.f.id,

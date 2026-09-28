@@ -25,6 +25,9 @@ export type GenPick = {
   model_prob: number | null;
   odds: number;
   odds_src: "quoted" | "derived" | "model";
+  // reduce-the-cut backfill: a "stretch" leg that missed the market's gate but was the closest game
+  // (model still leans yes). Shown with our honest read so a full-count slip is never a silent lie.
+  below_gate?: boolean;
   fixture: {
     id: number;
     home_team: string;
@@ -184,7 +187,7 @@ function rowsToGenPicks(rows: Record<string, unknown>[]): GenPick[] {
       leagues: { id: number; name: string; flag_url: string | null; tier: string | null } | null;
     } | null;
     if (!f?.kickoff_utc || Date.parse(f.kickoff_utc) < cutoff) continue;
-    const crit = r.criteria as { odds?: number; odds_src?: string } | null;
+    const crit = r.criteria as { odds?: number; odds_src?: string; below_gate?: boolean } | null;
     const odds = typeof crit?.odds === "number" && crit.odds > 1 ? crit.odds : null;
     if (odds == null) continue;
     out.push({
@@ -200,6 +203,7 @@ function rowsToGenPicks(rows: Record<string, unknown>[]): GenPick[] {
       model_prob: r.model_prob != null ? Number(r.model_prob) : null,
       odds,
       odds_src: crit?.odds_src === "quoted" || crit?.odds_src === "derived" ? crit.odds_src : "model",
+      below_gate: crit?.below_gate === true,
       fixture: {
         id: f.id,
         home_team: f.home_team,
@@ -370,7 +374,11 @@ export default function GeneratorBoard({
   const famNow = genMode === "quick" ? "all" : fam;
   const eligible = useMemo(() => {
     const filtered = famNow === "all" ? upcoming : upcoming.filter((p) => famOf(p.market_key, p.market_label) === famNow);
-    const ranked = [...filtered].sort((a, b) => (b.model_prob ?? -1) - (a.model_prob ?? -1));
+    // clean (gate-passing) picks always fill first; below-gate "stretch" picks only backfill the tail,
+    // each still prob-ranked within its group. So a full-count slip leads with our strongest reads.
+    const ranked = [...filtered].sort(
+      (a, b) => Number(a.below_gate ?? false) - Number(b.below_gate ?? false) || (b.model_prob ?? -1) - (a.model_prob ?? -1)
+    );
 
     // Multi-outcome quick pools assemble ROUND-ROBIN across market_key groups. Pure prob order
     // buries lower-prob markets (Over 1.5 probs beat 1X probs every time → a 14-leg two-outcome
@@ -1228,8 +1236,20 @@ export default function GeneratorBoard({
                   <div className="mt-0.5 truncate text-sm font-bold leading-tight text-ink">
                     {p.fixture.home_team} <span className="font-semibold text-ink-mute">v</span> {p.fixture.away_team}
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">
-                    {p.market_label ?? "Pick"}
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    <span className="truncate font-mono text-[11px] font-bold uppercase tracking-wide text-flood-deep">
+                      {p.market_label ?? "Pick"}
+                    </span>
+                    {/* our honest read: this leg missed the market's confidence gate — it's the closest
+                        game we could add to reach your count, not one of our strong reads */}
+                    {p.below_gate && (
+                      <span
+                        className="flex-none rounded-full bg-ink/[0.07] px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-ink-mute"
+                        title="Below our confidence bar for this market — added to reach your leg count. Our strong picks come first."
+                      >
+                        ⚠ stretch
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 font-mono text-[10px] text-ink-mute">
                     {p.agent_name}
