@@ -174,6 +174,7 @@ export default async function AgentPage() {
     odds: ((r.criteria as { odds?: number } | null)?.odds) ?? null,
     odds_src: ((r.criteria as { odds_src?: string } | null)?.odds_src as AgentPick["odds_src"]) ?? null,
     o15_upgrade: ((r.criteria as { o15_upgrade?: boolean } | null)?.o15_upgrade) ?? null,
+    below_gate: ((r.criteria as { below_gate?: boolean } | null)?.below_gate) ?? null,
     o25_top: o25Top.has(r.id as string),
     u35_top: u35Top.has(r.id as string),
     delivered_at: (r.delivered_at as string) ?? null,

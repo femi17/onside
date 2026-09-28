@@ -2790,7 +2790,13 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
   // now (a mix chooses its market per game — that backfill is a follow-up). Reuses the DB odds cache,
   // so no extra API burst beyond scoring. Never manufactures a sub-50% (likely-loser) pick.
   const isSet = isFamily(strategy.market_key as string) || (Array.isArray(strategy.markets) && strategy.markets.length > 0);
-  if (strategy.status === "draft" && !isSet && ranked.length < room) {
+  // Backfill runs for: (a) every quick-spec/generator DRAFT (record-exempt, user-triggered on demand),
+  // and (b) scheduled AGENTS — but for now ONLY the owner's, as a live validation before it goes to all
+  // users (agent stretches count in the immutable record, so widen this only once confirmed). Flip the
+  // OWNER_ID clause to `true` to enable backfill for every user's agents.
+  const OWNER_ID = "91a63237-6a50-41bc-950d-7954450e3046";
+  const backfillAllowed = strategy.status === "draft" || strategy.user_id === OWNER_ID;
+  if (!isSet && backfillAllowed && ranked.length < room) {
     const bMk = strategy.market_key as string;
     const bSide = strategy.side ?? null;
     const bLine = strategy.line != null ? Number(strategy.line) : null;
@@ -2800,21 +2806,47 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
     const maxO = strategy.max_odds != null ? Number(strategy.max_odds) : null;
     const have = new Set(ranked.map((r) => r.f.id));
     const near: Scored[] = [];
-    for (const f of candidates as Fixture[]) {
-      if (have.has(f.id)) continue;
-      const cell = aggCache.get(f.id);
-      if (!cell || !cell.confident) continue;                 // no confident rating => can't judge closeness
+    // Score one fixture as a stretch candidate. requireBook = only qualify if a REAL book price exists
+    // for the outcome (owner-ruled 2026-09-28: lower-league games qualify "so far they have odds for the
+    // bet outcome chosen"). model-only prices are allowed for the in-scope (recognisable) pool.
+    const consider = async (f: Fixture, requireBook: boolean) => {
+      if (have.has(f.id) || takenAll.has(f.id)) return;
+      have.add(f.id);
+      let cell = aggCache.get(f.id);
+      if (!cell) {
+        const ls = lambdas(model, f);
+        cell = { lamH: ls.lamH, lamA: ls.lamA, agg: aggregate(ls.lamH, ls.lamA), confident: ls.confident, corn: statLams(statM.corners, f), card: statLams(statM.cards, f) };
+        aggCache.set(f.id, cell);
+      }
+      if (!cell.confident) return;                            // no confident rating => can't judge closeness
       const cand: Cand = { mk: bMk, side: bSide, line: bLine, period: bPer, bet_value: bBv };
       const mp = modelFor(cell, cand);
-      if (mp == null || mp < 0.5) continue;                   // only games the model still LEANS yes on
+      if (mp == null || mp < 0.5) return;                     // only games the model still LEANS yes on
       const bms = await bookmakersFor(f.id, key);             // DB-cached during scoring; no new API burst
       const kp = marketFor(cand, bms);
+      if (requireBook && kp == null) return;                  // lower leagues must carry real odds for the bet
       const shownP = kp != null ? blend50(mp, kp) : mp;
-      if (shownP == null) continue;
+      if (shownP == null) return;
       const pr = priceOf(bMk, bSide, bLine, bms, bPer, shownP, kp);
-      if (minO != null && (!pr || pr.odd < minO)) continue;   // honour the user's per-leg odds band
-      if (maxO != null && (!pr || pr.odd > maxO)) continue;
+      if (minO != null && (!pr || pr.odd < minO)) return;     // honour the user's per-leg odds band
+      if (maxO != null && (!pr || pr.odd > maxO)) return;
       near.push({ f, mk: bMk, side: bSide, line: bLine, edge: kp != null ? round2(mp - kp) : null, tier: null, model_prob: shownP, market_prob: kp, model_ver: "xg_v1", period: bPer, bet_value: bBv, below_gate: true });
+    };
+    // 1) the run's own in-scope pool first (recognisable leagues for 'all' agents)
+    for (const f of candidates as Fixture[]) await consider(f, false);
+    // 2) still short => widen to EVERY league's upcoming game in the window that has real odds for the
+    //    bet (owner ruling). Kickoff pin + shield are re-applied; already-delivered games are skipped.
+    if (ranked.length + near.length < room) {
+      const { data: wider } = await sb.from("fixtures")
+        .select("id, league_id, season, kickoff_utc, home_team_id, away_team_id")
+        .gte("kickoff_utc", fromIso).lte("kickoff_utc", toIso)
+        .not("status", "in", `(${NOT_PICKABLE.join(",")})`)
+        .order("kickoff_utc", { ascending: true }).limit(300);
+      for (const f of (wider ?? []) as Fixture[]) {
+        if (ranked.length + near.length >= room * 2) break;   // gather a healthy surplus, then rank & slice
+        if (!koOk(f)) continue;
+        await consider(f, true);
+      }
     }
     near.sort((a, b) => (b.model_prob ?? 0) - (a.model_prob ?? 0)); // closest to a confident pick first
     if (near.length) ranked = [...ranked, ...near.slice(0, room - ranked.length)];
@@ -2936,9 +2968,10 @@ async function runStrategy(strategy: any, model: Model, statM: { corners: StatMo
       // two half Over 1.5 consensus odds) and the two half odds used, plus the target band. market_key
       // stays under_3_5 so poll settles it normally — this is audit metadata only.
       ...(r.bh15 ? { bh15_odds: r.bh15.odd, bh15_h1: r.bh15.h1, bh15_h2: r.bh15.h2, bh15_band: "5.0-6.0" } : {}),
-      // reduce-the-cut backfill: this pick missed the market's structural/floor gate but was the
-      // closest available (model still leans yes). Flagged so the feed labels our honest read and the
-      // record can exclude it. Only ever set on record-exempt draft (quick-spec/generator) picks.
+      // reduce-the-cut backfill (owner-ruled 2026-09-28): this pick missed the market's structural/floor
+      // gate but was the CLOSEST available (confident model still leans yes) — added to return the count
+      // the user asked for. A real, gradeable pick that carries its honest calibrated probability; the
+      // flag just drives the feed's "our read" insight label (a below-confidence pick can still win).
       ...(r.below_gate ? { below_gate: true } : {}),
     };
     return {

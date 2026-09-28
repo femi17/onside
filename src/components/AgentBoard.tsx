@@ -48,6 +48,9 @@ export type AgentPick = TrackedTicket & {
   o25_top?: boolean | null;
   // owner-only: an Over 0.5 pick the model reads as low-scoring (Over 2.5 <= 46%) — a strong Under 3.5
   u35_top?: boolean | null;
+  // reduce-the-cut "stretch": added to fill the count you asked for. It missed our usual confidence bar
+  // for this market, but the model still leans yes — shown with our honest read, not hidden.
+  below_gate?: boolean | null;
 };
 
 // "Why did the agent pick this" — narrates the REAL signals stored at pick time (each side's last-5
@@ -183,6 +186,11 @@ function explainPick(p: AgentPick): { title: string; body: string[] } {
     );
   } else if (p.model_prob != null) {
     body.push(`Confidence: 🟠 model-only — no odds to check the model against on this one.`);
+  }
+  // reduce-the-cut stretch: our honest read that this one sits below our usual bar for the market —
+  // added to give you the number of picks you asked for. It can still land; just weigh it lighter.
+  if (p.below_gate) {
+    body.push(`Our read: 🟠 stretch — this missed our usual confidence bar for ${market}, so we didn't rank it among the strong picks. We included it to fill the count you asked for${p.model_prob != null ? `; the model still gives it ${pct(p.model_prob)}` : ""}. A below-bar pick can still land — just weigh it lighter.`);
   }
   return { title: "Why the agent picked this", body };
 }
@@ -457,6 +465,16 @@ function Item({
                   title="The model reads this a low-scoring game (both teams scoring < 45%) — a strong Under 3.5 (~79% historically)."
                 >
                   🔽 Under 3.5
+                </span>
+              )}
+              {/* reduce-the-cut stretch: below our usual bar for this market, added to fill the count —
+                  our honest read so a full-count feed is never a silent lie (the model still leans yes). */}
+              {p.below_gate && (
+                <span
+                  className="flex-none rounded bg-ink/[0.07] px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink-mute"
+                  title="Below our usual confidence bar for this market — added to give you the number of picks you asked for. It can still land; weigh it lighter than the strong picks."
+                >
+                  ⚠ stretch
                 </span>
               )}
               {/* the card % is the MODEL'S CHANCE for this exact bet (the explainer's "put
