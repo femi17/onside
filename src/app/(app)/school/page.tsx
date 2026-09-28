@@ -77,19 +77,28 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
       const h = r.ft_home ?? r.home_goals;
       const a = r.ft_away ?? r.away_goals;
       const curTot = h != null && a != null ? h + a : null;
-      const need = NEED[r.market] ?? 3;
+      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when the REAL Over 2.5 book odds are
+      // 1.10 or below, the game is so high-scoring that Over 2.5 pays almost nothing — bet Over 3.5 at
+      // its real odds instead. Only upgrades when a real Over 3.5 price exists (else keep the line).
+      let market = r.market;
+      if (market === "over_2_5") {
+        const o25 = bookOf.get(`${r.fixture_id}:over_2_5`);
+        const o35 = bookOf.get(`${r.fixture_id}:over_3_5`);
+        if (o25 != null && o25 <= 1.1 && o35 != null) market = "over_3_5";
+      }
+      const need = NEED[market] ?? 3;
       const hit =
-        r.market === "dc_1x"
+        market === "dc_1x"
           ? finished && h != null && a != null ? h >= a : null // DC 1X: home win or draw, judged at FT
-          : r.market === "home"
+          : market === "home"
             ? finished && h != null && a != null ? h > a : null // Home Win: judged at FT
             : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
       const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
-      const { odds, oddsReal } = priceLeg(prob, null, bookOf.get(`${r.fixture_id}:${r.market}`));
+      const { odds, oddsReal } = priceLeg(prob, null, bookOf.get(`${r.fixture_id}:${market}`));
       return {
         game: `${r.home_team} v ${r.away_team}`,
         fixtureId: r.fixture_id,
-        market: r.market,
+        market,
         odds,
         oddsReal, // real median book odd when banked, else the model estimate
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
