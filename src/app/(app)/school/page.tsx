@@ -3,7 +3,6 @@ import { createClient } from "@/lib/supabase/server";
 import { SchoolFunnel, SchoolMember, type SchoolRecord, type SchoolLeg } from "@/components/SchoolBoard";
 import SchoolEnroll from "@/components/SchoolEnroll";
 import SchoolAdmin from "@/components/SchoolAdmin";
-import SchoolStrategyDeck, { type StrategyView } from "@/components/SchoolStrategyDeck";
 import RealtimeRefresh from "@/components/RealtimeRefresh";
 import { SCHOOL_OPEN, SCHOOL_PRICE, SCHOOL_BANK } from "@/lib/school";
 
@@ -85,9 +84,13 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
   for (const [dt, allRows] of byDay) {
     // void postponed/cancelled/abandoned legs (they never settle) so the day grades on the rest — a
     // rained-off leg shouldn't freeze the slip forever. Only the combined tab opts into this.
-    const dayRows = voidPostponed ? allRows.filter((r) => !VOID.includes(r.status ?? "")) : allRows;
+    // ALSO void ungradeable legs: an obscure reserve game that finished but whose SCORE never synced
+    // (common in the Over 2.5 pool's minor leagues) can't be judged — counting it as a loss would lie.
+    // Drop it so the day grades only on legs we can actually settle (owner-directed 2026-09-28).
+    const ungradeable = (r: StratRow) => FINISHED.includes(r.status ?? "") && (r.ft_home ?? r.home_goals) == null;
+    const dayRows = (voidPostponed ? allRows.filter((r) => !VOID.includes(r.status ?? "")) : allRows).filter((r) => !ungradeable(r));
     const legsRows = dayRows.slice().sort((a, b) => a.rnk - b.rnk).slice(0, maxN);
-    if (legsRows.length < minN) continue; // need at least minN legs to form the day's acca
+    if (legsRows.length < minN) continue; // need at least minN gradeable legs to form the day's acca
     const legs: SchoolLeg[] = legsRows.map((r) => {
       const statusStr = r.status ?? "";
       const finished = FINISHED.includes(statusStr);
@@ -183,153 +186,36 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       ? "rejected"
       : "none";
 
-  // recent Onside Doubles (both-legs-Over-0.5 variant), newest first
-  const { data: doubles } = await supabase
-    .from("onside_double")
-    .select("set_date, legs")
-    .order("set_date", { ascending: false })
-    .limit(80);
-
-  // keep only doubles whose EVERY leg is Over 0.5; dedupe regenerations by the fixture pair
-  const seen = new Set<string>();
-  const picked = (doubles ?? []).filter((d) => {
-    const legs = (d.legs as Array<Record<string, unknown>>) ?? [];
-    if (legs.length < 2) return false;
-    if (!legs.every((l) => /over 0\.5/i.test(String(l.market ?? "")))) return false;
-    const key = legs
-      .map((l) => l.fixture_id)
-      .sort()
-      .join("-");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  const fixtureIds = [...new Set(picked.flatMap((d) => (d.legs as Array<Record<string, unknown>>).map((l) => Number(l.fixture_id))))];
-  const deliveryIds = [
-    ...new Set(
-      picked.flatMap((d) => (d.legs as Array<Record<string, unknown>>).map((l) => l.delivery_id).filter(Boolean) as string[])
-    ),
-  ];
-
-  const [{ data: fixtures }, { data: deliveries }, { data: legPicks }, { data: bookRows }] = await Promise.all([
-    fixtureIds.length
-      ? supabase
-          .from("fixtures")
-          .select("id, ft_home, ft_away, home_goals, away_goals, status, elapsed, updated_at, kickoff_utc, leagues(name, flag_url, tier)")
-          .in("id", fixtureIds)
-      : Promise.resolve({ data: [] as never[] }),
-    deliveryIds.length
-      ? supabase.from("deliveries").select("id, criteria").in("id", deliveryIds)
-      : Promise.resolve({ data: [] as never[] }),
-    // per-leg line + real odds an admin has set (over_2_5 default when absent)
-    fixtureIds.length
-      ? supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", fixtureIds)
-      : Promise.resolve({ data: [] as never[] }),
-    // real median bookmaker odds per (fixture, market) from the API snapshot
-    fixtureIds.length
-      ? supabase.rpc("school_book_odds", { p_fixture_ids: fixtureIds })
-      : Promise.resolve({ data: [] as never[] }),
+  // The Onside School bet IS the Best Over 2.5 double (owner-ruled 2026-09-28: it won the forward-test,
+  // so it's now the live member line — the old hand-set double and the other candidate tabs are retired).
+  // Legs, record and today's pick all come from school_daily_over25(): the owner's two highest-model-Over-2.5
+  // picks per day (Over 0.5 signal pool since Sep 7), graded Over 2.5, with the <=1.11 -> Over 3.5 upgrade.
+  const todayLagos = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+  const { data: dailyRows } = await supabase.rpc("school_daily_over25");
+  const stratRows = (dailyRows ?? []) as StratRow[];
+  const fixtureIds = [...new Set(stratRows.map((r) => Number(r.fixture_id)))];
+  const [{ data: bookRows }, { data: legPicks }] = await Promise.all([
+    fixtureIds.length ? supabase.rpc("school_book_odds", { p_fixture_ids: fixtureIds }) : Promise.resolve({ data: [] as never[] }),
+    fixtureIds.length ? supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", fixtureIds) : Promise.resolve({ data: [] as never[] }),
   ]);
   const bookOf = new Map<string, number>();
   for (const r of (bookRows ?? []) as Array<{ fixture_id: number; market: string; book_odds: number | null }>) {
     if (r.book_odds != null) bookOf.set(`${Number(r.fixture_id)}:${r.market}`, Number(r.book_odds));
   }
-  const pickOf = new Map(
-    ((legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>).map((r) => [
-      Number(r.fixture_id),
-      { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? "over_2_5" },
-    ])
-  );
-
-  const fx = new Map((fixtures ?? []).map((f) => [Number((f as { id: number }).id), f as Record<string, unknown>]));
-  type Lg = { name?: string; flag_url?: string | null; tier?: string | null };
-  const leagueOf = (f: Record<string, unknown> | undefined): Lg | undefined => {
-    const lg = f?.leagues as Lg | Lg[] | undefined;
-    return Array.isArray(lg) ? lg[0] : lg;
-  };
-  const dv = new Map((deliveries ?? []).map((d) => [(d as { id: string }).id, d as { criteria: Record<string, unknown> }]));
-
-  // SportyBet booking codes per day. RLS returns codes only to admins + active admitted members, so
-  // non-members get none. Keyed by the card's set_date; the owner uploads them from /analytics.
-  const codeDates = [...new Set(picked.map((d) => String(d.set_date)))];
+  const adminOf = new Map<number, { odds: number | null; market: string | null }>();
+  for (const r of (legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>) {
+    adminOf.set(Number(r.fixture_id), { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? null });
+  }
+  const built = buildStrategy(stratRows, 2, 2, todayLagos, false, bookOf, adminOf);
+  // SportyBet booking codes per day (RLS returns codes only to admins + admitted members)
+  const codeDates = [...new Set([...built.records.map((r) => r.date), ...(built.upcoming ? [built.upcoming.date] : [])])];
   const { data: codeRows } = codeDates.length
     ? await supabase.from("school_codes").select("set_date, code").in("set_date", codeDates)
     : { data: [] as { set_date: string; code: string }[] };
   const codeByDate = new Map((codeRows ?? []).map((c) => [String(c.set_date), String(c.code)]));
-
-  const mapped: SchoolRecord[] = picked.map((d) => {
-    const legs = (d.legs as Array<Record<string, unknown>>).map((l) => {
-      const fid = Number(l.fixture_id);
-      const f = fx.get(fid);
-      const del = dv.get(String(l.delivery_id));
-      const model = (del?.criteria as { reasons?: { model?: { over25?: number } } } | undefined)?.reasons?.model;
-      const over25 = model?.over25 ?? null;
-      // the leg's line: admin override, else the default Over 2.5
-      const pick = pickOf.get(fid);
-      let market = pick?.market ?? "over_2_5";
-      let priceProb = over25; // drives the model-estimate fallback (Over 2.5 chance, or the O3.5 estimate)
-      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when Over 2.5 is priced 1.11 or below,
-      // bet Over 3.5 instead — real book odd if the bookie quotes it, else the model estimate (~) from the
-      // Over 2.5 chance. Skipped when an admin has manually priced this leg (their override wins).
-      if (market === "over_2_5" && pick?.odds == null) {
-        const dispO25 = bookOf.get(`${fid}:over_2_5`) ?? modelOdds(over25);
-        if (dispO25 != null && dispO25 <= 1.11) {
-          market = "over_3_5";
-          priceProb = over35FromOver25(over25);
-        }
-      }
-      const need = NEED[market] ?? 3;
-      // odds waterfall: admin-typed real → real median book odd (API) → model estimate
-      const modelP = market === "over_2_5" || market === "over_3_5" ? priceProb : null;
-      const { odds, oddsReal } = priceLeg(modelP, pick?.odds ?? null, bookOf.get(`${fid}:${market}`));
-      const statusStr = f ? String(f.status ?? "") : "";
-      const finished = FINISHED.includes(statusStr);
-      const inPlay = LIVE.includes(statusStr);
-      const h = f ? ((f.ft_home ?? f.home_goals) as number | null) : null;
-      const a = f ? ((f.ft_away ?? f.away_goals) as number | null) : null;
-      const curTot = h != null && a != null ? h + a : null;
-      // over lines are monotonic — WON the instant the line is cleared (live OR FT); LOST only at FT under.
-      const hit = curTot != null && curTot >= need ? true : finished ? false : null;
-      const lg = leagueOf(f);
-      return {
-        game: String(l.game ?? ""),
-        fixtureId: fid,
-        market,
-        odds,
-        oddsReal,
-        score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
-        hit,
-        elapsed: inPlay ? ((f?.elapsed as number | null) ?? null) : null,
-        // raw status + updated_at let the client tick the live minute up between 60s refreshes
-        status: statusStr || null,
-        updatedAt: (f?.updated_at as string | null) ?? null,
-        finished,
-        kickoff: (f?.kickoff_utc as string | null) ?? null,
-        league: lg?.name ?? null,
-        flag: lg?.flag_url ?? null,
-        tier: lg?.tier ?? null,
-      };
-    });
-    const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
-    // An Over 2.5 double is LOST the instant ANY leg finishes under 3 goals — a later leg can't
-    // resurrect it — so show it lost immediately even if the other game hasn't kicked off (the
-    // tracker already grades this way). Won only when every leg has hit; pending only while nothing
-    // has failed yet. Odds may be null on an un-priced leg, but that must never hold up a settled
-    // result (the old `graded` check left a lost double showing "Not started" until BOTH legs ended).
-    const result: "won" | "lost" | "pending" =
-      legs.some((l) => l.hit === false) ? "lost"
-      : legs.length > 0 && legs.every((l) => l.hit === true) ? "won"
-      : "pending";
-    return { date: String(d.set_date), legs, combined, result, code: codeByDate.get(String(d.set_date)) ?? null };
-  });
-
-  // record = graded days only, oldest → newest so cumulative P/L reads left to right
-  const records = mapped.filter((r) => r.result !== "pending").reverse();
-  // today's double stays pinned as "today" whether it's not-started, live, or already settled — it only
-  // falls back to the newest pending day (or nothing) when there's no double for today's date.
-  const todayLagos = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
-  const upcoming = mapped.find((r) => r.date === todayLagos) ?? mapped.find((r) => r.result === "pending") ?? null;
+  const withCode = (r: SchoolRecord): SchoolRecord => ({ ...r, code: codeByDate.get(r.date) ?? null });
+  const records = built.records.map(withCode);
+  const upcoming = built.upcoming ? withCode(built.upcoming) : null;
 
   // live game(s) in today's card → poll for fresh scores/minute (RealtimeRefresh runs a 60s render)
   const liveIds = upcoming ? upcoming.legs.filter((l) => l.elapsed != null && !l.finished).map((l) => l.fixtureId) : [];
@@ -362,83 +248,29 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   const profitUnits = records.reduce((a, r) => a + (r.result === "won" ? r.combined - 1 : -1), 0);
   const roi = records.length ? Math.round((profitUnits / records.length) * 100) : 0;
 
-  // Owner-only forward-test lab: the 3 candidate School lines, each rendered through the real member
-  // deck. Line 1 = the live Onside Double (records/upcoming above). Lines 2-3 come from the admin-gated
-  // school_strategy_legs() RPC (empty for non-admins). A stored default (school_config) picks the active
-  // tab on load and is what the daily DM / a future member view follows.
-  let strategyViews: StrategyView[] = [];
-  let defaultKey = "school_double";
-  if (isAdmin) {
-    const [{ data: stratRows }, { data: cfg }] = await Promise.all([
-      supabase.rpc("school_strategy_legs"),
-      supabase.from("school_config").select("default_strategy").maybeSingle(),
-    ]);
-    const rows = (stratRows ?? []) as StratRow[];
-    // real median book odds for every fixture across the candidate lines, in one RPC call
-    const stratFixtureIds = [...new Set(rows.map((r) => Number(r.fixture_id)))];
-    const { data: stratBookRows } = stratFixtureIds.length
-      ? await supabase.rpc("school_book_odds", { p_fixture_ids: stratFixtureIds })
-      : { data: [] as never[] };
-    const stratBookOf = new Map<string, number>();
-    for (const r of (stratBookRows ?? []) as Array<{ fixture_id: number; market: string; book_odds: number | null }>) {
-      if (r.book_odds != null) stratBookOf.set(`${Number(r.fixture_id)}:${r.market}`, Number(r.book_odds));
-    }
-    // admin per-leg overrides (school_set_leg_pick): the outcome + odds an admin typed for a game, so the
-    // strategy tabs are editable too (not just the live Double). Keyed by fixture_id like the book map.
-    const { data: stratPicks } = stratFixtureIds.length
-      ? await supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", stratFixtureIds)
-      : { data: [] as never[] };
-    const stratAdminOf = new Map<number, { odds: number | null; market: string | null }>();
-    for (const r of (stratPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>) {
-      stratAdminOf.set(Number(r.fixture_id), { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? null });
-    }
-    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos, false, stratBookOf, stratAdminOf);
-    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos, false, stratBookOf, stratAdminOf);
-    // Home Banker: the 2 strongest home favourites to win outright (all leagues). Backtest 14-4 / +52%
-    // fair (~+36% at real odds) over Sep 7+, longest losing streak 2 — forward-testing it live.
-    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos, false, stratBookOf, stratAdminOf);
-    // Lock acca: bettable DC 1X locks (≤1.35), 2–3 legs, crushing favourites swapped to Home Win.
-    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos, false, stratBookOf, stratAdminOf);
-    // Cascade: same locks across ALL leagues, per-leg market 1X → Home (if 1X<1.20) → Over 2.5 (if home<1.10).
-    const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos, false, stratBookOf, stratAdminOf);
-    // Combined: DC 1X treble ∪ Lock Acca merged into one slip/day (variable legs — take all). Postponed
-    // legs void so the day grades on the rest (e.g. Sep 13's rained-off FAS v Alianza settles on its others).
-    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true, stratBookOf, stratAdminOf);
-    strategyViews = [
-      { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
-      { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },
-      { key: "dc1x_treble", name: "DC 1X · treble", noun: "treble", records: dc1x.records, upcoming: dc1x.upcoming },
-      { key: "home_banker", name: "Home Banker · double", noun: "double", records: homeBanker.records, upcoming: homeBanker.upcoming },
-      { key: "lock_acca", name: "Lock Acca · 1X + Home", noun: "acca", records: lock.records, upcoming: lock.upcoming },
-      { key: "lock_cascade", name: "Cascade · 1X→Home→O2.5", noun: "acca", records: cascade.records, upcoming: cascade.upcoming },
-      { key: "dc_lock_combo", name: "DC 1X + Lock Acca · combined", noun: "acca", records: combo.records, upcoming: combo.upcoming },
-    ];
-    defaultKey = (cfg?.default_strategy as string) ?? "school_double";
-  }
-
-  // Members (and admins) get the dashboard; everyone else gets the induction funnel.
+  // Members (and admins) get the dashboard; everyone else gets the induction funnel. The School bet is a
+  // single line now — the Best Over 2.5 double — rendered through the real member deck. Admins get the
+  // same view with per-leg editing (odds + outcome) and the post-to-members control; members see it live.
   if (admitted) {
     return (
       <div className="pb-24">
-        {isAdmin ? (
-          <>
-            <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
-              <SchoolAdmin />
-            </div>
-            {/* Admin's School view = the strategy lab: tabs pick the line; the WHOLE board below is that
-                line rendered through the real member deck (stake input + swipe betslips). ★ sets the default. */}
-            <SchoolStrategyDeck
-              strategies={strategyViews}
-              defaultKey={defaultKey}
-              userId={user.id}
-              admin={isAdmin}
-              todayPosted={todayPosted}
-              todayTracked={todayTracked}
-            />
-          </>
-        ) : (
-          <SchoolMember records={records} upcoming={upcoming} admin={false} todayPosted={todayPosted} userId={user.id} todayTracked={todayTracked} />
+        {isAdmin && (
+          <div className="mx-auto mt-6 max-w-[960px] px-5 md:px-8">
+            <SchoolAdmin />
+          </div>
         )}
+        <div className={isAdmin ? "mx-auto mt-2 max-w-[960px] px-5 md:px-8" : ""}>
+          <SchoolMember
+            records={records}
+            upcoming={upcoming}
+            admin={isAdmin}
+            todayPosted={todayPosted}
+            userId={user.id}
+            todayTracked={todayTracked}
+            heading="Best Over 2.5 · double"
+            canPost={isAdmin}
+          />
+        </div>
         {liveIds.length > 0 && <RealtimeRefresh fixtureIds={liveIds} />}
       </div>
     );
