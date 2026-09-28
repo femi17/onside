@@ -498,6 +498,7 @@ export function SchoolMember({
   heading = "Welcome back.",
   noun = "double",
   hideTrack = false,
+  canPost = true,
 }: {
   records: SchoolRecord[];
   upcoming: SchoolRecord | null;
@@ -511,6 +512,9 @@ export function SchoolMember({
   heading?: string;
   noun?: string;
   hideTrack?: boolean;
+  // only the live Onside Double has the post-to-members flow. Forward-test tabs are editable (LegEditor)
+  // but must NOT show Post/Unpost — those write school_posts by DATE and would flip the real double.
+  canPost?: boolean;
 }) {
   const [stake, setStake] = useState(20000);
   const all = useMemo(() => {
@@ -580,7 +584,7 @@ export function SchoolMember({
           ) : admin ? (
             <>
               <Slip r={upcoming} stake={stake} admin />
-              <PostControl date={upcoming.date} posted={todayPosted} />
+              {canPost && <PostControl date={upcoming.date} posted={todayPosted} />}
             </>
           ) : todayPosted ? (
             <Slip r={upcoming} stake={stake} admin={false} />

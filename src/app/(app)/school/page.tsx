@@ -29,6 +29,24 @@ const ODDS_MARGIN = 1.06;
 const modelOdds = (prob: number | null | undefined): number | null =>
   prob != null && prob > 0 ? Math.round((1 / Math.min(0.97, prob * ODDS_MARGIN)) * 100) / 100 : null;
 
+// Estimate the Over 3.5 chance from the model's Over 2.5 chance by inverting Poisson: solve for the
+// goal rate λ that reproduces P(3+ goals) = pO25, then read off P(4+ goals). Used only to PRICE an
+// Over 3.5 upgrade on games the bookmaker doesn't quote (no real Over 3.5 to show) — shown as a "~"
+// estimate. Principled (a single scoring rate), not a made-up multiplier.
+const over35FromOver25 = (pO25: number | null | undefined): number | null => {
+  if (pO25 == null || pO25 <= 0) return null;
+  if (pO25 >= 0.999) return 0.97; // essentially certain — cap
+  let lo = 0, hi = 25;
+  for (let i = 0; i < 50; i++) {
+    const l = (lo + hi) / 2;
+    const pge3 = 1 - Math.exp(-l) * (1 + l + (l * l) / 2); // P(X>=3)
+    if (pge3 < pO25) lo = l; else hi = l;
+  }
+  const l = (lo + hi) / 2;
+  const pge4 = 1 - Math.exp(-l) * (1 + l + (l * l) / 2 + (l * l * l) / 6); // P(X>=4)
+  return Math.max(0.01, Math.min(0.97, pge4));
+};
+
 // Displayed price waterfall: (1) an admin-typed real odd, (2) the REAL median bookmaker odd from the
 // API (school_book_odds, sourced from odds_snapshot), (3) the model estimate as a last resort. The
 // first two are real prices (oddsReal = true, shown plainly); the estimate shows with a "~" prefix.
@@ -56,7 +74,7 @@ type StratRow = {
 // monotonically (WON the instant the goals land); DC 1X settles only at FT (a lead can be lost).
 // minN/maxN let a line be either a fixed-leg acca (over25: 2/2, dc1x: 3/3) or a variable "min 2, up to 3"
 // lock acca — take up to maxN of the day's ranked legs, but only count the day if at least minN qualified.
-function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string, voidPostponed = false, bookOf: Map<string, number> = new Map()): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
+function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos: string, voidPostponed = false, bookOf: Map<string, number> = new Map(), adminOf: Map<number, { odds: number | null; market: string | null }> = new Map()): { records: SchoolRecord[]; upcoming: SchoolRecord | null } {
   const byDay = new Map<string, StratRow[]>();
   for (const r of rows) {
     const arr = byDay.get(r.dt);
@@ -77,17 +95,21 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
       const h = r.ft_home ?? r.home_goals;
       const a = r.ft_away ?? r.away_goals;
       const curTot = h != null && a != null ? h + a : null;
-      // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when Over 2.5 is priced 1.11 or below
-      // the game is so high-scoring that Over 2.5 pays almost nothing — bet Over 3.5 at its real odds
-      // instead. Trigger on the price the leg WOULD show (real book Over 2.5, else the model estimate),
-      // so near-certain games flagged by either are caught. Only swaps when a REAL Over 3.5 book price
-      // exists, so the displayed odds always match a placeable bet (never a made-up number).
+      // Admin override (school_set_leg_pick) wins on everything — outcome + odds the admin typed for this
+      // game. Otherwise the Over 2.5 -> Over 3.5 auto-upgrade (owner-directed 2026-09-28): when Over 2.5 is
+      // priced 1.11 or below the game is so high-scoring that Over 2.5 pays almost nothing — bet Over 3.5
+      // instead (real book odd if quoted, else the ~ estimate derived from the Over 2.5 chance).
+      const adm = adminOf.get(r.fixture_id);
+      const origProb = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
       let market = r.market;
-      if (market === "over_2_5") {
-        const dispO25 = bookOf.get(`${r.fixture_id}:over_2_5`) ?? modelOdds(r.prob != null && r.prob > 0 ? Number(r.prob) : null);
-        const o35 = bookOf.get(`${r.fixture_id}:over_3_5`);
-        if (dispO25 != null && dispO25 <= 1.11 && o35 != null) market = "over_3_5";
+      if (adm?.market) {
+        market = adm.market; // admin explicitly chose the outcome — respect it, skip the auto-upgrade
+      } else if (market === "over_2_5") {
+        const dispO25 = bookOf.get(`${r.fixture_id}:over_2_5`) ?? modelOdds(origProb);
+        if (dispO25 != null && dispO25 <= 1.11) market = "over_3_5";
       }
+      // model-estimate fallback prob: an Over 3.5 derived from an Over 2.5 pick is priced off its own chance
+      const priceProb = market === "over_3_5" && r.market === "over_2_5" ? over35FromOver25(origProb) : origProb;
       const need = NEED[market] ?? 3;
       const hit =
         market === "dc_1x"
@@ -95,8 +117,7 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
           : market === "home"
             ? finished && h != null && a != null ? h > a : null // Home Win: judged at FT
             : curTot != null && curTot >= need ? true : finished ? false : null; // over-line: monotonic
-      const prob = r.prob != null && r.prob > 0 ? Number(r.prob) : null;
-      const { odds, oddsReal } = priceLeg(prob, null, bookOf.get(`${r.fixture_id}:${market}`));
+      const { odds, oddsReal } = priceLeg(priceProb, adm?.odds ?? null, bookOf.get(`${r.fixture_id}:${market}`));
       return {
         game: `${r.home_team} v ${r.away_team}`,
         fixtureId: r.fixture_id,
@@ -247,17 +268,20 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
       // the leg's line: admin override, else the default Over 2.5
       const pick = pickOf.get(fid);
       let market = pick?.market ?? "over_2_5";
+      let priceProb = over25; // drives the model-estimate fallback (Over 2.5 chance, or the O3.5 estimate)
       // Over 2.5 -> Over 3.5 upgrade (owner-directed 2026-09-28): when Over 2.5 is priced 1.11 or below,
-      // bet Over 3.5 at its real odds instead. Skipped when an admin has manually priced this leg (their
-      // override wins); only swaps when a real Over 3.5 book price exists so the odds always match.
+      // bet Over 3.5 instead — real book odd if the bookie quotes it, else the model estimate (~) from the
+      // Over 2.5 chance. Skipped when an admin has manually priced this leg (their override wins).
       if (market === "over_2_5" && pick?.odds == null) {
         const dispO25 = bookOf.get(`${fid}:over_2_5`) ?? modelOdds(over25);
-        const o35 = bookOf.get(`${fid}:over_3_5`);
-        if (dispO25 != null && dispO25 <= 1.11 && o35 != null) market = "over_3_5";
+        if (dispO25 != null && dispO25 <= 1.11) {
+          market = "over_3_5";
+          priceProb = over35FromOver25(over25);
+        }
       }
       const need = NEED[market] ?? 3;
-      // odds waterfall: admin-typed real → real median book odd (API) → model estimate (Over 2.5 only)
-      const modelP = market === "over_2_5" ? over25 : null;
+      // odds waterfall: admin-typed real → real median book odd (API) → model estimate
+      const modelP = market === "over_2_5" || market === "over_3_5" ? priceProb : null;
       const { odds, oddsReal } = priceLeg(modelP, pick?.odds ?? null, bookOf.get(`${fid}:${market}`));
       const statusStr = f ? String(f.status ?? "") : "";
       const finished = FINISHED.includes(statusStr);
@@ -359,18 +383,27 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
     for (const r of (stratBookRows ?? []) as Array<{ fixture_id: number; market: string; book_odds: number | null }>) {
       if (r.book_odds != null) stratBookOf.set(`${Number(r.fixture_id)}:${r.market}`, Number(r.book_odds));
     }
-    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos, false, stratBookOf);
-    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos, false, stratBookOf);
+    // admin per-leg overrides (school_set_leg_pick): the outcome + odds an admin typed for a game, so the
+    // strategy tabs are editable too (not just the live Double). Keyed by fixture_id like the book map.
+    const { data: stratPicks } = stratFixtureIds.length
+      ? await supabase.from("school_leg_odds").select("fixture_id, odds, market").in("fixture_id", stratFixtureIds)
+      : { data: [] as never[] };
+    const stratAdminOf = new Map<number, { odds: number | null; market: string | null }>();
+    for (const r of (stratPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>) {
+      stratAdminOf.set(Number(r.fixture_id), { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? null });
+    }
+    const over25 = buildStrategy(rows.filter((r) => r.strategy === "best_over25"), 2, 2, todayLagos, false, stratBookOf, stratAdminOf);
+    const dc1x = buildStrategy(rows.filter((r) => r.strategy === "dc1x_treble"), 3, 3, todayLagos, false, stratBookOf, stratAdminOf);
     // Home Banker: the 2 strongest home favourites to win outright (all leagues). Backtest 14-4 / +52%
     // fair (~+36% at real odds) over Sep 7+, longest losing streak 2 — forward-testing it live.
-    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos, false, stratBookOf);
+    const homeBanker = buildStrategy(rows.filter((r) => r.strategy === "home_banker"), 2, 2, todayLagos, false, stratBookOf, stratAdminOf);
     // Lock acca: bettable DC 1X locks (≤1.35), 2–3 legs, crushing favourites swapped to Home Win.
-    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos, false, stratBookOf);
+    const lock = buildStrategy(rows.filter((r) => r.strategy === "lock_acca"), 2, 3, todayLagos, false, stratBookOf, stratAdminOf);
     // Cascade: same locks across ALL leagues, per-leg market 1X → Home (if 1X<1.20) → Over 2.5 (if home<1.10).
-    const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos, false, stratBookOf);
+    const cascade = buildStrategy(rows.filter((r) => r.strategy === "lock_cascade"), 2, 3, todayLagos, false, stratBookOf, stratAdminOf);
     // Combined: DC 1X treble ∪ Lock Acca merged into one slip/day (variable legs — take all). Postponed
     // legs void so the day grades on the rest (e.g. Sep 13's rained-off FAS v Alianza settles on its others).
-    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true, stratBookOf);
+    const combo = buildStrategy(rows.filter((r) => r.strategy === "dc_lock_combo"), 1, 99, todayLagos, true, stratBookOf, stratAdminOf);
     strategyViews = [
       { key: "school_double", name: "Onside Double · O2.5", noun: "double", records, upcoming },
       { key: "best_over25", name: "Best Over 2.5 · double", noun: "double", records: over25.records, upcoming: over25.upcoming },

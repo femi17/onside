@@ -39,10 +39,12 @@ export default function SchoolStrategyDeck({
   const [saving, setSaving] = useState(false);
   if (!strategies.length) return null;
   const sel = strategies[Math.min(active, strategies.length - 1)];
-  // The live Onside Double is the real, editable bet — restore full admin editing (per-leg odds +
-  // outcome/line via the LegEditor) on it. The model forward-test lines are derived, so they stay
-  // read-only (nothing to persist).
-  const editable = admin && sel.key === "school_double";
+  // An admin can edit per-leg odds + outcome (via the LegEditor / school_set_leg_pick) on ANY line —
+  // including the forward-test tabs — so today's yet-to-play games can be hand-tuned before they kick
+  // off. Only the live Onside Double, though, has the post/track flow (it's the real member bet); the
+  // forward-test lines stay editable-but-not-posted.
+  const canEdit = admin;
+  const isLive = sel.key === "school_double";
 
   const makeDefault = async () => {
     setSaving(true);
@@ -98,14 +100,15 @@ export default function SchoolStrategyDeck({
         key={sel.key}
         records={sel.records}
         upcoming={sel.upcoming}
-        admin={editable}
-        todayPosted={editable ? todayPosted : true}
+        admin={canEdit}
+        todayPosted={isLive ? todayPosted : true}
         todayTracked={todayTracked}
         userId={userId}
-        eyebrow={editable ? "Onside School" : "Onside School · Forward-test"}
+        eyebrow={isLive ? "Onside School" : "Onside School · Forward-test"}
         heading={sel.name}
         noun={sel.noun}
-        hideTrack={!editable}
+        hideTrack={!isLive}
+        canPost={isLive}
       />
     </div>
   );
