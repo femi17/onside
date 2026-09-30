@@ -209,7 +209,10 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   for (const r of (legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>) {
     adminOf.set(Number(r.fixture_id), { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? null });
   }
-  const built = buildStrategy(stratRows, 2, 2, todayLagos, false, bookOf, adminOf);
+  // voidPostponed + minN=1: a postponed/cancelled leg is voided (like a real slip) and the double stands
+  // on the surviving leg(s) — a PST leg must NOT freeze the day pending forever. minN=1 so a 2-leg double
+  // reduced to one by a void still settles; the whole day only drops if EVERY leg voids. maxN=2 unchanged.
+  const built = buildStrategy(stratRows, 1, 2, todayLagos, true, bookOf, adminOf);
   // SportyBet booking codes per day (RLS returns codes only to admins + admitted members)
   const codeDates = [...new Set([...built.records.map((r) => r.date), ...(built.upcoming ? [built.upcoming.date] : [])])];
   const { data: codeRows } = codeDates.length
