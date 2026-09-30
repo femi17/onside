@@ -66,6 +66,7 @@ type StratRow = {
   home_team: string; away_team: string; ft_home: number | null; ft_away: number | null;
   home_goals: number | null; away_goals: number | null; status: string | null; elapsed: number | null;
   updated_at: string | null; kickoff_utc: string | null; league: string | null; flag: string | null; tier: string | null;
+  relaxed?: boolean | null; // true when fewer than 2 legs cleared the >=1.45 odds floor (may pay < 2.0)
 };
 
 // Assemble the flat ranked rows into SchoolRecord[] + today's card — the SAME shape the onside_double
@@ -142,7 +143,9 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
     const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
     const result: "won" | "lost" | "pending" =
       legs.some((l) => l.hit === false) ? "lost" : legs.every((l) => l.hit === true) ? "won" : "pending";
-    mapped.push({ date: dt, legs, combined, result });
+    // thin day: the odds floor couldn't be met, so the double may pay under 2.0 (flagged on the slip)
+    const relaxed = legsRows.some((r) => r.relaxed === true);
+    mapped.push({ date: dt, legs, combined, result, relaxed });
   }
   mapped.sort((x, y) => (x.date < y.date ? 1 : -1)); // newest first
   const records = mapped.filter((r) => r.result !== "pending").reverse(); // oldest → newest for cumulative P/L

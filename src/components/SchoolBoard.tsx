@@ -28,6 +28,7 @@ export type SchoolRecord = {
   legs: SchoolLeg[];
   combined: number;
   result: "won" | "lost" | "pending";
+  relaxed?: boolean; // true when the day couldn't field 2 legs at >=1.45 odds — the double may pay < 2.0
   code?: string | null; // SportyBet booking code for the day (members/admin only)
 };
 
@@ -286,6 +287,15 @@ function Slip({ r, stake, admin, locked }: { r: SchoolRecord; stake: number; adm
             </div>
           </div>
         </div>
+
+        {r.relaxed && r.combined < 2 && (
+          <div className="mt-2 rounded-xl border border-brick/25 bg-brick/[0.06] px-3 py-1.5">
+            <span className="block font-mono text-[9.5px] uppercase tracking-wide text-brick">Thin card</span>
+            <span className="block text-[11.5px] leading-tight text-ink-mute">
+              Not enough games cleared the 2.0 floor today — this is the best available pair.
+            </span>
+          </div>
+        )}
 
         {r.code && (
           <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-ink/20 bg-ink/[0.04] px-3 py-1.5">
