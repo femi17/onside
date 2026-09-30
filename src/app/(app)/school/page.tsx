@@ -66,7 +66,6 @@ type StratRow = {
   home_team: string; away_team: string; ft_home: number | null; ft_away: number | null;
   home_goals: number | null; away_goals: number | null; status: string | null; elapsed: number | null;
   updated_at: string | null; kickoff_utc: string | null; league: string | null; flag: string | null; tier: string | null;
-  relaxed?: boolean | null; // true when fewer than 2 legs cleared the >=1.45 odds floor (may pay < 2.0)
 };
 
 // Assemble the flat ranked rows into SchoolRecord[] + today's card — the SAME shape the onside_double
@@ -143,9 +142,7 @@ function buildStrategy(rows: StratRow[], minN: number, maxN: number, todayLagos:
     const combined = Math.round(legs.reduce((p, l) => p * (l.odds ?? 1), 1) * 100) / 100;
     const result: "won" | "lost" | "pending" =
       legs.some((l) => l.hit === false) ? "lost" : legs.every((l) => l.hit === true) ? "won" : "pending";
-    // thin day: the odds floor couldn't be met, so the double may pay under 2.0 (flagged on the slip)
-    const relaxed = legsRows.some((r) => r.relaxed === true);
-    mapped.push({ date: dt, legs, combined, result, relaxed });
+    mapped.push({ date: dt, legs, combined, result });
   }
   mapped.sort((x, y) => (x.date < y.date ? 1 : -1)); // newest first
   const records = mapped.filter((r) => r.result !== "pending").reverse(); // oldest → newest for cumulative P/L
@@ -209,10 +206,7 @@ export default async function SchoolPage({ searchParams }: { searchParams: Promi
   for (const r of (legPicks ?? []) as Array<{ fixture_id: number; odds: number | null; market: string | null }>) {
     adminOf.set(Number(r.fixture_id), { odds: r.odds == null ? null : Number(r.odds), market: r.market ?? null });
   }
-  // voidPostponed + minN=1: a postponed/cancelled leg is voided (like a real slip) and the double stands
-  // on the surviving leg(s) — a PST leg must NOT freeze the day pending forever. minN=1 so a 2-leg double
-  // reduced to one by a void still settles; the whole day only drops if EVERY leg voids. maxN=2 unchanged.
-  const built = buildStrategy(stratRows, 1, 2, todayLagos, true, bookOf, adminOf);
+  const built = buildStrategy(stratRows, 2, 2, todayLagos, false, bookOf, adminOf);
   // SportyBet booking codes per day (RLS returns codes only to admins + admitted members)
   const codeDates = [...new Set([...built.records.map((r) => r.date), ...(built.upcoming ? [built.upcoming.date] : [])])];
   const { data: codeRows } = codeDates.length
