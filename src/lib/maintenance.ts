@@ -4,7 +4,7 @@
 export const MAINTENANCE = {
   on: true,
   message:
-    "Heads up: our live results feed is on maintenance until Oct 11. Scores may update slowly, but every bet still settles and nothing is lost. We've added 11 free days to every active subscription — thanks for bearing with us.",
+    "Heads up: our results feed is on maintenance until Oct 11. New scores and bet results are paused for now — everything catches up and settles the moment we're back, so nothing is lost. We've added 11 free days to every active subscription. Thanks for bearing with us.",
 };
 
 // Pause NEW paid checkouts during the outage — we don't take fresh money for a degraded service.
