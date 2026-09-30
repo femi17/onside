@@ -16,6 +16,7 @@ import ReferralCapture from "@/components/ReferralCapture";
 import ConfirmProvider from "@/components/ConfirmDialog";
 import Footer from "@/components/Footer";
 import { SCHOOL_OPEN } from "@/lib/school";
+import { MAINTENANCE } from "@/lib/maintenance";
 
 const NAV = [
   { label: "Tracker", href: "/tracker" },
@@ -109,6 +110,13 @@ export default async function AppLayout({
 
       {/* main column: scrollable content + fixed footer; mobile tab bar overlays the bottom */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* app-wide maintenance notice (toggle in src/lib/maintenance.ts) — pinned above the scroll area */}
+        {MAINTENANCE.on && (
+          <div className="flex items-start gap-2 border-b border-flood/30 bg-flood/10 px-4 py-2.5 text-flood md:px-6">
+            <span aria-hidden className="mt-0.5 flex-none">🔧</span>
+            <p className="text-[12.5px] font-medium leading-snug">{MAINTENANCE.message}</p>
+          </div>
+        )}
         {/* overflow-x-hidden: without an explicit x-rule, overflow-y-auto makes x resolve to auto too,
             so any too-wide child (e.g. a long agent card) produced a horizontal scrollbar. Clipping x
             here kills sideways scroll app-wide; sticky headers (this is their scroll container) and the
