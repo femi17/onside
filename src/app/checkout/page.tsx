@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import CheckoutClient from "@/components/CheckoutClient";
 import { isPaidPlan, PLAN_PRICING, type PaidPlan } from "@/lib/plans";
 import { getPlanCode } from "@/lib/paystack";
+import { CHECKOUT_FROZEN, CHECKOUT_FROZEN_MESSAGE } from "@/lib/maintenance";
 
 // Standalone checkout (outside the app shell, like /onboarding) so the "must onboard" gate never
 // bounces a paying user away. Only reachable for a valid paid plan and a signed-in account.
@@ -15,6 +16,22 @@ export default async function CheckoutPage({ searchParams }: { searchParams: Pro
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+
+  // Outage freeze: don't take new money for a degraded service (toggle in src/lib/maintenance.ts).
+  if (CHECKOUT_FROZEN) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-pitch px-6 text-center">
+        <div className="max-w-md">
+          <div className="text-4xl">🔧</div>
+          <h1 className="mt-4 font-disp text-2xl font-extrabold text-chalk">Subscriptions paused</h1>
+          <p className="mt-3 text-[15px] leading-relaxed text-onpitch">{CHECKOUT_FROZEN_MESSAGE}</p>
+          <a href="/tracker" className="mt-6 inline-block rounded-xl bg-flood px-5 py-3 font-disp font-extrabold text-ink transition hover:brightness-105">
+            Back to the app
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   // an already-onboarded account reaching checkout is UPGRADING, not signing up — so the page drops
   // the signup framing (logo/links → onboarding, "last step", "bring in first slip" on success).
