@@ -17,32 +17,41 @@ const FINISHED = ["FT", "AET", "PEN"];
 const LIVE = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];
 
 // Auto-grade a School pick from the match score. Over / BTTS-Yes / to-score win the instant the
-// condition is met (monotonic); Under / BTTS-No lose the instant they're busted; result & double-chance
-// markets settle only at full-time. null = still pending.
-function gradePick(market: string, h: number | null, a: number | null, finished: boolean): boolean | null {
-  if (h == null || a == null) return null;
+// condition is met (monotonic); Under (.5 lines) / BTTS-No lose the instant they're busted; result &
+// double-chance settle at full-time. Asian whole-number unders (Under 4/5/6) PUSH — stake back — when
+// the total lands exactly on the line. "pending" = not decided yet.
+type PickResult = "won" | "lost" | "push" | "pending";
+function gradePick(market: string, h: number | null, a: number | null, finished: boolean): PickResult {
+  if (h == null || a == null) return "pending";
   const tot = h + a;
+  const over = (need: number): PickResult => (tot >= need ? "won" : finished ? "lost" : "pending");
+  const under = (bust: number): PickResult => (tot >= bust ? "lost" : finished ? "won" : "pending"); // .5 line
+  // Asian whole line: over the line loses (even live); exactly the line at FT pushes; under it at FT wins.
+  const asianUnder = (line: number): PickResult => (tot > line ? "lost" : finished ? (tot === line ? "push" : "won") : "pending");
   switch (market) {
-    case "over_0_5": return tot >= 1 ? true : finished ? false : null;
-    case "over_1_5": return tot >= 2 ? true : finished ? false : null;
-    case "over_2_5": return tot >= 3 ? true : finished ? false : null;
-    case "over_3_5": return tot >= 4 ? true : finished ? false : null;
-    case "over_4_5": return tot >= 5 ? true : finished ? false : null;
-    case "under_1_5": return tot >= 2 ? false : finished ? true : null;
-    case "under_2_5": return tot >= 3 ? false : finished ? true : null;
-    case "under_3_5": return tot >= 4 ? false : finished ? true : null;
-    case "under_4_5": return tot >= 5 ? false : finished ? true : null;
-    case "btts_yes": return h > 0 && a > 0 ? true : finished ? false : null;
-    case "btts_no": return h > 0 && a > 0 ? false : finished ? true : null;
-    case "home_ts": return h > 0 ? true : finished ? false : null;
-    case "away_ts": return a > 0 ? true : finished ? false : null;
-    case "home": return finished ? h > a : null;
-    case "draw": return finished ? h === a : null;
-    case "away": return finished ? a > h : null;
-    case "dc_1x": return finished ? h >= a : null;
-    case "dc_12": return finished ? h !== a : null;
-    case "dc_x2": return finished ? a >= h : null;
-    default: return finished ? null : null;
+    case "over_0_5": return over(1);
+    case "over_1_5": return over(2);
+    case "over_2_5": return over(3);
+    case "over_3_5": return over(4);
+    case "over_4_5": return over(5);
+    case "under_1_5": return under(2);
+    case "under_2_5": return under(3);
+    case "under_3_5": return under(4);
+    case "under_4_5": return under(5);
+    case "under_4": return asianUnder(4);
+    case "under_5": return asianUnder(5);
+    case "under_6": return asianUnder(6);
+    case "btts_yes": return h > 0 && a > 0 ? "won" : finished ? "lost" : "pending";
+    case "btts_no": return h > 0 && a > 0 ? "lost" : finished ? "won" : "pending";
+    case "home_ts": return h > 0 ? "won" : finished ? "lost" : "pending";
+    case "away_ts": return a > 0 ? "won" : finished ? "lost" : "pending";
+    case "home": return finished ? (h > a ? "won" : "lost") : "pending";
+    case "draw": return finished ? (h === a ? "won" : "lost") : "pending";
+    case "away": return finished ? (a > h ? "won" : "lost") : "pending";
+    case "dc_1x": return finished ? (h >= a ? "won" : "lost") : "pending";
+    case "dc_12": return finished ? (h !== a ? "won" : "lost") : "pending";
+    case "dc_x2": return finished ? (a >= h ? "won" : "lost") : "pending";
+    default: return "pending";
   }
 }
 
@@ -72,14 +81,17 @@ function buildFromPicks(picks: PickRow[], fxById: Map<number, FxRow>, todayLagos
       const inPlay = LIVE.includes(statusStr);
       const h = f ? (f.ft_home ?? f.home_goals) : null;
       const a = f ? (f.ft_away ?? f.away_goals) : null;
+      // an Asian-line push voids the leg: odds → 1.0 (stake back), counts as "safe" so the slip settles on the rest
+      const res = gradePick(p.market, h, a, finished);
+      const push = res === "push";
       return {
         game: f ? `${f.home_team} v ${f.away_team}` : "—",
         fixtureId: Number(p.fixture_id),
         market: p.market,
-        odds: Number(p.odds),
+        odds: push ? 1 : Number(p.odds),
         oddsReal: true, // admin typed the real price
         score: (finished || inPlay) && h != null && a != null ? `${h}-${a}` : null,
-        hit: gradePick(p.market, h, a, finished),
+        hit: push ? true : res === "won" ? true : res === "lost" ? false : null,
         elapsed: inPlay ? f?.elapsed ?? null : null,
         status: statusStr || null,
         updatedAt: f?.updated_at ?? null,

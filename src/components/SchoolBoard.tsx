@@ -47,6 +47,7 @@ const LEG_LABEL: Record<string, string> = {
   over_0_5: "Over 0.5", dc_1x: "Double Chance 1X", home: "Home Win",
   // manual School pick outcomes (school_picks) — must match SCHOOL_OUTCOMES in SchoolPickBuilder
   under_1_5: "Under 1.5", under_2_5: "Under 2.5", under_3_5: "Under 3.5", under_4_5: "Under 4.5",
+  under_4: "Under 4 (Asian)", under_5: "Under 5 (Asian)", under_6: "Under 6 (Asian)",
   btts_yes: "BTTS — Yes", btts_no: "BTTS — No", draw: "Draw", away: "Away Win",
   dc_12: "Home or Away (12)", dc_x2: "Draw or Away (X2)", home_ts: "Home to score", away_ts: "Away to score",
 };
